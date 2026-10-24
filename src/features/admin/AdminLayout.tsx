@@ -22,6 +22,41 @@ export function AdminLayout() {
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [restaurantMenuOpen, setRestaurantMenuOpen] = useState(false);
   const restaurantMenuRef = useRef<HTMLDivElement>(null);
+  const [dashboardLogoUrl, setDashboardLogoUrl] = useState<string | null>(() => {
+    try {
+      return (
+        localStorage.getItem(`elozi_dashboard_logo_${r.id}`) ||
+        r.dashboardLogoUrl ||
+        localStorage.getItem(`elozi_restaurant_logo_${r.id}`) ||
+        null
+      );
+    } catch {
+      return r.dashboardLogoUrl || null;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      setDashboardLogoUrl(
+        localStorage.getItem(`elozi_dashboard_logo_${r.id}`) ||
+        r.dashboardLogoUrl ||
+        localStorage.getItem(`elozi_restaurant_logo_${r.id}`) ||
+        null
+      );
+    } catch {}
+    function handleLogoUpdate(ev: Event) {
+      const detail = (ev as CustomEvent<{ restaurantId: string; logoUrl: string | null }>).detail;
+      if (detail?.restaurantId === r.id) {
+        setDashboardLogoUrl(detail.logoUrl);
+      }
+    }
+    window.addEventListener("elozi-dashboard-logo-updated", handleLogoUpdate);
+    return () => {
+      window.removeEventListener("elozi-dashboard-logo-updated", handleLogoUpdate);
+    };
+  }, [r.id, r.dashboardLogoUrl]);
+
+  const logoUrl = dashboardLogoUrl;
 
   const isFinanceRoute = location.pathname.includes('/financeiro') || location.pathname.includes('/fechamento');
   const isFechamentoActive = location.search.includes('tab=fechamento') || location.pathname.includes('/fechamento');
@@ -340,9 +375,9 @@ export function AdminLayout() {
             aria-label={`Menu de ${r.name}`}
           >
             {/* Avatar / Logo do Restaurante */}
-            <div className="w-9 h-9 rounded-lg bg-white/20 border border-white/25 flex items-center justify-center shrink-0 overflow-hidden text-xs font-bold uppercase text-white">
-              {r.logo ? (
-                <img src={r.logo.url} alt={r.name} className="w-full h-full object-cover" />
+            <div className="w-8 h-8 rounded-lg bg-white/20 border border-white/25 flex items-center justify-center shrink-0 overflow-hidden text-xs font-bold uppercase text-white">
+              {logoUrl ? (
+                <img src={logoUrl} alt={r.name} className="w-8 h-8 rounded-lg object-cover" />
               ) : (
                 <span>{r.name.slice(0, 2)}</span>
               )}

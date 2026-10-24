@@ -345,6 +345,25 @@ export function CatalogEditor({
     preparationStation:
       (product?.preparation_station as "kitchen" | "bar" | "none") ?? "kitchen",
     inventoryItemId: product?.inventory_item_id ?? "",
+    badgeText: (() => {
+      try {
+        if (product?.id) {
+          const stored = localStorage.getItem(`elozi_product_badge_${product.id}`);
+          if (stored !== null) return stored;
+        }
+      } catch {}
+      return product?.badge_text ?? product?.badgeText ?? "";
+    })(),
+    badgeColor: (() => {
+      try {
+        if (product?.id) {
+          const stored = localStorage.getItem(`elozi_product_badge_color_${product.id}`);
+          if (stored !== null && stored !== "") return stored;
+        }
+      } catch {}
+      const meta = product as unknown as Record<string, unknown>;
+      return (meta?.badge_color as string) || (meta?.badgeColor as string) || "#D97706";
+    })(),
   });
 
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -672,11 +691,25 @@ export function CatalogEditor({
               inventory_item_id: draft.inventoryItemId.trim()
                 ? draft.inventoryItemId.trim()
                 : null,
+              badge_text: draft.badgeText.trim() ? draft.badgeText.trim() : null,
+              badge_color: draft.badgeText.trim() ? (draft.badgeColor || "#D97706") : null,
             }
           : { active: draft.active }),
       };
 
       if (isProduct) {
+        try {
+          if (draft.badgeText.trim()) {
+            localStorage.setItem(`elozi_product_badge_${id}`, draft.badgeText.trim());
+            localStorage.setItem(`elozi_product_badge_color_${id}`, draft.badgeColor || "#D97706");
+          } else {
+            localStorage.removeItem(`elozi_product_badge_${id}`);
+            localStorage.removeItem(`elozi_product_badge_color_${id}`);
+          }
+        } catch (lsErr) {
+          console.warn("Erro ao salvar badge no localStorage:", lsErr);
+        }
+
         const media = await uploadMenuMedia(
           photos,
           video,
@@ -1812,6 +1845,149 @@ export function CatalogEditor({
                   </div>
                 </div>
 
+                {/* Card 2: Selo promocional em destaque */}
+                <div
+                  id="sec-badge"
+                  className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-6 shadow-2xs space-y-4"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-[#8C3A27] dark:text-red-400">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                    </span>
+                    <div>
+                      <h2 className="text-sm font-bold text-zinc-900 dark:text-white">
+                        Selo promocional em destaque (opcional)
+                      </h2>
+                      <p className="text-xs text-zinc-400 dark:text-zinc-500 font-normal">
+                        Exibe uma etiqueta sobre a foto do produto no cardápio.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Pills com opções rápidas */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                      Sugestões rápidas
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { label: "Sem selo", value: "" },
+                        { label: "Mais Pedido", value: "Mais Pedido" },
+                        { label: "Destaque da Casa", value: "Destaque da Casa" },
+                        { label: "Novidade", value: "Novidade" },
+                        { label: "Sugestão do Chef", value: "Sugestão do Chef" },
+                      ].map((item) => {
+                        const isSelected = item.value === "" ? !draft.badgeText : draft.badgeText === item.value;
+                        return (
+                          <button
+                            key={item.label}
+                            type="button"
+                            onClick={() => {
+                              setDraft((curr) => ({ ...curr, badgeText: item.value }));
+                              setDirty(true);
+                            }}
+                            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer border ${
+                              isSelected
+                                ? "bg-[#610000] text-white border-[#610000] shadow-xs"
+                                : "bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700"
+                            }`}
+                          >
+                            {item.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Input de texto livre */}
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-800 dark:text-zinc-200 mb-1.5">
+                      Texto do selo personalizado
+                    </label>
+                    <input
+                      maxLength={20}
+                      value={draft.badgeText}
+                      placeholder="Ou digite um texto personalizado (ex: Mais Vendido)"
+                      onChange={(e) => {
+                        setDraft((curr) => ({ ...curr, badgeText: e.target.value }));
+                        setDirty(true);
+                      }}
+                      className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3.5 py-2.5 text-sm text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:border-zinc-400 transition-all"
+                    />
+                    <div className="flex justify-between items-center text-[11px] text-zinc-400 mt-1">
+                      <span>Limite de 20 caracteres para encaixe perfeito sobre a foto.</span>
+                      <span>{draft.badgeText.length}/20</span>
+                    </div>
+                  </div>
+
+                  {/* Seleção de cor do selo */}
+                  <div className="space-y-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                        Cor de fundo do selo
+                      </label>
+                      <span className="text-[11px] font-mono font-medium text-zinc-400">
+                        {draft.badgeColor || "#D97706"}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {[
+                        { label: "Âmbar", value: "#D97706" },
+                        { label: "Vinho", value: "#610000" },
+                        { label: "Esmeralda", value: "#059669" },
+                        { label: "Azul", value: "#2563EB" },
+                        { label: "Rubi", value: "#E11D48" },
+                        { label: "Roxo", value: "#7C3AED" },
+                        { label: "Preto", value: "#18181B" },
+                      ].map((c) => {
+                        const isSelected = (draft.badgeColor || "#D97706").toLowerCase() === c.value.toLowerCase();
+                        return (
+                          <button
+                            key={c.value}
+                            type="button"
+                            title={c.label}
+                            onClick={() => {
+                              setDraft((curr) => ({ ...curr, badgeColor: c.value }));
+                              setDirty(true);
+                            }}
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all cursor-pointer ${
+                              isSelected
+                                ? "border-zinc-900 dark:border-white ring-2 ring-zinc-900/10 dark:ring-white/20 font-bold bg-zinc-100 dark:bg-zinc-800"
+                                : "border-zinc-200 dark:border-zinc-700 hover:border-zinc-400 bg-white dark:bg-zinc-850"
+                            }`}
+                          >
+                            <span
+                              className="w-3.5 h-3.5 rounded-full shrink-0 shadow-2xs border border-white/20"
+                              style={{ backgroundColor: c.value }}
+                            />
+                            <span className="text-zinc-700 dark:text-zinc-300">{c.label}</span>
+                          </button>
+                        );
+                      })}
+
+                      {/* Seletor de cor personalizada */}
+                      <label
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-zinc-200 dark:border-zinc-700 hover:border-zinc-400 cursor-pointer bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 transition-all"
+                        title="Escolher qualquer cor personalizada"
+                      >
+                        <input
+                          type="color"
+                          value={draft.badgeColor || "#D97706"}
+                          onChange={(e) => {
+                            setDraft((curr) => ({ ...curr, badgeColor: e.target.value }));
+                            setDirty(true);
+                          }}
+                          className="w-4 h-4 p-0 border-0 rounded cursor-pointer bg-transparent"
+                        />
+                        <span>Personalizada</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Navegação da etapa */}
                 <div className="flex items-center justify-between pt-1">
                   <button
@@ -2036,7 +2212,7 @@ export function CatalogEditor({
                   )}
 
                   {/* Badge de Disponibilidade na Prévia */}
-                  <div className="absolute top-2.5 right-2.5">
+                  <div className="absolute top-2.5 left-2.5 z-10">
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shadow-xs ${
                       draft.available
                         ? "bg-emerald-600 text-white"
@@ -2045,6 +2221,18 @@ export function CatalogEditor({
                       {draft.available ? "Disponível" : "Indisponível"}
                     </span>
                   </div>
+
+                  {/* Selo Promocional em Destaque na Prévia */}
+                  {draft.badgeText.trim() && (
+                    <div className="absolute top-2.5 right-2.5 z-10 pointer-events-none">
+                      <span
+                        className="px-2.5 py-1 rounded-full text-[11px] font-bold tracking-wide shadow-md text-white backdrop-blur-sm"
+                        style={{ backgroundColor: draft.badgeColor || "#D97706" }}
+                      >
+                        {draft.badgeText.trim()}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div>

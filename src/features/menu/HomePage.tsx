@@ -59,6 +59,22 @@ function ProductCard({ product, restaurantSlug, tableQuery, likesCount }: {
 }) {
   const image = getCover(product);
   const formattedLikes = formatLikes(likesCount);
+  const badgeText = (() => {
+    try {
+      const stored = localStorage.getItem(`elozi_product_badge_${product.id}`);
+      if (stored) return stored;
+    } catch {}
+    const meta = product as unknown as Record<string, unknown>;
+    return (meta.badge_text as string) || (meta.badgeText as string) || null;
+  })();
+  const badgeColor = (() => {
+    try {
+      const stored = localStorage.getItem(`elozi_product_badge_color_${product.id}`);
+      if (stored) return stored;
+    } catch {}
+    const meta = product as unknown as Record<string, unknown>;
+    return (meta.badge_color as string) || (meta.badgeColor as string) || "#D97706";
+  })();
 
   return (
     <Link
@@ -66,7 +82,7 @@ function ProductCard({ product, restaurantSlug, tableQuery, likesCount }: {
       className="home-dish-card"
       aria-label={`${product.name}, ${currency.format(product.priceInCents / 100)}, ${likesCount === 1 ? '1 curtida' : `${likesCount} curtidas`}. Ver prato`}
     >
-      <div className="home-dish-image-wrap">
+      <div className="home-dish-image-wrap relative">
         {image ? (
           <img
             src={image.url}
@@ -80,20 +96,22 @@ function ProductCard({ product, restaurantSlug, tableQuery, likesCount }: {
             {product.name}
           </div>
         )}
-        <span className="home-dish-rating" aria-hidden="true">
-          <HeartBadgeIcon />
-          {formattedLikes}
-        </span>
+        {badgeText && (
+          <span
+            className="absolute top-3 right-3 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-wide shadow-md text-white backdrop-blur-sm z-10 pointer-events-none"
+            style={{ backgroundColor: badgeColor }}
+          >
+            {badgeText}
+          </span>
+        )}
       </div>
       <div className="home-dish-copy">
         <div className="home-dish-title-row">
           <h3>{product.name}</h3>
-          {product.featured && (
-            <span className="home-dish-inline-rating" aria-hidden="true">
-              <HeartBadgeIcon />
-              {formattedLikes}
-            </span>
-          )}
+          <span className="home-dish-inline-rating" aria-hidden="true">
+            <HeartBadgeIcon />
+            {formattedLikes}
+          </span>
         </div>
         <p>{product.shortDescription || product.description || 'Ingredientes selecionados e preparo especial da casa.'}</p>
         <div className="home-dish-footer">
@@ -140,8 +158,150 @@ export function HomePage() {
   const { menu, getProductLikesCount } = usePublicMenu();
   const [activeBanner, setActiveBanner] = useState(0);
   const [activeAction, setActiveAction] = useState<ServiceActionType>(null);
+  const [copiedWifi, setCopiedWifi] = useState(false);
   const bannerRail = useRef<HTMLDivElement>(null);
   const tableQuery = getTableQueryString(table);
+
+  // Informações de Wi-Fi e Redes Sociais da Identidade Visual do restaurante
+  const meta = restaurant as unknown as Record<string, unknown>;
+
+  const wifiSsid = (() => {
+    try {
+      return (
+        localStorage.getItem(`elozi_id_wifi_ssid_${restaurant.id}`) ||
+        (meta.wifiSsid as string) ||
+        (meta.wifi_ssid as string) ||
+        "Wi-Fi Clientes"
+      );
+    } catch {
+      return (meta.wifiSsid as string) || "Wi-Fi Clientes";
+    }
+  })();
+
+  const wifiPassword = (() => {
+    try {
+      return (
+        localStorage.getItem(`elozi_id_wifi_pass_${restaurant.id}`) ||
+        (meta.wifiPassword as string) ||
+        (meta.wifi_password as string) ||
+        ""
+      );
+    } catch {
+      return (meta.wifiPassword as string) || "";
+    }
+  })();
+
+  const showWifi = (() => {
+    try {
+      const val = localStorage.getItem(`elozi_id_show_wifi_${restaurant.id}`);
+      return val !== null ? val === "true" : true;
+    } catch {
+      return true;
+    }
+  })();
+
+  const rawInstagram = (() => {
+    try {
+      return (
+        localStorage.getItem(`elozi_id_instagram_${restaurant.id}`) ||
+        (meta.instagram as string) ||
+        ""
+      );
+    } catch {
+      return (meta.instagram as string) || "";
+    }
+  })().trim();
+
+  const rawWhatsapp = (() => {
+    try {
+      return (
+        localStorage.getItem(`elozi_id_whatsapp_${restaurant.id}`) ||
+        (meta.whatsapp as string) ||
+        restaurant.phone ||
+        ""
+      );
+    } catch {
+      return restaurant.phone || "";
+    }
+  })().trim();
+
+  const rawFacebook = (() => {
+    try {
+      return (
+        localStorage.getItem(`elozi_id_facebook_${restaurant.id}`) ||
+        (meta.facebook as string) ||
+        ""
+      );
+    } catch {
+      return (meta.facebook as string) || "";
+    }
+  })().trim();
+
+  const instagramUrl = rawInstagram
+    ? rawInstagram.startsWith("http")
+      ? rawInstagram
+      : `https://instagram.com/${rawInstagram.replace(/^@/, "").replace(/^\/+/, "")}`
+    : null;
+
+  const whatsappUrl = rawWhatsapp
+    ? rawWhatsapp.startsWith("http")
+      ? rawWhatsapp
+      : `https://wa.me/${rawWhatsapp.replace(/\D/g, "")}`
+    : null;
+
+  const facebookUrl = rawFacebook
+    ? rawFacebook.startsWith("http")
+      ? rawFacebook
+      : rawFacebook.startsWith("/")
+      ? `https://facebook.com${rawFacebook}`
+      : rawFacebook.includes(".")
+      ? `https://${rawFacebook}`
+      : `https://facebook.com/${rawFacebook}`
+    : null;
+
+  const hasReview = Boolean(restaurant.googleReviewUrl && restaurant.googleReviewUrl.trim().length > 0);
+  const hasWifi = Boolean(showWifi && (wifiSsid || wifiPassword));
+  const hasSocials = Boolean(instagramUrl || whatsappUrl || facebookUrl);
+  const hasInfo = hasWifi || hasSocials;
+
+  const bannerTitle = (() => {
+    try {
+      return (
+        localStorage.getItem(`elozi_id_banner_title_${restaurant.id}`) ||
+        (meta.bannerTitle as string) ||
+        (meta.banner_title as string) ||
+        "Destaques da Semana"
+      );
+    } catch {
+      return (meta.bannerTitle as string) || "Destaques da Semana";
+    }
+  })();
+
+  const bannerSubtitle = (() => {
+    try {
+      return (
+        localStorage.getItem(`elozi_id_banner_subtitle_${restaurant.id}`) ||
+        (meta.bannerSubtitle as string) ||
+        (meta.banner_subtitle as string) ||
+        "O melhor da nossa culinária contemporânea"
+      );
+    } catch {
+      return (meta.bannerSubtitle as string) || "O melhor da nossa culinária contemporânea";
+    }
+  })();
+
+  const handleCopyWifi = () => {
+    if (!wifiPassword) return;
+    navigator.clipboard
+      .writeText(wifiPassword)
+      .then(() => {
+        setCopiedWifi(true);
+        setTimeout(() => setCopiedWifi(false), 2000);
+      })
+      .catch(() => {
+        // Fallback seguro caso clipboard API falhe
+      });
+  };
 
   if (!menu) return <PublicMenuStatus />;
 
@@ -214,12 +374,10 @@ export function HomePage() {
                     <div className="home-promo-image home-promo-fallback" aria-hidden="true" />
                   )}
                   <span className="home-promo-shade" />
-                  <span className="home-promo-badge">Patrocinado</span>
                   <div className="home-promo-content">
-                    <h2 className="home-promo-title">Destaques<br />da Semana</h2>
-                    <p className="home-promo-desc">O melhor da nossa culinária contemporânea</p>
+                    <h2 className="home-promo-title" style={{ whiteSpace: "pre-line" }}>{bannerTitle}</h2>
+                    <p className="home-promo-desc">{bannerSubtitle}</p>
                   </div>
-                  <span className="home-promo-tag">Parceria Especial</span>
                 </Link>
               );
             })}
@@ -298,69 +456,217 @@ export function HomePage() {
         </section>
       )}
 
-      {restaurant.googleReviewUrl && (
-        <section className="home-google-review-section" aria-label="Avaliações do restaurante">
-          <div className="home-google-card">
-            <div className="home-google-card-header">
-              <div className="home-google-badge">
-                <svg
-                  viewBox="0 0 24 24"
-                  width="18"
-                  height="18"
-                  aria-hidden="true"
-                  className="home-google-g-icon"
-                >
-                  <path
-                    fill="#4285F4"
-                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                  />
-                  <path
-                    fill="#EA4335"
-                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                  />
-                </svg>
-                <span>Google</span>
-              </div>
-              <span className="home-google-verified-tag">Avaliação oficial</span>
-            </div>
+      {(hasReview || hasInfo) && (
+        <section className="home-google-review-section" aria-label="Avaliações, Wi-Fi e redes sociais do restaurante">
+          <div className="home-google-card !p-0 overflow-hidden bg-white dark:bg-[#1c1815] border border-[#d6c9bb]/85 dark:border-zinc-800 rounded-2xl shadow-sm">
+            <div
+              className={`grid grid-cols-1 ${
+                hasReview && hasInfo
+                  ? "md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-zinc-200/80 dark:divide-zinc-800"
+                  : ""
+              }`}
+            >
+              {/* Lado Esquerdo: Google / Avaliação */}
+              {hasReview && (
+                <div className="p-4 sm:p-5 flex flex-col justify-between gap-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="home-google-badge">
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="18"
+                        height="18"
+                        aria-hidden="true"
+                        className="home-google-g-icon"
+                      >
+                        <path
+                          fill="#4285F4"
+                          d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                        />
+                        <path
+                          fill="#34A853"
+                          d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                        />
+                        <path
+                          fill="#FBBC05"
+                          d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                        />
+                        <path
+                          fill="#EA4335"
+                          d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                        />
+                      </svg>
+                      <span>Google</span>
+                    </div>
+                    <span className="home-google-verified-tag">Avaliação oficial</span>
+                  </div>
 
-            <div className="home-google-card-body">
-              <div className="home-google-stars-group" aria-hidden="true">
-                <div className="home-google-stars-bar">
-                  <span className="home-google-star-glyph">★</span>
-                  <span className="home-google-star-glyph">★</span>
-                  <span className="home-google-star-glyph">★</span>
-                  <span className="home-google-star-glyph">★</span>
-                  <span className="home-google-star-glyph">★</span>
+                  <div className="space-y-1.5 py-0.5">
+                    <div className="flex items-center gap-1.5" aria-hidden="true">
+                      <div className="inline-flex items-center gap-0.5 text-amber-500 text-base leading-none">
+                        <span>★</span>
+                        <span>★</span>
+                        <span>★</span>
+                        <span>★</span>
+                        <span>★</span>
+                      </div>
+                      <span className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
+                        Experiência dos clientes
+                      </span>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 leading-tight">
+                        Avalie este restaurante
+                      </h3>
+                      <p className="text-[11.5px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                        Sua avaliação será publicada no Google
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <a
+                      href={restaurant.googleReviewUrl!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="home-google-action-btn"
+                      aria-label={`Avaliar ${restaurant.name} no Google (abre em nova aba)`}
+                    >
+                      <span>Avaliar</span>
+                      <span className="home-google-action-arrow" aria-hidden="true">↗</span>
+                    </a>
+                  </div>
                 </div>
-                <span className="home-google-stars-sub">Experiência dos clientes</span>
-              </div>
+              )}
 
-              <div className="home-google-cta-copy">
-                <h3 className="home-google-title">Avalie este restaurante</h3>
-                <p className="home-google-desc">Sua avaliação será publicada no Google</p>
-              </div>
-            </div>
+              {/* Lado Direito: Wi-Fi da Casa e Redes Sociais */}
+              {hasInfo && (
+                <div className="p-4 sm:p-5 flex flex-col justify-between gap-3.5">
+                  {/* Cabeçalho Wi-Fi / Conectividade */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="inline-flex items-center gap-2 font-bold text-[13.5px] text-zinc-900 dark:text-zinc-100">
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="text-zinc-700 dark:text-zinc-300 shrink-0"
+                        aria-hidden="true"
+                      >
+                        <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+                        <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+                        <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+                        <line x1="12" y1="20" x2="12.01" y2="20" />
+                      </svg>
+                      <span>{hasWifi ? "Wi-Fi da Casa" : "Canais de Contato"}</span>
+                    </div>
+                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded-full whitespace-nowrap">
+                      {hasWifi ? "Conexão gratuita" : "Oficial"}
+                    </span>
+                  </div>
 
-            <div className="home-google-card-footer">
-              <a
-                href={restaurant.googleReviewUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="home-google-action-btn"
-                aria-label={`Avaliar ${restaurant.name} no Google (abre em nova aba)`}
-              >
-                <span>Avaliar</span>
-                <span className="home-google-action-arrow" aria-hidden="true">↗</span>
-              </a>
+                  {/* Bloco de Wi-Fi (SSID e Senha) */}
+                  {hasWifi && (
+                    <div className="space-y-2 py-0.5">
+                      <div className="flex items-center justify-between text-xs gap-2">
+                        <span className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">Nome da rede:</span>
+                        <span className="font-bold text-zinc-900 dark:text-zinc-100 truncate">{wifiSsid}</span>
+                      </div>
+
+                      {wifiPassword ? (
+                        <div className="flex items-center justify-between gap-2 bg-[#FAF6F2] dark:bg-zinc-800/80 rounded-xl px-3 py-1.5 border border-[#E8DCCB] dark:border-zinc-700">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[10px] uppercase font-bold text-zinc-400 dark:text-zinc-500 shrink-0">Senha:</span>
+                            <span className="text-xs font-mono font-bold text-zinc-900 dark:text-zinc-100 truncate">{wifiPassword}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleCopyWifi}
+                            className="shrink-0 text-[11.5px] font-semibold px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 hover:bg-zinc-100 dark:hover:bg-zinc-600 text-zinc-800 dark:text-zinc-200 flex items-center gap-1 transition-all cursor-pointer shadow-2xs active:scale-95"
+                            aria-label="Copiar senha do Wi-Fi"
+                          >
+                            {copiedWifi ? (
+                              <>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-600 dark:text-emerald-400">
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                                <span className="text-emerald-600 dark:text-emerald-400 font-bold">Copiada!</span>
+                              </>
+                            ) : (
+                              <>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                                </svg>
+                                <span>Copiar senha</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-zinc-500 dark:text-zinc-400 italic">Rede aberta (sem senha).</div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Ícones de Redes Sociais */}
+                  {hasSocials && (
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-100 dark:border-zinc-800">
+                      <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+                        Redes sociais:
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {instagramUrl && (
+                          <a
+                            href={instagramUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`Instagram de ${restaurant.name} (abre em nova aba)`}
+                            className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-zinc-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-zinc-700 dark:text-zinc-300 hover:text-rose-600 border border-zinc-200/80 dark:border-zinc-700 flex items-center justify-center transition-all shadow-2xs hover:scale-105"
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <rect width="20" height="20" x="2" y="2" rx="5" ry="5" />
+                              <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+                              <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
+                            </svg>
+                          </a>
+                        )}
+
+                        {whatsappUrl && (
+                          <a
+                            href={whatsappUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`WhatsApp de ${restaurant.name} (abre em nova aba)`}
+                            className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-zinc-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-zinc-700 dark:text-zinc-300 hover:text-emerald-600 border border-zinc-200/80 dark:border-zinc-700 flex items-center justify-center transition-all shadow-2xs hover:scale-105"
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+                            </svg>
+                          </a>
+                        )}
+
+                        {facebookUrl && (
+                          <a
+                            href={facebookUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`Facebook ou Site de ${restaurant.name} (abre em nova aba)`}
+                            className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-zinc-800 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-zinc-700 dark:text-zinc-300 hover:text-blue-600 border border-zinc-200/80 dark:border-zinc-700 flex items-center justify-center transition-all shadow-2xs hover:scale-105"
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />
+                            </svg>
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </section>

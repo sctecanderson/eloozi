@@ -203,13 +203,29 @@ function RestaurantMenuContent({
           {(() => {
             const image = getCover(featuredProduct);
             const likesCount = catalog.getProductLikesCount(featuredProduct.id);
+            const featuredBadge = (() => {
+              try {
+                const stored = localStorage.getItem(`elozi_product_badge_${featuredProduct.id}`);
+                if (stored) return stored;
+              } catch {}
+              const meta = featuredProduct as unknown as Record<string, unknown>;
+              return (meta.badge_text as string) || (meta.badgeText as string) || null;
+            })();
+            const featuredBadgeColor = (() => {
+              try {
+                const stored = localStorage.getItem(`elozi_product_badge_color_${featuredProduct.id}`);
+                if (stored) return stored;
+              } catch {}
+              const meta = featuredProduct as unknown as Record<string, unknown>;
+              return (meta.badge_color as string) || (meta.badgeColor as string) || "#D97706";
+            })();
             return (
               <Link
                 to={`/${restaurantSlug}/produto/${featuredProduct.slug}${tableQuery}`}
                 className="menu-featured-card"
                 aria-label={`${featuredProduct.name}, ${currency.format(featuredProduct.priceInCents / 100)}`}
               >
-                <div className="menu-featured-image-wrap">
+                <div className="menu-featured-image-wrap relative">
                   {image ? (
                     <img
                       src={image.url}
@@ -222,10 +238,14 @@ function RestaurantMenuContent({
                       {featuredProduct.name}
                     </div>
                   )}
-                  <span className="menu-featured-rating" aria-label={`${likesCount} curtidas`}>
-                    <HeartBadgeIcon />
-                    {formatLikes(likesCount)}
-                  </span>
+                  {featuredBadge && (
+                    <span
+                      className="absolute top-3 right-3 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-wide shadow-md text-white backdrop-blur-sm z-10 pointer-events-none"
+                      style={{ backgroundColor: featuredBadgeColor }}
+                    >
+                      {featuredBadge}
+                    </span>
+                  )}
                 </div>
                 <div className="menu-featured-copy">
                   <div className="menu-featured-header-row">
@@ -257,6 +277,22 @@ function RestaurantMenuContent({
             {listProducts.map((product) => {
               const image = getCover(product);
               const likesCount = catalog.getProductLikesCount(product.id);
+              const badge = (() => {
+                try {
+                  const stored = localStorage.getItem(`elozi_product_badge_${product.id}`);
+                  if (stored) return stored;
+                } catch {}
+                const meta = product as unknown as Record<string, unknown>;
+                return (meta.badge_text as string) || (meta.badgeText as string) || null;
+              })();
+              const badgeColor = (() => {
+                try {
+                  const stored = localStorage.getItem(`elozi_product_badge_color_${product.id}`);
+                  if (stored) return stored;
+                } catch {}
+                const meta = product as unknown as Record<string, unknown>;
+                return (meta.badge_color as string) || (meta.badgeColor as string) || "#D97706";
+              })();
               return (
                 <li key={product.id}>
                   <Link
@@ -264,7 +300,7 @@ function RestaurantMenuContent({
                     className="menu-item-card"
                     aria-label={`${product.name}, ${currency.format(product.priceInCents / 100)}`}
                   >
-                    <div className="menu-item-image-wrap">
+                    <div className="menu-item-image-wrap relative">
                       {image ? (
                         <img
                           src={image.url}
@@ -277,6 +313,14 @@ function RestaurantMenuContent({
                         <div className="home-dish-placeholder">
                           {product.name}
                         </div>
+                      )}
+                      {badge && (
+                        <span
+                          className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wide shadow-md text-white backdrop-blur-sm z-10 pointer-events-none"
+                          style={{ backgroundColor: badgeColor }}
+                        >
+                          {badge}
+                        </span>
                       )}
                     </div>
                     <div className="menu-item-copy">

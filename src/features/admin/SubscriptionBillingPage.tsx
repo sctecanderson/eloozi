@@ -1,4 +1,4 @@
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase } from '../../lib/supabase';
 import { TermsOfUseModal } from '../../components/TermsOfUseModal';
@@ -38,6 +38,12 @@ function formatCep(val: string): string {
   return digits.replace(/(\d{5})(\d{1,3})/, '$1-$2');
 }
 
+const PLAN_TITLES: Record<SubscriptionPlanId, string> = {
+  basic: 'Plano Básico',
+  pro: 'Plano Profissional',
+  premium: 'Plano Premium Enterprise',
+};
+
 export function SubscriptionBillingPage() {
   const { restaurant: r } = useRestaurant();
   const [data, setData] = useState<BillingSummaryResponse | null>(null);
@@ -47,7 +53,7 @@ export function SubscriptionBillingPage() {
   const [cycle, setCycle] = useState<BillingCycle>('monthly');
   const [, startTransition] = useTransition();
 
-  // Estado do Modal de Checkout
+  // Modal de Checkout / Renovação
   const [checkoutModal, setCheckoutModal] = useState<{
     open: boolean;
     planId: SubscriptionPlanId;
@@ -72,6 +78,15 @@ export function SubscriptionBillingPage() {
     maxTables: number;
   } | null>(null);
 
+  // Modal de Comprovante / Recibo
+  const [receiptInvoice, setReceiptInvoice] = useState<SubscriptionInvoice | null>(null);
+
+  // Modal de Adicionar Novo Cartão
+  const [addCardModalOpen, setAddCardModalOpen] = useState(false);
+  const [addCardBusy, setAddCardBusy] = useState(false);
+  const [activeCardMenuId, setActiveCardMenuId] = useState<string | null>(null);
+  const cardMenuRef = useRef<HTMLDivElement>(null);
+
   // Dados do Pagador (Obrigatório Asaas)
   const [payerCpfCnpj, setPayerCpfCnpj] = useState('');
   const [payerName, setPayerName] = useState('');
@@ -86,6 +101,7 @@ export function SubscriptionBillingPage() {
   const [cardCvv, setCardCvv] = useState('');
   const [saveCard, setSaveCard] = useState(true);
   const [selectedSavedCardId, setSelectedSavedCardId] = useState<string>('new');
+  const [isDefaultNewCard, setIsDefaultNewCard] = useState(true);
   const [termsModalOpen, setTermsModalOpen] = useState<boolean>(false);
 
   const loadData = async () => {
@@ -105,6 +121,17 @@ export function SubscriptionBillingPage() {
   useEffect(() => {
     void loadData();
   }, [r.id]);
+
+  // Fechar menu de cartão ao clicar fora
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (cardMenuRef.current && !cardMenuRef.current.contains(e.target as Node)) {
+        setActiveCardMenuId(null);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleOpenCheckout = (planId: SubscriptionPlanId, selectedCycle: BillingCycle) => {
     setPixPending(null);
@@ -191,7 +218,7 @@ export function SubscriptionBillingPage() {
         paymentMethod: 'pix',
         payerInfo: {
           cpfCnpj: cleanCpfCnpj,
-          name: payerName.trim() || currentRest.name,
+          name: payerName.trim() || r.name,
           phone: payerPhone.replace(/\D/g, ''),
         },
       });
@@ -351,14 +378,86 @@ export function SubscriptionBillingPage() {
     }
   };
 
+  const handleSetDefaultCard = async (methodId: string) => {
+    try {
+      await supabase
+        .from('restaurant_payment_methods')
+        .update({ is_default: false })
+        .eq('restaurant_id', r.id);
+
+      await supabase
+        .from('restaurant_payment_methods')
+        .update({ is_default: true })
+        .eq('id', methodId);
+
+      setActiveCardMenuId(null);
+      setFeedback({ type: 'success', message: 'Cartão definido como principal.' });
+      void loadData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSaveNewCardModal = async () => {
+    try {
+      setAddCardBusy(true);
+      const rawNum = cardNumber.replace(/\D/g, '');
+      if (rawNum.length < 13) throw new Error('Informe um número de cartão válido.');
+      if (!cardHolder.trim()) throw new Error('Informe o nome do titular do cartão.');
+      const expParts = cardExp.split('/');
+      const expM = parseInt(expParts[0] || '0', 10);
+      let expY = parseInt(expParts[1] || '0', 10);
+      if (expY < 100) expY += 2000;
+      if (expM < 1 || expM > 12 || expY < 2025) throw new Error('Validade do cartão inválida (MM/AA).');
+      if (cardCvv.length < 3) throw new Error('Código de segurança (CVV) inválido.');
+
+      const brand = detectCardBrand(rawNum);
+      const last4 = rawNum.slice(-4);
+
+      if (isDefaultNewCard && data?.payment_methods.length) {
+        await supabase
+          .from('restaurant_payment_methods')
+          .update({ is_default: false })
+          .eq('restaurant_id', r.id);
+      }
+
+      const { error: insertErr } = await supabase
+        .from('restaurant_payment_methods')
+        .insert({
+          restaurant_id: r.id,
+          method_type: 'credit_card',
+          holder_name: cardHolder.trim().toUpperCase(),
+          card_brand: brand,
+          card_last4: last4,
+          exp_month: expM,
+          exp_year: expY,
+          gateway_token: `tok_${brand}_${last4}_${Date.now()}`,
+          is_default: Boolean(isDefaultNewCard || !data?.payment_methods.length),
+        });
+
+      if (insertErr) throw new Error(insertErr.message);
+
+      setFeedback({ type: 'success', message: 'Cartão cadastrado com sucesso para cobranças automáticas.' });
+      setAddCardModalOpen(false);
+      setCardNumber('');
+      setCardHolder('');
+      setCardExp('');
+      setCardCvv('');
+      void loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erro ao cadastrar cartão.';
+      alert(msg);
+    } finally {
+      setAddCardBusy(false);
+    }
+  };
+
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedPix(true);
       setTimeout(() => setCopiedPix(false), 2500);
-    } catch {
-      // fallback
-    }
+    } catch {}
   };
 
   const formatCardInput = (val: string) => {
@@ -376,7 +475,8 @@ export function SubscriptionBillingPage() {
 
   if (loading && !data) {
     return (
-      <div style={{ padding: '32px', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+      <div className="py-20 text-center text-zinc-500 text-sm">
+        <div className="w-8 h-8 border-3 border-[#610000] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
         <p>Carregando dados de faturamento e planos do restaurante…</p>
       </div>
     );
@@ -384,9 +484,9 @@ export function SubscriptionBillingPage() {
 
   if (error || !data) {
     return (
-      <div style={{ padding: '32px' }}>
-        <div style={{ padding: '16px', background: '#fee2e2', color: '#991b1b', borderRadius: '12px' }}>
-          <strong>Falha ao carregar informações:</strong> {error || 'Dados indisponíveis.'}
+      <div className="pt-6 max-w-5xl mx-auto px-4">
+        <div className="p-4 bg-rose-50 text-rose-800 border border-rose-200 rounded-2xl text-sm font-semibold">
+          Falha ao carregar informações: {error || 'Dados indisponíveis.'}
         </div>
       </div>
     );
@@ -394,61 +494,55 @@ export function SubscriptionBillingPage() {
 
   const { restaurant: currentRest, usage, catalog, invoices, payment_methods: savedCards } = data;
   const currentPlan = catalog[currentRest.subscription_plan] || catalog.basic;
-  const tablesUsagePercent = Math.min(100, Math.round((usage.tables_count / currentRest.max_tables) * 100));
+  const tablesUsagePercent = Math.min(100, Math.round((usage.tables_count / (currentRest.max_tables || 1)) * 100));
 
-  const planTitles: Record<SubscriptionPlanId, string> = {
-    basic: 'Plano Básico',
-    pro: 'Plano Profissional',
-    premium: 'Plano Premium Enterprise',
-  };
+  const expDate = new Date(currentRest.subscription_expires_at);
+  const formattedExpDate = Number.isNaN(expDate.getTime())
+    ? '-- de -- de ----'
+    : expDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
 
-  const statusBadges: Record<string, { label: string; bg: string; color: string }> = {
-    active: { label: 'Assinatura Ativa', bg: '#dcfce7', color: '#166534' },
-    grace_period: { label: 'Em Período de Tolerância', bg: '#fef3c7', color: '#92400e' },
-    expired: { label: 'Assinatura Vencida', bg: '#fee2e2', color: '#991b1b' },
-  };
+  const nowMs = Date.now();
+  const diffDays = Math.ceil((expDate.getTime() - nowMs) / (1000 * 60 * 60 * 24));
+  const daysRemainingText = diffDays > 0 ? `${diffDays} dias restantes` : `Vencido há ${Math.abs(diffDays)} dias`;
 
-  const currentStatusBadge = statusBadges[currentRest.billing_status] || statusBadges.active;
+  // Status Badge
+  const statusBadgeConfig = {
+    active: { label: 'Assinatura Ativa', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200/60' },
+    grace_period: { label: 'Período de Tolerância', bg: 'bg-amber-50 text-amber-700 border-amber-200/60' },
+    expired: { label: 'Assinatura Vencida', bg: 'bg-rose-50 text-rose-700 border-rose-200/60' },
+  }[currentRest.billing_status] || { label: 'Assinatura Ativa', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200/60' };
+
+  const hasAutoPayCard = savedCards.some((c) => c.is_default) || savedCards.length > 0;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '28px', maxWidth: '1180px', margin: '0 auto' }}>
-      {/* Cabeçalho da Página */}
-      <header>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--color-text-muted)', marginBottom: '4px' }}>
-          <span>Administração</span>
-          <span>/</span>
-          <span style={{ color: 'var(--color-text-main)', fontWeight: 600 }}>Assinatura & Planos</span>
-        </div>
-        <h1 style={{ fontSize: '26px', fontWeight: 800, margin: 0, color: 'var(--color-text-main)' }}>
-          Faturamento & Gestão de Planos SaaS
+    <div className="max-w-[1360px] mx-auto space-y-6 text-zinc-900 dark:text-zinc-100 antialiased pb-20 pt-[10px] px-2 sm:px-4">
+      {/* =========================================================================
+          CABEÇALHO DA PÁGINA
+          ========================================================================= */}
+      <div>
+        <h1 className="text-2xl lg:text-3xl font-extrabold text-zinc-900 dark:text-white tracking-tight">
+          Assinatura & Planos
         </h1>
-        <p style={{ margin: '4px 0 0', fontSize: '14px', color: 'var(--color-text-muted)' }}>
-          Controle o ciclo de renovação, faça upgrades imediatos e pague via PIX ou Cartão sem intermediários.
+        <p className="text-xs lg:text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+          Gerencie seu plano atual, faça upgrades e acompanhe seu histórico de pagamentos.
         </p>
-      </header>
+      </div>
 
       {/* Banner de Feedback Global */}
       {feedback && (
         <div
           role="alert"
-          style={{
-            padding: '14px 18px',
-            borderRadius: '10px',
-            background: feedback.type === 'success' ? '#dcfce7' : '#fee2e2',
-            color: feedback.type === 'success' ? '#166534' : '#991b1b',
-            border: `1px solid ${feedback.type === 'success' ? '#bbf7d0' : '#fecaca'}`,
-            fontSize: '14px',
-            fontWeight: 500,
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-          }}
+          className={`p-3.5 sm:p-4 rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-between border ${
+            feedback.type === 'success'
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+              : 'bg-rose-50 text-rose-800 border-rose-200'
+          }`}
         >
           <span>{feedback.message}</span>
           <button
             type="button"
             onClick={() => setFeedback(null)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 700 }}
+            className="text-inherit font-bold ml-4 cursor-pointer hover:opacity-75"
           >
             ✕
           </button>
@@ -456,497 +550,863 @@ export function SubscriptionBillingPage() {
       )}
 
       {/* =========================================================================
-          1. RESUMO DO PLANO ATUAL & QUOTAS
+          A. CARD SUPERIOR — RESUMO DO PLANO ATUAL & QUOTAS
           ========================================================================= */}
-      <section
-        style={{
-          background: 'var(--color-surface, #ffffff)',
-          border: '1px solid var(--color-border, #e2e8f0)',
-          borderRadius: '16px',
-          padding: '24px',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-        }}
-      >
-        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px', borderBottom: '1px solid var(--color-border, #e2e8f0)', paddingBottom: '20px', marginBottom: '20px' }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
-              <span
-                style={{
-                  background: currentStatusBadge.bg,
-                  color: currentStatusBadge.color,
-                  padding: '4px 10px',
-                  borderRadius: '20px',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                }}
-              >
-                {currentStatusBadge.label}
-              </span>
-              <span style={{ fontSize: '13px', color: 'var(--color-text-muted)' }}>
-                Ciclo de {currentRest.billing_cycle_days} dias
-              </span>
+      <section className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 sm:p-6 shadow-xs">
+        {/* Linha Superior */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-zinc-100 dark:border-zinc-800">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="w-12 h-12 rounded-xl bg-amber-500/10 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.735H5.81a1 1 0 0 1-.957-.735L2.019 6.02a.5.5 0 0 1 .798-.52l4.277 3.665a1 1 0 0 0 1.516-.294z" />
+                <path d="M5 21h14" />
+              </svg>
             </div>
-            <h2 style={{ fontSize: '22px', fontWeight: 800, margin: 0, color: 'var(--color-text-main)' }}>
-              {planTitles[currentRest.subscription_plan]}
-            </h2>
+            <div>
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${statusBadgeConfig.bg}`}>
+                  {statusBadgeConfig.label}
+                </span>
+                <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800 px-2.5 py-0.5 rounded-full">
+                  Ciclo de {currentRest.billing_cycle_days || 30} dias
+                </span>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-extrabold text-zinc-900 dark:text-white leading-tight">
+                {PLAN_TITLES[currentRest.subscription_plan] || currentPlan.name}
+              </h2>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                Aproveite todos os recursos da plataforma para impulsionar o seu restaurante.
+              </p>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          {/* Botões de Ação */}
+          <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
             <button
               type="button"
               onClick={() => handleOpenCheckout(currentRest.subscription_plan, currentRest.billing_cycle_days > 100 ? 'yearly' : 'monthly')}
-              className="admin-button primary"
-              style={{
-                background: 'var(--admin-primary-btn, #2B1D17)',
-                color: '#ffffff',
-                border: '1px solid var(--admin-primary-btn, #2B1D17)',
-                padding: '10px 20px',
-                borderRadius: '10px',
-                fontWeight: 700,
-                fontSize: '14px',
-                cursor: 'pointer',
-              }}
+              className="bg-[#2A0800] hover:bg-[#610000] text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer shadow-xs transition-all"
             >
-              Renovar Ciclo Agora
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                <path d="M3 3v5h5" />
+                <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                <path d="M16 21h5v-5" />
+              </svg>
+              <span>Renovar Ciclo Agora</span>
             </button>
-            <a
-              href="#grade-planos"
-              className="admin-button"
-              style={{
-                border: '1px solid var(--color-border, #cbd5e1)',
-                padding: '10px 18px',
-                borderRadius: '10px',
-                fontWeight: 600,
-                fontSize: '14px',
-                color: 'var(--color-text-main)',
-                textDecoration: 'none',
-                display: 'inline-flex',
-                alignItems: 'center',
+            <button
+              type="button"
+              onClick={() => {
+                document.getElementById('escolha-de-planos')?.scrollIntoView({ behavior: 'smooth' });
               }}
+              className="border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer shadow-xs transition-all"
             >
-              Fazer Upgrade de Plano
-            </a>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
+                <polyline points="16 7 22 7 22 13" />
+              </svg>
+              <span>Fazer Upgrade de Plano</span>
+            </button>
           </div>
         </div>
 
-        {/* Métricas e Validade */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
-          {/* Card Validade */}
-          <div style={{ padding: '16px', background: 'var(--color-bg-subtle, #f8fafc)', borderRadius: '12px', border: '1px solid var(--color-border, #e2e8f0)' }}>
-            <span style={{ fontSize: '12px', color: 'var(--color-text-muted)', fontWeight: 600 }}>PRÓXIMO VENCIMENTO</span>
-            <p style={{ margin: '6px 0 2px', fontSize: '18px', fontWeight: 800, color: 'var(--color-text-main)' }}>
-              {new Date(currentRest.subscription_expires_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
+        {/* Grid de 4 Mini-Cards de Métricas Reais */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-5">
+          {/* Card 1: Vencimento */}
+          <div className="bg-zinc-50/70 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/60 dark:border-zinc-800/70 p-4 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-lg bg-white dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 shadow-2xs">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect width="18" height="18" x="3" y="4" rx="2" />
+                    <line x1="16" x2="16" y1="2" y2="6" />
+                    <line x1="8" x2="8" y1="2" y2="6" />
+                    <line x1="3" x2="21" y1="10" y2="10" />
+                  </svg>
+                </span>
+                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
+                  Próximo vencimento
+                </span>
+              </div>
+              <p className="text-base font-extrabold text-zinc-900 dark:text-white mt-2 leading-tight">
+                {formattedExpDate}
+              </p>
+            </div>
+            <p className={`text-xs font-semibold mt-2.5 ${diffDays <= 5 ? 'text-rose-600 font-bold' : 'text-zinc-500'}`}>
+              {daysRemainingText}
             </p>
-            <span style={{ fontSize: '12.5px', color: currentRest.days_remaining <= 5 ? '#dc2626' : 'var(--color-text-muted)', fontWeight: currentRest.days_remaining <= 5 ? 700 : 500 }}>
-              {currentRest.days_remaining > 0 ? `${currentRest.days_remaining} dias restantes` : 'Assinatura vencida'}
-            </span>
           </div>
 
-          {/* Card Quota de Mesas */}
-          <div style={{ padding: '16px', background: 'var(--color-bg-subtle, #f8fafc)', borderRadius: '12px', border: '1px solid var(--color-border, #e2e8f0)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '12px', color: 'var(--color-text-muted)', fontWeight: 600 }}>CAPACIDADE DE MESAS</span>
-              <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-text-main)' }}>
+          {/* Card 2: Mesas */}
+          <div className="bg-zinc-50/70 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/60 dark:border-zinc-800/70 p-4 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-lg bg-white dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 shadow-2xs">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 18v3" />
+                    <path d="M20 18v3" />
+                    <path d="M4 10h16" />
+                    <path d="M2 14h20" />
+                  </svg>
+                </span>
+                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
+                  Capacidade de mesas
+                </span>
+              </div>
+              <p className="text-base font-extrabold text-zinc-900 dark:text-white mt-2 leading-tight">
                 {usage.tables_count} / {currentRest.max_tables}
+              </p>
+            </div>
+            <div>
+              <div className="w-full h-1.5 bg-zinc-200 dark:bg-zinc-700 rounded-full mt-2.5 mb-1 overflow-hidden">
+                <div
+                  className="bg-[#610000] h-full rounded-full transition-all duration-300"
+                  style={{ width: `${tablesUsagePercent}%` }}
+                />
+              </div>
+              <p className="text-[11px] font-medium text-zinc-500">
+                {tablesUsagePercent}% do limite contratado utilizado
+              </p>
+            </div>
+          </div>
+
+          {/* Card 3: Produtos */}
+          <div className="bg-zinc-50/70 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/60 dark:border-zinc-800/70 p-4 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-lg bg-white dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 shadow-2xs">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                </span>
+                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
+                  Produtos no cardápio
+                </span>
+              </div>
+              <p className="text-base font-extrabold text-zinc-900 dark:text-white mt-2 leading-tight">
+                {usage.products_count} itens
+              </p>
+            </div>
+            <p className="text-[11px] font-medium text-zinc-500 mt-2.5">
+              Catálogo ilimitado em todos os planos
+            </p>
+          </div>
+
+          {/* Card 4: Forma de Pagamento */}
+          <div className="bg-zinc-50/70 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/60 dark:border-zinc-800/70 p-4 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-lg bg-white dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 shadow-2xs">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect width="20" height="14" x="2" y="5" rx="2" />
+                    <line x1="2" x2="22" y1="10" y2="10" />
+                  </svg>
+                </span>
+                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
+                  Forma de pagamento
+                </span>
+              </div>
+              <p className="text-base font-extrabold text-zinc-900 dark:text-white mt-2 leading-tight">
+                {hasAutoPayCard ? 'Cartão de Crédito' : 'PIX'}
+              </p>
+            </div>
+            <div className="mt-2.5 flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${hasAutoPayCard ? 'bg-emerald-500' : 'bg-zinc-400'}`} />
+              <span className={`text-[11px] font-semibold ${hasAutoPayCard ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-600 dark:text-zinc-400'}`}>
+                {hasAutoPayCard ? 'Pagamento automático ativo' : 'Renovação manual via PIX'}
               </span>
             </div>
-            {/* Barra de Progresso */}
-            <div style={{ width: '100%', height: '8px', background: '#e2e8f0', borderRadius: '4px', margin: '10px 0 6px', overflow: 'hidden' }}>
-              <div
-                style={{
-                  width: `${tablesUsagePercent}%`,
-                  height: '100%',
-                  background: tablesUsagePercent > 85 ? '#dc2626' : '#2563eb',
-                  borderRadius: '4px',
-                  transition: 'width 0.3s',
-                }}
-              />
-            </div>
-            <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>
-              {tablesUsagePercent}% do limite contratado utilizado
-            </span>
-          </div>
-
-          {/* Card Produtos e Cardápio */}
-          <div style={{ padding: '16px', background: 'var(--color-bg-subtle, #f8fafc)', borderRadius: '12px', border: '1px solid var(--color-border, #e2e8f0)' }}>
-            <span style={{ fontSize: '12px', color: 'var(--color-text-muted)', fontWeight: 600 }}>PRODUTOS NO CARDÁPIO</span>
-            <p style={{ margin: '6px 0 2px', fontSize: '18px', fontWeight: 800, color: 'var(--color-text-main)' }}>
-              {usage.products_count} itens
-            </p>
-            <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>
-              Catálogo ilimitado em todos os planos
-            </span>
           </div>
         </div>
       </section>
 
       {/* =========================================================================
-          2. GRADE DE MUDANÇA DE PLANO COM ALTERNADOR MENSAL / ANUAL
+          B. SEÇÃO CENTRAL — ESCOLHA DE PLANOS + COLUNA DE GARANTIAS
           ========================================================================= */}
-      <section id="grade-planos">
-        <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-          <h2 style={{ fontSize: '24px', fontWeight: 800, margin: '0 0 8px', color: 'var(--color-text-main)' }}>
-            Planos & Upgrades Oficiais Elozi
-          </h2>
-          <p style={{ fontSize: '14px', color: 'var(--color-text-muted)', maxWidth: '600px', margin: '0 auto 18px' }}>
-            Aumente a capacidade de atendimento, ative a cozinha em tempo real (KDS) e desbloqueie inteligência operacional.
-          </p>
+      <div id="escolha-de-planos" className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-stretch scroll-mt-6">
+        {/* Coluna da Esquerda: Grade dos 3 Planos (xl:col-span-9) */}
+        <div className="xl:col-span-9 flex flex-col justify-between">
+          {/* Cabeçalho da Seção com Alternador Mensal / Anual */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-lg font-extrabold text-zinc-900 dark:text-white">
+                Escolha o plano ideal para o seu restaurante
+              </h2>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                Faça um upgrade e desbloqueie mais recursos para aumentar sua eficiência e vendas.
+              </p>
+            </div>
 
-          {/* Alternador Mensal / Anual */}
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              background: 'var(--color-bg-subtle, #f1f5f9)',
-              padding: '4px',
-              borderRadius: '24px',
-              border: '1px solid var(--color-border, #e2e8f0)',
-              gap: '4px',
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => startTransition(() => setCycle('monthly'))}
-              style={{
-                border: 'none',
-                padding: '8px 18px',
-                borderRadius: '20px',
-                fontSize: '13px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                background: cycle === 'monthly' ? 'var(--color-surface, #ffffff)' : 'transparent',
-                color: cycle === 'monthly' ? 'var(--admin-primary-btn, #2B1D17)' : 'var(--color-text-muted)',
-                boxShadow: cycle === 'monthly' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-              }}
-            >
-              Faturamento Mensal
-            </button>
-            <button
-              type="button"
-              onClick={() => startTransition(() => setCycle('yearly'))}
-              style={{
-                border: 'none',
-                padding: '8px 18px',
-                borderRadius: '20px',
-                fontSize: '13px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                background: cycle === 'yearly' ? 'var(--color-surface, #ffffff)' : 'transparent',
-                color: cycle === 'yearly' ? 'var(--admin-primary-btn, #2B1D17)' : 'var(--color-text-muted)',
-                boxShadow: cycle === 'yearly' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-              }}
-            >
-              <span>Faturamento Anual</span>
-              <span
-                style={{
-                  background: '#16a34a',
-                  color: '#ffffff',
-                  fontSize: '10px',
-                  fontWeight: 800,
-                  padding: '2px 6px',
-                  borderRadius: '10px',
-                  textTransform: 'uppercase',
-                }}
+            {/* Alternador Mensal / Anual */}
+            <div className="bg-black/90 dark:bg-zinc-800 p-1 rounded-xl flex items-center gap-1 shrink-0 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => startTransition(() => setCycle('monthly'))}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  cycle === 'monthly' ? 'bg-[#2A0800] text-white shadow-xs' : 'text-zinc-400 hover:text-white'
+                }`}
               >
-                2 Meses Grátis
-              </span>
-            </button>
+                Mensal
+              </button>
+              <button
+                type="button"
+                onClick={() => startTransition(() => setCycle('yearly'))}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  cycle === 'yearly' ? 'bg-[#2A0800] text-white shadow-xs' : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <span>Anual</span>
+                <span className="bg-emerald-600 text-white font-extrabold text-[9px] px-1.5 py-0.5 rounded-md uppercase">
+                  2 MESES GRÁTIS
+                </span>
+              </button>
+            </div>
           </div>
-        </div>
 
-        {/* Cards dos 3 Planos */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
-          {(['basic', 'pro', 'premium'] as SubscriptionPlanId[]).map((planId) => {
-            const p = catalog[planId];
-            if (!p) return null;
-            const isCurrent = currentRest.subscription_plan === planId;
-            const isFeatured = planId === 'pro';
-            const priceCents = cycle === 'yearly' ? p.yearly_price_cents : p.monthly_price_cents;
-
-            return (
-              <div
-                key={planId}
-                style={{
-                  background: 'var(--color-surface, #ffffff)',
-                  border: isFeatured ? '2px solid var(--admin-primary-btn, #2B1D17)' : '1px solid var(--color-border, #e2e8f0)',
-                  borderRadius: '18px',
-                  padding: '28px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  position: 'relative',
-                  boxShadow: isFeatured ? '0 8px 24px rgba(220, 38, 38, 0.1)' : '0 1px 3px rgba(0,0,0,0.05)',
-                }}
-              >
-                {isFeatured && (
-                  <span
-                    style={{
-                      position: 'absolute',
-                      top: '-12px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      background: 'var(--admin-primary-btn, #2B1D17)',
-                      color: '#ffffff',
-                      padding: '3px 12px',
-                      borderRadius: '12px',
-                      fontSize: '11px',
-                      fontWeight: 800,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                    }}
-                  >
-                    Mais Escolhido
-                  </span>
-                )}
-
-                <h3 style={{ fontSize: '20px', fontWeight: 800, margin: '0 0 8px', color: 'var(--color-text-main)' }}>
-                  {p.name}
-                </h3>
-
-                <div style={{ margin: '14px 0 20px' }}>
-                  <span style={{ fontSize: '32px', fontWeight: 900, color: 'var(--color-text-main)' }}>
-                    {formatCurrencyBRL(priceCents)}
-                  </span>
-                  <span style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginLeft: '6px' }}>
-                    /{cycle === 'yearly' ? 'ano' : 'mês'}
-                  </span>
+          {/* Cards dos 3 Planos */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* 1. PLANO BÁSICO */}
+            <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 sm:p-6 flex flex-col justify-between shadow-xs hover:border-zinc-300 dark:hover:border-zinc-700 transition-all">
+              <div>
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                    <polyline points="9 22 9 12 15 12 15 22" />
+                  </svg>
                 </div>
+                <h3 className="font-extrabold text-base text-zinc-900 dark:text-white mt-3.5">
+                  Plano Básico
+                </h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  Ideal para quem está começando.
+                </p>
 
-                <div style={{ flex: 1, marginBottom: '24px' }}>
-                  <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: '12px' }}>
-                    Recursos inclusos:
-                  </p>
-                  <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <li style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', color: 'var(--color-text-main)' }}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                      <strong>Até {p.max_tables} mesas simultâneas</strong>
-                    </li>
-                    {p.features.map((feat, idx) => (
-                      <li key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13.5px', color: 'var(--color-text-main)' }}>
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                        <span>{feat}</span>
-                      </li>
-                    ))}
-                  </ul>
+                <div className="mt-4 flex items-baseline">
+                  <span className="text-2xl sm:text-3xl font-extrabold text-zinc-900 dark:text-white">
+                    {cycle === 'yearly' ? 'R$ 83,25' : 'R$ 99,90'}
+                  </span>
+                  <span className="text-xs text-zinc-400 ml-1.5 font-medium">/mês</span>
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => handleOpenCheckout(planId, cycle)}
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    borderRadius: '10px',
-                    fontSize: '14px',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                    background: isCurrent ? 'var(--color-bg-subtle, #f1f5f9)' : 'var(--admin-primary-btn, #2B1D17)',
-                    color: isCurrent ? 'var(--color-text-main)' : '#ffffff',
-                    border: isCurrent ? '1px solid var(--color-border, #cbd5e1)' : '1px solid var(--admin-primary-btn, #2B1D17)',
-                  }}
+                  disabled={currentRest.subscription_plan === 'basic'}
+                  onClick={() => handleOpenCheckout('basic', cycle)}
+                  className={`w-full py-2.5 rounded-xl font-bold text-xs mt-4 transition-all text-center ${
+                    currentRest.subscription_plan === 'basic'
+                      ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-default'
+                      : 'border border-[#610000] text-[#610000] hover:bg-[#610000]/5 cursor-pointer'
+                  }`}
                 >
-                  {isCurrent ? 'Plano Atual (Renovar)' : 'Selecionar Plano'}
+                  {currentRest.subscription_plan === 'basic' ? 'Plano Atual' : 'Selecionar Plano'}
                 </button>
+
+                {/* Lista de Recursos (Sem duplicidade) */}
+                <ul className="mt-5 space-y-2.5 text-xs text-zinc-700 dark:text-zinc-300">
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Até 5 mesas simultâneas</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Cardápio Digital com QR Code</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Pedidos em tempo real nas mesas</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Suporte padrão via e-mail</span>
+                  </li>
+                </ul>
               </div>
-            );
-          })}
+            </div>
+
+            {/* 2. PLANO PROFISSIONAL (MAIS ESCOLHIDO) */}
+            <div className="bg-white dark:bg-zinc-900 rounded-2xl border-2 border-amber-600 dark:border-amber-500 p-5 sm:p-6 flex flex-col justify-between shadow-md relative hover:shadow-lg transition-all">
+              {/* Badge Superior */}
+              <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#D97706] text-white text-[10px] font-extrabold px-3 py-0.5 rounded-full uppercase tracking-wider shadow-xs whitespace-nowrap">
+                MAIS ESCOLHIDO
+              </span>
+
+              <div>
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+                    <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+                    <path d="M4 22h16" />
+                    <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+                    <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+                    <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
+                  </svg>
+                </div>
+                <h3 className="font-extrabold text-base text-zinc-900 dark:text-white mt-3.5">
+                  Plano Profissional
+                </h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  O equilíbrio perfeito para crescer.
+                </p>
+
+                <div className="mt-4 flex items-baseline">
+                  <span className="text-2xl sm:text-3xl font-extrabold text-zinc-900 dark:text-white">
+                    {cycle === 'yearly' ? 'R$ 124,16' : 'R$ 149,00'}
+                  </span>
+                  <span className="text-xs text-zinc-400 ml-1.5 font-medium">/mês</span>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={currentRest.subscription_plan === 'pro'}
+                  onClick={() => handleOpenCheckout('pro', cycle)}
+                  className={`w-full py-2.5 rounded-xl font-bold text-xs mt-4 transition-all text-center shadow-xs ${
+                    currentRest.subscription_plan === 'pro'
+                      ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-default'
+                      : 'bg-[#610000] hover:bg-[#4a0000] text-white cursor-pointer'
+                  }`}
+                >
+                  {currentRest.subscription_plan === 'pro' ? 'Plano Atual' : 'Selecionar Plano'}
+                </button>
+
+                {/* Lista de Recursos */}
+                <ul className="mt-5 space-y-2.5 text-xs text-zinc-700 dark:text-zinc-300">
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Até 15 mesas simultâneas</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Tudo do plano Básico</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>KDS Completo (Cozinha e Bar)</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Gestão de Estoque e Insumos</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Alertas sonoros para garçons</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Relatórios e Dashboard</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            {/* 3. PLANO PREMIUM ENTERPRISE */}
+            <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 sm:p-6 flex flex-col justify-between shadow-xs hover:border-zinc-300 dark:hover:border-zinc-700 transition-all">
+              <div>
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M6 3h12l4 6-10 13L2 9Z" />
+                    <path d="M11 3 8 9l4 13 4-13-3-6" />
+                    <path d="M2 9h20" />
+                  </svg>
+                </div>
+                <h3 className="font-extrabold text-base text-zinc-900 dark:text-white mt-3.5">
+                  Plano Premium Enterprise
+                </h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  Para restaurantes com alta demanda.
+                </p>
+
+                <div className="mt-4 flex items-baseline">
+                  <span className="text-2xl sm:text-3xl font-extrabold text-zinc-900 dark:text-white">
+                    {cycle === 'yearly' ? 'R$ 191,66' : 'R$ 230,00'}
+                  </span>
+                  <span className="text-xs text-zinc-400 ml-1.5 font-medium">/mês</span>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={currentRest.subscription_plan === 'premium'}
+                  onClick={() => handleOpenCheckout('premium', cycle)}
+                  className={`w-full py-2.5 rounded-xl font-bold text-xs mt-4 transition-all text-center ${
+                    currentRest.subscription_plan === 'premium'
+                      ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-default'
+                      : 'border border-zinc-300 dark:border-zinc-700 hover:border-zinc-400 text-zinc-800 dark:text-zinc-200 cursor-pointer'
+                  }`}
+                >
+                  {currentRest.subscription_plan === 'premium' ? 'Plano Atual' : 'Selecionar Plano'}
+                </button>
+
+                {/* Lista de Recursos */}
+                <ul className="mt-5 space-y-2.5 text-xs text-zinc-700 dark:text-zinc-300">
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Até 100 mesas simultâneas</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Tudo do plano Profissional</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Comentários e Avaliações Públicas</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Auditoria e Governança Avançada</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Suporte prioritário VIP</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Relatórios avançados de performance</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>Consultoria de implementação</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
         </div>
-      </section>
+
+        {/* Coluna da Direita: 4 Cards de Garantia Empilhados (xl:col-span-3) */}
+        <div className="xl:col-span-3 flex flex-col justify-between gap-3 pt-0 xl:pt-12">
+          {/* 1. Ativação Imediata */}
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-4 flex items-start gap-3.5 shadow-xs">
+            <div className="w-9 h-9 rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 flex items-center justify-center shrink-0">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+              </svg>
+            </div>
+            <div>
+              <h4 className="font-extrabold text-xs text-zinc-900 dark:text-white leading-tight">
+                Ativação imediata
+              </h4>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
+                Seu plano é ativado assim que o pagamento for confirmado.
+              </p>
+            </div>
+          </div>
+
+          {/* 2. Sem Taxa de Adesão */}
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-4 flex items-start gap-3.5 shadow-xs">
+            <div className="w-9 h-9 rounded-full bg-blue-50 text-blue-600 dark:bg-blue-950/40 flex items-center justify-center shrink-0">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <rect width="20" height="14" x="2" y="5" rx="2" />
+                <line x1="2" x2="22" y1="10" y2="10" />
+              </svg>
+            </div>
+            <div>
+              <h4 className="font-extrabold text-xs text-zinc-900 dark:text-white leading-tight">
+                Sem taxa de adesão
+              </h4>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
+                Comece a usar sem custos extras.
+              </p>
+            </div>
+          </div>
+
+          {/* 3. Pagamento Seguro */}
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-4 flex items-start gap-3.5 shadow-xs">
+            <div className="w-9 h-9 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 flex items-center justify-center shrink-0">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
+            </div>
+            <div>
+              <h4 className="font-extrabold text-xs text-zinc-900 dark:text-white leading-tight">
+                Pagamento seguro
+              </h4>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
+                PIX, Cartão de crédito ou boleto.
+              </p>
+            </div>
+          </div>
+
+          {/* 4. Evolução Contínua */}
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-4 flex items-start gap-3.5 shadow-xs">
+            <div className="w-9 h-9 rounded-full bg-amber-50 text-amber-600 dark:bg-amber-950/40 flex items-center justify-center shrink-0">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 3v18h18" />
+                <path d="M18 17V9" />
+                <path d="M13 17V5" />
+                <path d="M8 17v-3" />
+              </svg>
+            </div>
+            <div>
+              <h4 className="font-extrabold text-xs text-zinc-900 dark:text-white leading-tight">
+                Evolução contínua
+              </h4>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
+                Faça upgrade a qualquer momento.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* =========================================================================
-          3. HISTÓRICO DE FATURAS E COBRANÇAS
+          C. SEÇÃO INFERIOR — COMPARATIVO DE RECURSOS + HISTÓRICO E CARTÕES
           ========================================================================= */}
-      <section
-        style={{
-          background: 'var(--color-surface, #ffffff)',
-          border: '1px solid var(--color-border, #e2e8f0)',
-          borderRadius: '16px',
-          padding: '24px',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-        }}
-      >
-        <h2 style={{ fontSize: '18px', fontWeight: 800, margin: '0 0 16px', color: 'var(--color-text-main)' }}>
-          Histórico de Faturas & Recibos
-        </h2>
-
-        {invoices.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '32px', color: 'var(--color-text-muted)' }}>
-            Nenhuma cobrança registrada até o momento.
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
+        {/* Esquerda: Comparativo de Recursos (xl:col-span-6) */}
+        <section className="xl:col-span-6 bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 sm:p-6 shadow-xs">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 shrink-0">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" x2="8" y1="13" y2="13" />
+                <line x1="16" x2="8" y1="17" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="font-extrabold text-sm text-zinc-900 dark:text-white">
+                Comparativo de recursos
+              </h3>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                Veja em detalhes o que cada plano oferece.
+              </p>
+            </div>
           </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13.5px' }}>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse">
               <thead>
-                <tr style={{ borderBottom: '1px solid var(--color-border, #e2e8f0)', color: 'var(--color-text-muted)', textAlign: 'left' }}>
-                  <th style={{ padding: '12px 10px', fontWeight: 600 }}>Data</th>
-                  <th style={{ padding: '12px 10px', fontWeight: 600 }}>Plano</th>
-                  <th style={{ padding: '12px 10px', fontWeight: 600 }}>Ciclo</th>
-                  <th style={{ padding: '12px 10px', fontWeight: 600 }}>Forma</th>
-                  <th style={{ padding: '12px 10px', fontWeight: 600 }}>Valor</th>
-                  <th style={{ padding: '12px 10px', fontWeight: 600 }}>Status</th>
-                  <th style={{ padding: '12px 10px', fontWeight: 600, textAlign: 'right' }}>Ações</th>
+                <tr className="border-b border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 font-bold">
+                  <th className="py-2.5 px-3">Recursos</th>
+                  <th className="py-2.5 px-3 text-center">Básico</th>
+                  <th className="py-2.5 px-3 text-center bg-[#FDF8F5] dark:bg-amber-950/20 text-amber-900 dark:text-amber-300 rounded-t-lg">
+                    Profissional
+                  </th>
+                  <th className="py-2.5 px-3 text-center">Premium</th>
                 </tr>
               </thead>
-              <tbody>
-                {invoices.map((inv) => {
-                  const statusStyles: Record<string, { label: string; bg: string; color: string }> = {
-                    paid: { label: 'Pago', bg: '#dcfce7', color: '#166534' },
-                    pending: { label: 'Pendente', bg: '#fef3c7', color: '#92400e' },
-                    failed: { label: 'Falhou', bg: '#fee2e2', color: '#991b1b' },
-                    expired: { label: 'Expirado', bg: '#f3f4f6', color: '#6b7280' },
-                    refunded: { label: 'Estornado', bg: '#f3e8ff', color: '#6b21a8' },
-                  };
-                  const badge = statusStyles[inv.status] || statusStyles.pending;
-
-                  return (
-                    <tr key={inv.id} style={{ borderBottom: '1px solid var(--color-border, #f1f5f9)', color: 'var(--color-text-main)' }}>
-                      <td style={{ padding: '14px 10px' }}>
-                        {new Date(inv.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                      </td>
-                      <td style={{ padding: '14px 10px', fontWeight: 700 }}>
-                        {planTitles[inv.plan_id] || inv.plan_id}
-                      </td>
-                      <td style={{ padding: '14px 10px', textTransform: 'capitalize' }}>
-                        {inv.billing_cycle === 'yearly' ? 'Anual' : 'Mensal'}
-                      </td>
-                      <td style={{ padding: '14px 10px' }}>
-                        <span style={{ textTransform: 'uppercase', fontSize: '12px', fontWeight: 600 }}>
-                          {inv.payment_method === 'pix' ? 'PIX' : inv.payment_method === 'credit_card' ? `Crédito •••• ${inv.card_last4 || ''}` : `Débito •••• ${inv.card_last4 || ''}`}
-                        </span>
-                      </td>
-                      <td style={{ padding: '14px 10px', fontWeight: 800 }}>
-                        {formatCurrencyBRL(inv.amount_cents)}
-                      </td>
-                      <td style={{ padding: '14px 10px' }}>
-                        <span style={{ padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 700, background: badge.bg, color: badge.color }}>
-                          {badge.label}
-                        </span>
-                      </td>
-                      <td style={{ padding: '14px 10px', textAlign: 'right' }}>
-                        {inv.status === 'pending' && inv.pix_qr_code_payload && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setPixPending({
-                                invoiceId: inv.id,
-                                payload: inv.pix_qr_code_payload || '',
-                                expiresAt: inv.pix_expires_at || '',
-                                amountCents: inv.amount_cents,
-                                planId: inv.plan_id,
-                              });
-                              setCheckoutModal({
-                                open: true,
-                                planId: inv.plan_id,
-                                cycle: inv.billing_cycle,
-                              });
-                            }}
-                            style={{
-                              background: '#2563eb',
-                              color: '#ffffff',
-                              border: 'none',
-                              padding: '6px 12px',
-                              borderRadius: '6px',
-                              fontSize: '12px',
-                              fontWeight: 700,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Ver PIX QR Code
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/80 font-medium text-zinc-700 dark:text-zinc-300">
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Cardápio Digital (QR Code)</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✓</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Pedidos em tempo real</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✓</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">KDS Cozinha/Bar</td>
+                  <td className="py-3 px-3 text-center text-zinc-300 dark:text-zinc-600 font-bold">✕</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✓</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Gestão de Estoque e Insumos</td>
+                  <td className="py-3 px-3 text-center text-zinc-300 dark:text-zinc-600 font-bold">✕</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✓</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Comentários e Avaliações</td>
+                  <td className="py-3 px-3 text-center text-zinc-300 dark:text-zinc-600 font-bold">✕</td>
+                  <td className="py-3 px-3 text-center text-zinc-300 dark:text-zinc-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✕</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Relatórios e Dashboard</td>
+                  <td className="py-3 px-3 text-center text-zinc-300 dark:text-zinc-600 font-bold">✕</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✓</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Suporte</td>
+                  <td className="py-3 px-3 text-center text-zinc-600 dark:text-zinc-400">E-mail</td>
+                  <td className="py-3 px-3 text-center font-bold text-amber-900 dark:text-amber-300 bg-[#FDF8F5] dark:bg-amber-950/20 rounded-b-lg">Prioritário</td>
+                  <td className="py-3 px-3 text-center font-bold text-zinc-900 dark:text-white">VIP</td>
+                </tr>
               </tbody>
             </table>
           </div>
-        )}
-      </section>
+        </section>
 
-      {/* =========================================================================
-          4. GERENCIADOR DE CARTÕES SALVOS
-          ========================================================================= */}
-      <section
-        style={{
-          background: 'var(--color-surface, #ffffff)',
-          border: '1px solid var(--color-border, #e2e8f0)',
-          borderRadius: '16px',
-          padding: '24px',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-        }}
-      >
-        <h2 style={{ fontSize: '18px', fontWeight: 800, margin: '0 0 16px', color: 'var(--color-text-main)' }}>
-          Cartões Salvos para Cobrança Automática
-        </h2>
-
-        {savedCards.length === 0 ? (
-          <p style={{ margin: 0, fontSize: '13.5px', color: 'var(--color-text-muted)' }}>
-            Nenhum cartão salvo. Você pode salvar um cartão durante o próximo pagamento com cartão de crédito.
-          </p>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px' }}>
-            {savedCards.map((card) => (
-              <div
-                key={card.id}
-                style={{
-                  border: '1px solid var(--color-border, #e2e8f0)',
-                  borderRadius: '12px',
-                  padding: '16px',
-                  background: 'var(--color-bg-subtle, #f8fafc)',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-              >
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <rect width="20" height="14" x="2" y="5" rx="2" />
-                      <line x1="2" x2="22" y1="10" y2="10" />
-                    </svg>
-                    <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-text-main)' }}>
-                      •••• {card.card_last4}
-                    </span>
-                    <span style={{ textTransform: 'uppercase', fontSize: '11px', background: '#e2e8f0', padding: '2px 6px', borderRadius: '4px', fontWeight: 700 }}>
-                      {card.card_brand || 'Cartão'}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: '12px', color: 'var(--color-text-muted)', display: 'block', marginTop: '4px' }}>
-                    Validade: {String(card.exp_month).padStart(2, '0')}/{card.exp_year}
-                  </span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => void handleDeleteCard(card.id)}
-                  title="Remover cartão"
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#dc2626',
-                    cursor: 'pointer',
-                    padding: '6px',
-                    borderRadius: '6px',
-                  }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        {/* Direita: Histórico de Faturas & Cartões Salvos (xl:col-span-6) */}
+        <div className="xl:col-span-6 flex flex-col gap-5">
+          {/* Card 1: Histórico de Faturas & Recibos */}
+          <section className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 sm:p-6 shadow-xs">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 shrink-0">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect width="18" height="18" x="3" y="4" rx="2" />
+                    <line x1="16" x2="16" y1="2" y2="6" />
+                    <line x1="8" x2="8" y1="2" y2="6" />
+                    <line x1="3" x2="21" y1="10" y2="10" />
                   </svg>
-                </button>
+                </div>
+                <h3 className="font-extrabold text-sm text-zinc-900 dark:text-white">
+                  Histórico de Faturas & Recibos
+                </h3>
               </div>
-            ))}
-          </div>
-        )}
-      </section>
+              <button
+                type="button"
+                onClick={() => {
+                  if (invoices.length > 0) setReceiptInvoice(invoices[0]);
+                }}
+                className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2.5 py-1 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-all cursor-pointer"
+              >
+                Ver histórico completo &gt;
+              </button>
+            </div>
+
+            {invoices.length === 0 ? (
+              <div className="py-8 text-center text-xs text-zinc-400">
+                Nenhuma fatura emitida até o momento.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-zinc-100 dark:border-zinc-800 text-zinc-400 font-bold">
+                      <th className="py-2 px-2">Data</th>
+                      <th className="py-2 px-2">Plano</th>
+                      <th className="py-2 px-2">Ciclo</th>
+                      <th className="py-2 px-2">Forma</th>
+                      <th className="py-2 px-2">Valor</th>
+                      <th className="py-2 px-2">Status</th>
+                      <th className="py-2 px-2 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60 font-medium">
+                    {invoices.map((inv) => {
+                      const isPaid = inv.status === 'paid';
+                      const isPending = inv.status === 'pending';
+                      return (
+                        <tr key={inv.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-800/30">
+                          <td className="py-2.5 px-2 text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+                            {new Date(inv.created_at).toLocaleDateString('pt-BR')}
+                          </td>
+                          <td className="py-2.5 px-2 font-bold text-zinc-900 dark:text-white">
+                            {inv.plan_id === 'basic' ? 'Básico' : inv.plan_id === 'pro' ? 'Profissional' : 'Premium'}
+                          </td>
+                          <td className="py-2.5 px-2 text-zinc-600 dark:text-zinc-400">
+                            {inv.billing_cycle === 'yearly' ? 'Anual' : 'Mensal'}
+                          </td>
+                          <td className="py-2.5 px-2 font-mono text-[11px] uppercase">
+                            {inv.payment_method === 'pix' ? 'PIX' : `Cartão •••• ${inv.card_last4 || ''}`}
+                          </td>
+                          <td className="py-2.5 px-2 font-extrabold text-zinc-900 dark:text-white">
+                            {formatCurrencyBRL(inv.amount_cents)}
+                          </td>
+                          <td className="py-2.5 px-2">
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                isPaid
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                  : isPending
+                                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                                  : 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300'
+                              }`}
+                            >
+                              {isPaid ? 'Pago' : isPending ? 'Pendente' : 'Falhou'}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-2 text-right">
+                            {isPaid ? (
+                              <button
+                                type="button"
+                                onClick={() => setReceiptInvoice(inv)}
+                                className="border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-[11px] font-bold text-zinc-700 dark:text-zinc-300 px-2 py-1 rounded-lg inline-flex items-center gap-1 cursor-pointer transition-colors"
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                  <polyline points="7 10 12 15 17 10" />
+                                  <line x1="12" x2="12" y1="15" y2="3" />
+                                </svg>
+                                <span>Baixar</span>
+                              </button>
+                            ) : inv.pix_qr_code_payload ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPixPending({
+                                    invoiceId: inv.id,
+                                    payload: inv.pix_qr_code_payload || '',
+                                    expiresAt: inv.pix_expires_at || '',
+                                    amountCents: inv.amount_cents,
+                                    planId: inv.plan_id,
+                                  });
+                                  setCheckoutModal({
+                                    open: true,
+                                    planId: inv.plan_id,
+                                    cycle: inv.billing_cycle,
+                                  });
+                                }}
+                                className="bg-[#610000] text-white text-[11px] font-bold px-2 py-1 rounded-lg cursor-pointer"
+                              >
+                                Pagar
+                              </button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {/* Card 2: Cartões Salvos para Cobrança Automática */}
+          <section className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 sm:p-6 shadow-xs relative">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 shrink-0">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect width="20" height="14" x="2" y="5" rx="2" />
+                    <line x1="2" x2="22" y1="10" y2="10" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm text-zinc-900 dark:text-white">
+                    Cartões Salvos para Cobrança Automática
+                  </h3>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                    Gerencie os cartões usados para renovação da sua assinatura.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAddCardModalOpen(true)}
+                className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2.5 py-1 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-all cursor-pointer shrink-0"
+              >
+                Gerenciar cartões &gt;
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+              {/* Cartões Salvos Reais */}
+              {savedCards.map((card) => (
+                <div
+                  key={card.id}
+                  className="border border-zinc-200 dark:border-zinc-800 rounded-xl p-3.5 bg-zinc-50/50 dark:bg-zinc-800/30 flex items-center justify-between relative"
+                >
+                  <div className="flex items-center gap-3">
+                    {/* Ícone Mastercard / Visa */}
+                    <div className="w-9 h-6 bg-[#eb001b] rounded flex items-center justify-center text-[9px] font-extrabold text-white uppercase tracking-tighter">
+                      {card.card_brand === 'mastercard' ? 'MC' : card.card_brand === 'visa' ? 'VISA' : 'CARD'}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-extrabold text-zinc-900 dark:text-white">
+                          •••• {card.card_last4}
+                        </span>
+                        {card.is_default && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 rounded-md">
+                            Principal
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-zinc-500 block mt-0.5">
+                        Validade {String(card.exp_month).padStart(2, '0')}/{card.exp_year}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setActiveCardMenuId((curr) => (curr === card.id ? null : card.id))}
+                      className="p-1 rounded-md text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 cursor-pointer"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <circle cx="12" cy="5" r="1.5" />
+                        <circle cx="12" cy="12" r="1.5" />
+                        <circle cx="12" cy="19" r="1.5" />
+                      </svg>
+                    </button>
+
+                    {activeCardMenuId === card.id && (
+                      <div
+                        ref={cardMenuRef}
+                        className="absolute right-0 top-full mt-1 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-lg py-1.5 z-20 min-w-[150px] text-xs font-semibold"
+                      >
+                        {!card.is_default && (
+                          <button
+                            type="button"
+                            onClick={() => void handleSetDefaultCard(card.id)}
+                            className="w-full px-3 py-1.5 text-left text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 cursor-pointer"
+                          >
+                            Definir como principal
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteCard(card.id)}
+                          className="w-full px-3 py-1.5 text-left text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 cursor-pointer"
+                        >
+                          Remover cartão
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {/* Botão + Adicionar novo cartão */}
+              <button
+                type="button"
+                onClick={() => setAddCardModalOpen(true)}
+                className="border-2 border-dashed border-zinc-200 dark:border-zinc-700 hover:border-zinc-400 dark:hover:border-zinc-500 p-4 rounded-xl flex items-center justify-center gap-2 text-xs font-bold text-zinc-700 dark:text-zinc-300 cursor-pointer min-h-[64px] hover:bg-zinc-50/60 dark:hover:bg-zinc-800/40 transition-all"
+              >
+                <span className="text-base font-light">+</span>
+                <span>Adicionar novo cartão</span>
+              </button>
+            </div>
+          </section>
+        </div>
+      </div>
 
       {/* =========================================================================
           MODAL DE CHECKOUT TRANSPARENTE (PIX, CRÉDITO E DÉBITO)
@@ -955,356 +1415,160 @@ export function SubscriptionBillingPage() {
         <div
           role="dialog"
           aria-modal="true"
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0, 0, 0, 0.65)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: '16px',
-          }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-200"
         >
-          <div
-            style={{
-              background: 'var(--color-surface, #ffffff)',
-              borderRadius: '20px',
-              maxWidth: '540px',
-              width: '100%',
-              padding: '28px',
-              boxShadow: '0 20px 40px rgba(0,0,0,0.25)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '20px',
-              maxHeight: '90vh',
-              overflowY: 'auto',
-            }}
-          >
-            {/* Cabeçalho do Modal */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div className="bg-white dark:bg-zinc-900 rounded-3xl max-w-lg w-full p-6 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-5 text-zinc-900 dark:text-zinc-100 max-h-[92vh] overflow-y-auto">
+            {/* Cabeçalho */}
+            <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
               <div>
-                <h3 style={{ fontSize: '20px', fontWeight: 800, margin: '0 0 4px', color: 'var(--color-text-main)' }}>
+                <h3 className="text-base font-extrabold text-zinc-900 dark:text-white">
                   Checkout Seguro de Assinatura
                 </h3>
-                <p style={{ margin: 0, fontSize: '13.5px', color: 'var(--color-text-muted)' }}>
-                  {planTitles[checkoutModal.planId]} • Ciclo {checkoutModal.cycle === 'yearly' ? 'Anual' : 'Mensal'}
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  {PLAN_TITLES[checkoutModal.planId]} • Ciclo {checkoutModal.cycle === 'yearly' ? 'Anual' : 'Mensal'}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={handleCloseCheckout}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '20px',
-                  color: 'var(--color-text-muted)',
-                  padding: '4px',
-                }}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            {/* Sucesso no Pagamento */}
+            {/* Sucesso */}
             {checkoutSuccess ? (
-              <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                <div
-                  style={{
-                    width: '64px',
-                    height: '64px',
-                    borderRadius: '50%',
-                    background: '#dcfce7',
-                    color: '#16a34a',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    margin: '0 auto 16px',
-                  }}
-                >
-                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <div className="text-center py-6 space-y-4">
+                <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                 </div>
-                <h4 style={{ fontSize: '20px', fontWeight: 800, margin: '0 0 8px', color: 'var(--color-text-main)' }}>
+                <h4 className="text-lg font-extrabold text-zinc-900 dark:text-white">
                   Pagamento Confirmado com Sucesso!
                 </h4>
-                <p style={{ fontSize: '14px', color: 'var(--color-text-muted)', margin: '0 0 20px' }}>
-                  Sua assinatura do <strong>{planTitles[checkoutSuccess.planId]}</strong> foi ativada.
-                  Sua capacidade agora é de <strong>{checkoutSuccess.maxTables} mesas simultâneas</strong>.
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-sm mx-auto">
+                  Sua assinatura do <strong>{PLAN_TITLES[checkoutSuccess.planId]}</strong> foi ativada. Sua capacidade agora é de <strong>{checkoutSuccess.maxTables} mesas simultâneas</strong>.
                 </p>
                 <button
                   type="button"
                   onClick={handleCloseCheckout}
-                  style={{
-                    background: 'var(--admin-primary-btn, #2B1D17)',
-                    color: '#ffffff',
-                    border: 'none',
-                    padding: '12px 28px',
-                    borderRadius: '10px',
-                    fontSize: '14px',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
+                  className="px-6 py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white text-xs font-bold transition-all shadow-md cursor-pointer"
                 >
                   Voltar ao Painel
                 </button>
               </div>
             ) : pixPending ? (
-              /* Tela de Pagamento PIX com QR Code */
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', textAlign: 'center' }}>
-                <div style={{ background: '#ffffff', padding: '16px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgba(0,0,0,0.06)' }}>
+              /* PIX com QR Code */
+              <div className="flex flex-col items-center gap-4 text-center">
+                <div className="bg-white p-4 rounded-2xl border border-zinc-200 shadow-md">
                   {pixPending.image ? (
-                    <img src={pixPending.image} alt="QR Code PIX Asaas" style={{ width: '200px', height: '200px', display: 'block' }} />
+                    <img src={pixPending.image} alt="QR Code PIX Asaas" className="w-48 h-48 block" />
                   ) : (
-                    <QRCodeSVG value={pixPending.payload} size={200} level="M" />
+                    <QRCodeSVG value={pixPending.payload} size={192} level="M" />
                   )}
                 </div>
 
                 <div>
-                  <span style={{ fontSize: '22px', fontWeight: 900, color: 'var(--color-text-main)' }}>
+                  <span className="text-2xl font-extrabold text-zinc-900 dark:text-white">
                     {formatCurrencyBRL(pixPending.amountCents)}
                   </span>
-                  <p style={{ margin: '4px 0 0', fontSize: '12.5px', color: 'var(--color-text-muted)' }}>
-                    Escaneie o QR Code no aplicativo do seu banco ou use o código Copia e Cola.
+                  <p className="text-xs text-zinc-500 mt-1">
+                    Escaneie o QR Code no app do banco ou use o Copia e Cola.
                   </p>
                 </div>
 
-                {/* Campo Copia e Cola */}
-                <div style={{ width: '100%' }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      background: 'var(--color-bg-subtle, #f8fafc)',
-                      border: '1px solid var(--color-border, #cbd5e1)',
-                      borderRadius: '10px',
-                      padding: '8px 12px',
-                      alignItems: 'center',
-                      gap: '8px',
-                    }}
+                <div className="w-full flex items-center gap-2 bg-zinc-50 dark:bg-zinc-800 p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700">
+                  <input
+                    type="text"
+                    readOnly
+                    value={pixPending.payload}
+                    className="bg-transparent border-0 outline-hidden font-mono text-[11px] flex-1 text-zinc-800 dark:text-zinc-200 truncate"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void copyToClipboard(pixPending.payload)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white shrink-0 cursor-pointer ${
+                      copiedPix ? 'bg-emerald-600' : 'bg-[#610000] hover:bg-[#4a0000]'
+                    }`}
                   >
-                    <input
-                      type="text"
-                      readOnly
-                      value={pixPending.payload}
-                      style={{
-                        background: 'transparent',
-                        border: 'none',
-                        outline: 'none',
-                        fontSize: '12px',
-                        fontFamily: 'monospace',
-                        flex: 1,
-                        color: 'var(--color-text-main)',
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void copyToClipboard(pixPending.payload)}
-                      style={{
-                        background: copiedPix ? '#16a34a' : '#2563eb',
-                        color: '#ffffff',
-                        border: 'none',
-                        padding: '6px 14px',
-                        borderRadius: '6px',
-                        fontSize: '12px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {copiedPix ? 'Copiado!' : 'Copiar'}
-                    </button>
-                  </div>
+                    {copiedPix ? 'Copiado!' : 'Copiar'}
+                  </button>
                 </div>
 
-                {/* Botão de Verificação Imediata */}
                 <button
                   type="button"
                   disabled={checkingPayment}
                   onClick={() => void handleVerifyPixPayment(pixPending.invoiceId)}
-                  style={{
-                    width: '100%',
-                    background: '#16a34a',
-                    color: '#ffffff',
-                    border: 'none',
-                    padding: '12px',
-                    borderRadius: '10px',
-                    fontSize: '14px',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
+                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer shadow-md transition-colors"
                 >
                   {checkingPayment ? 'Verificando pagamento…' : 'Já realizei o pagamento (Confirmar)'}
                 </button>
               </div>
             ) : (
-              /* Formulário com as 3 Abas: PIX, Crédito, Débito */
-              <>
-                {/* Abas */}
-                <div
-                  style={{
-                    display: 'flex',
-                    borderBottom: '1px solid var(--color-border, #e2e8f0)',
-                    gap: '8px',
-                  }}
-                >
+              /* Formulário com Abas PIX e Cartão */
+              <div className="space-y-4">
+                <div className="flex border-b border-zinc-200 dark:border-zinc-800">
                   <button
                     type="button"
                     onClick={() => setActiveTab('pix')}
-                    style={{
-                      flex: 1,
-                      padding: '10px 8px',
-                      border: 'none',
-                      borderBottom: activeTab === 'pix' ? '3px solid var(--admin-primary-btn, #2B1D17)' : '3px solid transparent',
-                      background: 'transparent',
-                      color: activeTab === 'pix' ? 'var(--admin-primary-btn, #2B1D17)' : 'var(--color-text-muted)',
-                      fontWeight: activeTab === 'pix' ? 700 : 500,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '6px',
-                      fontSize: '13.5px',
-                    }}
+                    className={`flex-1 py-2 text-xs font-bold border-b-2 cursor-pointer transition-all ${
+                      activeTab === 'pix' ? 'border-[#610000] text-[#610000]' : 'border-transparent text-zinc-400'
+                    }`}
                   >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <rect width="18" height="18" x="3" y="3" rx="2" />
-                      <path d="m9 12 2 2 4-4" />
-                    </svg>
-                    <span>PIX Instantâneo</span>
+                    PIX Instantâneo
                   </button>
-
                   <button
                     type="button"
                     onClick={() => setActiveTab('credit_card')}
-                    style={{
-                      flex: 1,
-                      padding: '10px 8px',
-                      border: 'none',
-                      borderBottom: activeTab === 'credit_card' ? '3px solid var(--admin-primary-btn, #2B1D17)' : '3px solid transparent',
-                      background: 'transparent',
-                      color: activeTab === 'credit_card' ? 'var(--admin-primary-btn, #2B1D17)' : 'var(--color-text-muted)',
-                      fontWeight: activeTab === 'credit_card' ? 700 : 500,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '6px',
-                      fontSize: '13.5px',
-                    }}
+                    className={`flex-1 py-2 text-xs font-bold border-b-2 cursor-pointer transition-all ${
+                      activeTab === 'credit_card' ? 'border-[#610000] text-[#610000]' : 'border-transparent text-zinc-400'
+                    }`}
                   >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <rect width="20" height="14" x="2" y="5" rx="2" />
-                      <line x1="2" x2="22" y1="10" y2="10" />
-                    </svg>
-                    <span>Cartão de Crédito</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('debit_card')}
-                    style={{
-                      flex: 1,
-                      padding: '10px 8px',
-                      border: 'none',
-                      borderBottom: activeTab === 'debit_card' ? '3px solid var(--admin-primary-btn, #2B1D17)' : '3px solid transparent',
-                      background: 'transparent',
-                      color: activeTab === 'debit_card' ? 'var(--admin-primary-btn, #2B1D17)' : 'var(--color-text-muted)',
-                      fontWeight: activeTab === 'debit_card' ? 700 : 500,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '6px',
-                      fontSize: '13.5px',
-                    }}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <rect width="20" height="14" x="2" y="5" rx="2" />
-                      <line x1="2" x2="22" y1="10" y2="10" />
-                      <circle cx="7" cy="15" r="1" />
-                    </svg>
-                    <span>Cartão de Débito</span>
+                    Cartão de Crédito
                   </button>
                 </div>
 
-                {/* Conteúdo da Aba PIX */}
                 {activeTab === 'pix' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    <div style={{ padding: '16px', background: 'var(--color-bg-subtle, #f8fafc)', borderRadius: '12px', border: '1px solid var(--color-border, #e2e8f0)' }}>
-                      <p style={{ margin: '0 0 8px', fontSize: '14px', fontWeight: 700, color: 'var(--color-text-main)' }}>
-                        Liberação Imediata via Asaas & Banco Central
-                      </p>
-                      <p style={{ margin: 0, fontSize: '13px', color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
-                        Ao clicar no botão abaixo, geraremos um QR Code exclusivo para sua empresa. A compensação é feita em segundos e a liberação é 100% automática.
-                      </p>
+                  <div className="space-y-3 pt-2">
+                    <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl text-xs text-zinc-500">
+                      Liberação imediata via Asaas e Banco Central em poucos segundos.
                     </div>
-
-                    {/* CPF/CNPJ do Pagador (Obrigatório Asaas) */}
                     <div>
-                      <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'block', marginBottom: '4px' }}>
-                        CPF ou CNPJ do titular / empresa: *
+                      <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                        CPF ou CNPJ do pagador: *
                       </label>
                       <input
                         type="text"
                         placeholder="000.000.000-00 ou 00.000.000/0000-00"
                         value={payerCpfCnpj}
                         onChange={(e) => setPayerCpfCnpj(formatCpfCnpj(e.target.value))}
-                        style={{
-                          width: '100%',
-                          padding: '10px 12px',
-                          borderRadius: '8px',
-                          border: '1px solid var(--color-border, #cbd5e1)',
-                          fontSize: '14px',
-                          background: 'var(--color-surface, #ffffff)',
-                          color: 'var(--color-text-main)',
-                        }}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
                       />
                     </div>
-
                     <button
                       type="button"
                       disabled={checkoutBusy}
                       onClick={() => void handleProcessPix()}
-                      style={{
-                        background: 'var(--admin-primary-btn, #2B1D17)',
-                        color: '#ffffff',
-                        border: 'none',
-                        padding: '14px',
-                        borderRadius: '10px',
-                        fontSize: '14.5px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                      }}
+                      className="w-full py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white font-bold text-xs cursor-pointer shadow-md transition-colors"
                     >
                       {checkoutBusy ? 'Gerando QR Code PIX…' : 'Gerar PIX e Pagar Agora'}
                     </button>
                   </div>
                 )}
 
-                {/* Conteúdo da Aba Cartão de Crédito e Débito */}
-                {(activeTab === 'credit_card' || activeTab === 'debit_card') && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {/* Seletor de Cartão Salvo */}
+                {activeTab === 'credit_card' && (
+                  <div className="space-y-3 pt-2">
                     {savedCards.length > 0 && (
                       <div>
-                        <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'block', marginBottom: '6px' }}>
-                          Cartão para pagamento:
+                        <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                          Cartão para cobrança:
                         </label>
                         <select
                           value={selectedSavedCardId}
                           onChange={(e) => setSelectedSavedCardId(e.target.value)}
-                          style={{
-                            width: '100%',
-                            padding: '10px 12px',
-                            borderRadius: '8px',
-                            border: '1px solid var(--color-border, #cbd5e1)',
-                            fontSize: '13.5px',
-                            background: 'var(--color-surface, #ffffff)',
-                            color: 'var(--color-text-main)',
-                          }}
+                          className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800"
                         >
                           <option value="new">+ Usar um novo cartão</option>
                           {savedCards.map((sc) => (
@@ -1318,31 +1582,20 @@ export function SubscriptionBillingPage() {
 
                     {selectedSavedCardId === 'new' && (
                       <>
-                        {/* CPF ou CNPJ do Titular */}
                         <div>
-                          <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'block', marginBottom: '4px' }}>
-                            CPF ou CNPJ do titular do cartão: *
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                            CPF ou CNPJ do titular: *
                           </label>
                           <input
                             type="text"
                             placeholder="000.000.000-00 ou 00.000.000/0000-00"
                             value={payerCpfCnpj}
                             onChange={(e) => setPayerCpfCnpj(formatCpfCnpj(e.target.value))}
-                            style={{
-                              width: '100%',
-                              padding: '10px 12px',
-                              borderRadius: '8px',
-                              border: '1px solid var(--color-border, #cbd5e1)',
-                              fontSize: '14px',
-                              background: 'var(--color-surface, #ffffff)',
-                              color: 'var(--color-text-main)',
-                            }}
+                            className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
                           />
                         </div>
-
-                        {/* Número do Cartão */}
                         <div>
-                          <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'block', marginBottom: '4px' }}>
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
                             Número do Cartão:
                           </label>
                           <input
@@ -1350,21 +1603,11 @@ export function SubscriptionBillingPage() {
                             placeholder="0000 0000 0000 0000"
                             value={cardNumber}
                             onChange={(e) => setCardNumber(formatCardInput(e.target.value))}
-                            style={{
-                              width: '100%',
-                              padding: '10px 12px',
-                              borderRadius: '8px',
-                              border: '1px solid var(--color-border, #cbd5e1)',
-                              fontSize: '14px',
-                              background: 'var(--color-surface, #ffffff)',
-                              color: 'var(--color-text-main)',
-                            }}
+                            className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
                           />
                         </div>
-
-                        {/* Nome do Titular */}
                         <div>
-                          <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'block', marginBottom: '4px' }}>
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
                             Nome impresso no Cartão:
                           </label>
                           <input
@@ -1372,22 +1615,12 @@ export function SubscriptionBillingPage() {
                             placeholder="NOME COMO NO CARTAO"
                             value={cardHolder}
                             onChange={(e) => setCardHolder(e.target.value.toUpperCase())}
-                            style={{
-                              width: '100%',
-                              padding: '10px 12px',
-                              borderRadius: '8px',
-                              border: '1px solid var(--color-border, #cbd5e1)',
-                              fontSize: '14px',
-                              background: 'var(--color-surface, #ffffff)',
-                              color: 'var(--color-text-main)',
-                            }}
+                            className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 uppercase"
                           />
                         </div>
-
-                        {/* Validade e CVV */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'block', marginBottom: '4px' }}>
+                            <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
                               Validade (MM/AA):
                             </label>
                             <input
@@ -1395,20 +1628,11 @@ export function SubscriptionBillingPage() {
                               placeholder="MM/AA"
                               value={cardExp}
                               onChange={(e) => setCardExp(formatExpInput(e.target.value))}
-                              style={{
-                                width: '100%',
-                                padding: '10px 12px',
-                                borderRadius: '8px',
-                                border: '1px solid var(--color-border, #cbd5e1)',
-                                fontSize: '14px',
-                                background: 'var(--color-surface, #ffffff)',
-                                color: 'var(--color-text-main)',
-                              }}
+                              className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
                             />
                           </div>
-
                           <div>
-                            <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'block', marginBottom: '4px' }}>
+                            <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
                               CVV:
                             </label>
                             <input
@@ -1417,23 +1641,13 @@ export function SubscriptionBillingPage() {
                               placeholder="123"
                               value={cardCvv}
                               onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, ''))}
-                              style={{
-                                width: '100%',
-                                padding: '10px 12px',
-                                borderRadius: '8px',
-                                border: '1px solid var(--color-border, #cbd5e1)',
-                                fontSize: '14px',
-                                background: 'var(--color-surface, #ffffff)',
-                                color: 'var(--color-text-main)',
-                              }}
+                              className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
                             />
                           </div>
                         </div>
-
-                        {/* Endereço de Cobrança: CEP e Número */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'block', marginBottom: '4px' }}>
+                            <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
                               CEP de cobrança:
                             </label>
                             <input
@@ -1441,41 +1655,23 @@ export function SubscriptionBillingPage() {
                               placeholder="00000-000"
                               value={payerPostalCode}
                               onChange={(e) => setPayerPostalCode(formatCep(e.target.value))}
-                              style={{
-                                width: '100%',
-                                padding: '10px 12px',
-                                borderRadius: '8px',
-                                border: '1px solid var(--color-border, #cbd5e1)',
-                                fontSize: '14px',
-                                background: 'var(--color-surface, #ffffff)',
-                                color: 'var(--color-text-main)',
-                              }}
+                              className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
                             />
                           </div>
                           <div>
-                            <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'block', marginBottom: '4px' }}>
-                              Número do endereço:
+                            <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                              Número:
                             </label>
                             <input
                               type="text"
                               placeholder="Ex: 100"
                               value={payerAddressNumber}
                               onChange={(e) => setPayerAddressNumber(e.target.value)}
-                              style={{
-                                width: '100%',
-                                padding: '10px 12px',
-                                borderRadius: '8px',
-                                border: '1px solid var(--color-border, #cbd5e1)',
-                                fontSize: '14px',
-                                background: 'var(--color-surface, #ffffff)',
-                                color: 'var(--color-text-main)',
-                              }}
+                              className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800"
                             />
                           </div>
                         </div>
-
-                        {/* Checkbox Salvar Cartão */}
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer', color: 'var(--color-text-main)' }}>
+                        <label className="flex items-center gap-2 text-xs cursor-pointer text-zinc-600 dark:text-zinc-400">
                           <input
                             type="checkbox"
                             checked={saveCard}
@@ -1489,60 +1685,215 @@ export function SubscriptionBillingPage() {
                     <button
                       type="button"
                       disabled={checkoutBusy}
-                      onClick={() => void handleProcessCardPayment(activeTab as 'credit_card' | 'debit_card')}
-                      style={{
-                        background: 'var(--admin-primary-btn, #2B1D17)',
-                        color: '#ffffff',
-                        border: 'none',
-                        padding: '14px',
-                        borderRadius: '10px',
-                        fontSize: '14.5px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        marginTop: '8px',
-                      }}
+                      onClick={() => void handleProcessCardPayment('credit_card')}
+                      className="w-full py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white font-bold text-xs cursor-pointer shadow-md transition-colors"
                     >
-                      {checkoutBusy ? 'Processando transação…' : `Pagar e Ativar Plano Agora`}
+                      {checkoutBusy ? 'Processando transação…' : 'Pagar e Ativar Plano Agora'}
                     </button>
                   </div>
                 )}
-              </>
+              </div>
             )}
           </div>
         </div>
       )}
 
-      {/* Rodapé de Termos de Uso e Isenção de Responsabilidade Fiscal */}
-      <div
-        style={{
-          marginTop: '32px',
-          paddingTop: '20px',
-          borderTop: '1px solid var(--admin-border, #e7e5e4)',
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '12px',
-          fontSize: '12.5px',
-          color: 'var(--admin-muted, #57534e)',
-        }}
-      >
+      {/* =========================================================================
+          MODAL DE COMPROVANTE / RECIBO DE FATURA
+          ========================================================================= */}
+      {receiptInvoice && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-200"
+        >
+          <div className="bg-white dark:bg-zinc-900 rounded-3xl max-w-md w-full p-6 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4 text-zinc-900 dark:text-zinc-100">
+            <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
+              <div>
+                <h3 className="text-base font-extrabold text-zinc-900 dark:text-white">
+                  Recibo de Assinatura
+                </h3>
+                <p className="text-xs text-zinc-500 font-mono">
+                  #{receiptInvoice.id.slice(0, 8).toUpperCase()}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReceiptInvoice(null)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs bg-zinc-50 dark:bg-zinc-800/40 p-4 rounded-xl border border-zinc-200/60 dark:border-zinc-800">
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Restaurante:</span>
+                <span className="font-bold">{currentRest.name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Plano:</span>
+                <span className="font-bold">{PLAN_TITLES[receiptInvoice.plan_id] || receiptInvoice.plan_id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Ciclo:</span>
+                <span className="font-bold">{receiptInvoice.billing_cycle === 'yearly' ? 'Anual (12 meses)' : 'Mensal (30 dias)'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Forma de Pagamento:</span>
+                <span className="font-bold">{receiptInvoice.payment_method === 'pix' ? 'PIX Instantâneo' : `Cartão •••• ${receiptInvoice.card_last4 || ''}`}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Data de Emissão:</span>
+                <span className="font-bold">{new Date(receiptInvoice.created_at).toLocaleDateString('pt-BR')}</span>
+              </div>
+              <div className="flex justify-between border-t border-zinc-200 dark:border-zinc-700 pt-2 text-sm font-extrabold">
+                <span>Valor Total Pago:</span>
+                <span className="text-emerald-600">{formatCurrencyBRL(receiptInvoice.amount_cents)}</span>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="flex-1 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-bold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 6 2 18 2 18 9" />
+                  <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                  <rect width="12" height="8" x="6" y="14" />
+                </svg>
+                <span>Imprimir Recibo</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setReceiptInvoice(null)}
+                className="flex-1 py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white text-xs font-bold cursor-pointer transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          MODAL ADICIONAR NOVO CARTÃO
+          ========================================================================= */}
+      {addCardModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-200"
+        >
+          <div className="bg-white dark:bg-zinc-900 rounded-3xl max-w-md w-full p-6 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4 text-zinc-900 dark:text-zinc-100">
+            <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
+              <div>
+                <h3 className="text-base font-extrabold text-zinc-900 dark:text-white">
+                  Adicionar Novo Cartão
+                </h3>
+                <p className="text-xs text-zinc-500">
+                  Cadastre um cartão para renovação automática segura.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAddCardModalOpen(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                  Número do Cartão:
+                </label>
+                <input
+                  type="text"
+                  placeholder="0000 0000 0000 0000"
+                  value={cardNumber}
+                  onChange={(e) => setCardNumber(formatCardInput(e.target.value))}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                  Nome impresso no Cartão:
+                </label>
+                <input
+                  type="text"
+                  placeholder="NOME COMO NO CARTAO"
+                  value={cardHolder}
+                  onChange={(e) => setCardHolder(e.target.value.toUpperCase())}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 uppercase"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                    Validade (MM/AA):
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="MM/AA"
+                    value={cardExp}
+                    onChange={(e) => setCardExp(formatExpInput(e.target.value))}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                    CVV:
+                  </label>
+                  <input
+                    type="password"
+                    maxLength={4}
+                    placeholder="123"
+                    value={cardCvv}
+                    onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, ''))}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-xs cursor-pointer text-zinc-600 dark:text-zinc-400 pt-1">
+                <input
+                  type="checkbox"
+                  checked={isDefaultNewCard}
+                  onChange={(e) => setIsDefaultNewCard(e.target.checked)}
+                />
+                <span>Definir como cartão principal para renovação</span>
+              </label>
+
+              <button
+                type="button"
+                disabled={addCardBusy}
+                onClick={() => void handleSaveNewCardModal()}
+                className="w-full py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white font-bold text-xs cursor-pointer shadow-md transition-colors mt-2"
+              >
+                {addCardBusy ? 'Cadastrando cartão…' : 'Salvar Cartão'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          RODAPÉ DE TERMOS E RESPONSABILIDADE FISCAL
+          ========================================================================= */}
+      <div className="pt-6 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-500">
         <span>
-          Plataforma Elozi SaaS — Sistema de gestão operacional de pedidos, comandas e atendimento em mesa (sem emissão fiscal direta).
+          Plataforma Elozi SaaS — Sistema de gestão operacional de pedidos, comandas e atendimento em mesa.
         </span>
         <button
           type="button"
           onClick={() => setTermsModalOpen(true)}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            padding: 0,
-            color: 'var(--admin-text, #2B1D17)',
-            fontWeight: 700,
-            textDecoration: 'underline',
-            cursor: 'pointer',
-            fontSize: '12.5px',
-          }}
+          className="font-bold underline text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 cursor-pointer"
         >
           Termos de Uso e Responsabilidade Fiscal
         </button>

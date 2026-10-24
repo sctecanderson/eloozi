@@ -28,6 +28,8 @@ export interface RestaurantIdentity extends Restaurant {
   brandPrimaryColor?: string;
   headerNameColor?: string;
   headerSubtitleColor?: string;
+  dashboardLogoUrl?: string | null;
+  dashboardBannerUrl?: string | null;
 }
 export interface IdentityMedia {
   url: string;
@@ -124,6 +126,18 @@ export function parseRestaurant(value: unknown): RestaurantIdentity {
       : typeof v.header_subtitle_color === "string"
       ? v.header_subtitle_color
       : "#57534e";
+  const dashboardLogoUrl =
+    typeof v.dashboardLogoUrl === "string"
+      ? v.dashboardLogoUrl
+      : typeof v.dashboard_logo_url === "string"
+      ? v.dashboard_logo_url
+      : null;
+  const dashboardBannerUrl =
+    typeof v.dashboardBannerUrl === "string"
+      ? v.dashboardBannerUrl
+      : typeof v.dashboard_banner_url === "string"
+      ? v.dashboard_banner_url
+      : null;
   return {
     ...(value as RestaurantIdentity),
     serviceFeePercent,
@@ -135,6 +149,8 @@ export function parseRestaurant(value: unknown): RestaurantIdentity {
     brandPrimaryColor,
     headerNameColor,
     headerSubtitleColor,
+    dashboardLogoUrl,
+    dashboardBannerUrl,
   };
 }
 interface ContextValue {

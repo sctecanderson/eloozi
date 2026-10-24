@@ -68,6 +68,12 @@ export interface Product {
   // Estoque e disponibilidade operacional (Bloco 17)
   inventoryItemId?: string | null;
   isOutOfStock?: boolean;
+
+  // Selo promocional em destaque (ex: "Mais Pedido", "Destaque da Casa", etc.)
+  badgeText?: string | null;
+  badge_text?: string | null;
+  badgeColor?: string | null;
+  badge_color?: string | null;
 }
 
 export interface PublicProductComment {

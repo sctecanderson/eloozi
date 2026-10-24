@@ -10,6 +10,10 @@ export interface AdminProduct {
   prep_time_min_minutes?: number | null; prep_time_max_minutes?: number | null;
   preparation_station?: 'kitchen' | 'bar' | 'none';
   inventory_item_id?: string | null;
+  badge_text?: string | null;
+  badgeText?: string | null;
+  badge_color?: string | null;
+  badgeColor?: string | null;
   revision: number;
   images: AdminImage[]; cover_image_id: string | null; video: AdminVideo | null;
 }
