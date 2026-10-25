@@ -56,6 +56,7 @@ export async function getTableTabsState(
       .select('*')
       .eq('restaurant_id', restaurantId)
       .eq('table_visit_id', tableVisitId)
+      .eq('status', 'open')
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .overrideTypes<TableTab[], { merge: false }>(),

@@ -20,6 +20,7 @@ import { RequireStaffAccess } from "../features/auth/RequireStaffAccess";
 import { ThemeProvider, useTheme } from "../features/theme/ThemeContext";
 import { ThemeToggleButton } from "../features/theme/ThemeToggleButton";
 import { StaffCommissionProvider } from "../features/service/StaffCommissionContext";
+import { SoundSettingsControl } from "../features/alerts/SoundSettingsControl";
 import { StaffCommissionHeaderPill } from "../features/service/StaffCommissionHeaderPill";
 import { LandingPage } from "../features/landing/LandingPage";
 
@@ -205,6 +206,7 @@ function RestaurantLayout() {
   const isProduct = location.pathname.split("/")[2] === "produto";
   const isEquipe = location.pathname.split("/")[2] === "equipe";
   const isStaffHistory = isEquipe && location.pathname.split("/")[3] === "historico";
+  const isStaffTableDetail = isEquipe && new URLSearchParams(location.search).has("mesa");
   if (isExplore) {
     return (
       <div className="restaurant explore-viewport" data-theme={themeMode} style={theme}>
@@ -242,18 +244,22 @@ function RestaurantLayout() {
         </Suspense>
       </div>
     );
-  return (
-    <StaffCommissionProvider>
-      <div className={`restaurant ${isEquipe ? 'staff-site' : 'public-site'}`} data-theme={themeMode} style={theme}>
-        <a href="#content" className="skip-link">
-          Pular para o conteúdo
-        </a>
-        <div className="shell">
-          {!isProduct && (
-            <>
+
+  if (isEquipe) {
+    return (
+      <StaffCommissionProvider>
+        <div className="min-h-screen bg-[#FAF6F2] dark:bg-zinc-950 flex justify-center" data-theme={themeMode} style={theme}>
+          <a
+            href="#content"
+            className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 z-50 bg-white p-2 rounded shadow text-xs text-zinc-900"
+          >
+            Pular para o conteúdo
+          </a>
+          <div className="w-full max-w-md md:max-w-lg min-h-screen flex flex-col relative px-4 pt-3 pb-28 shadow-xl bg-[#FAF6F2] dark:bg-zinc-950 border-x border-amber-900/5">
+            {!isStaffTableDetail && (
               <header className="public-header">
                 <Link
-                  to={isEquipe ? `/${restaurant.slug}/equipe` : `/${restaurant.slug}${tableQuery}`}
+                  to={`/${restaurant.slug}/equipe`}
                   aria-label={`${restaurant.name}, início`}
                   className="wordmark"
                 >
@@ -271,39 +277,167 @@ function RestaurantLayout() {
                   )}
                 </Link>
                 <div className="public-header-actions">
-                  {!isEquipe && (
-                    <span className="badge public-table-badge">
-                      {table.status === "unverified"
-                        ? `Mesa ${table.tableNumber}`
-                        : table.status === "invalid"
-                          ? "Mesa inválida"
-                          : table.status === "expired"
-                            ? "Atendimento indisponível"
-                            : table.status === "loading"
-                              ? "Identificando mesa…"
-                              : "Consulta sem mesa"}
-                    </span>
-                  )}
-                  {isStaffHistory ? (
-                    <StaffCommissionHeaderPill />
-                  ) : (
-                    <ThemeToggleButton />
-                  )}
+                  <SoundSettingsControl />
+                  <ThemeToggleButton />
                 </div>
               </header>
-              {isEquipe ? (
-              <nav className="tabs public-tabs" aria-label="Navegação da equipe">
-                <NavLink end to={`/${restaurant.slug}/equipe`}>
-                  Atendimento
-                </NavLink>
-                <NavLink to={`/${restaurant.slug}/equipe/historico`}>
-                  Histórico
-                </NavLink>
-                <NavLink to={`/${restaurant.slug}/equipe/perfil`}>
-                  Perfil
-                </NavLink>
-              </nav>
-            ) : (
+            )}
+
+            <main id="content" className="flex-1">
+              <Suspense
+                fallback={
+                  <div className="py-6 text-center">
+                    <p role="status" className="text-xs text-[var(--ink)] opacity-60">
+                      Carregando equipe…
+                    </p>
+                  </div>
+                }
+              >
+                <Outlet />
+              </Suspense>
+            </main>
+
+            {/* Barra Inferior Fixa (BottomNav) */}
+            <nav className="fixed bottom-0 left-0 right-0 z-40 flex justify-center pointer-events-none" aria-label="Navegação da equipe">
+              <div className="w-full max-w-md md:max-w-lg px-4 pb-3 pointer-events-auto">
+                <div className="bg-[#FCF9F5]/95 dark:bg-zinc-900/95 backdrop-blur-md rounded-3xl border border-amber-900/10 shadow-lg py-2.5 px-4 flex items-center justify-around">
+                  {/* Itens: Atendimento, Comandas, Chamados, Mais */}
+                  <NavLink
+                    to={`/${restaurant.slug}/equipe`}
+                    end
+                    className={() => {
+                      const isAtendimentoActive =
+                        location.pathname === `/${restaurant.slug}/equipe` &&
+                        !location.search.includes('status=waiting');
+                      return `flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition-all cursor-pointer ${
+                        isAtendimentoActive
+                          ? 'bg-[#FAF4EE] dark:bg-zinc-800 text-[#4A1505] dark:text-amber-300 font-bold'
+                          : 'text-zinc-600 dark:text-zinc-400 font-medium hover:text-zinc-900 dark:hover:text-zinc-200'
+                      }`;
+                    }}
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 4v2" />
+                      <path d="M4 18h16a1 1 0 0 0 1-1A9 9 0 0 0 3 17a1 1 0 0 0 1 1z" />
+                      <path d="M2 20h20" />
+                    </svg>
+                    <span className="text-[11px] leading-tight">Atendimento</span>
+                  </NavLink>
+
+                  <NavLink
+                    to={`/${restaurant.slug}/equipe/comandas`}
+                    className={() => {
+                      const isComandasActive =
+                        location.pathname.includes('/comandas') ||
+                        location.pathname.includes('/historico');
+                      return `flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition-all cursor-pointer ${
+                        isComandasActive
+                          ? 'bg-[#FAF4EE] dark:bg-zinc-800 text-[#4A1505] dark:text-amber-300 font-bold'
+                          : 'text-zinc-600 dark:text-zinc-400 font-medium hover:text-zinc-900 dark:hover:text-zinc-200'
+                      }`;
+                    }}
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                      <line x1="16" y1="13" x2="8" y2="13" />
+                      <line x1="16" y1="17" x2="8" y2="17" />
+                    </svg>
+                    <span className="text-[11px] leading-tight">Comandas</span>
+                  </NavLink>
+
+                  <NavLink
+                    to={`/${restaurant.slug}/equipe?status=waiting`}
+                    className={() => {
+                      const isChamadosActive =
+                        location.pathname === `/${restaurant.slug}/equipe` &&
+                        location.search.includes('status=waiting');
+                      return `flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition-all cursor-pointer ${
+                        isChamadosActive
+                          ? 'bg-[#FAF4EE] dark:bg-zinc-800 text-[#4A1505] dark:text-amber-300 font-bold'
+                          : 'text-zinc-600 dark:text-zinc-400 font-medium hover:text-zinc-900 dark:hover:text-zinc-200'
+                      }`;
+                    }}
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                    </svg>
+                    <span className="text-[11px] leading-tight">Chamados</span>
+                  </NavLink>
+
+                  <NavLink
+                    to={`/${restaurant.slug}/equipe/perfil`}
+                    className={() => {
+                      const isPerfilActive = location.pathname.includes('/perfil');
+                      return `flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition-all cursor-pointer ${
+                        isPerfilActive
+                          ? 'bg-[#FAF4EE] dark:bg-zinc-800 text-[#4A1505] dark:text-amber-300 font-bold'
+                          : 'text-zinc-600 dark:text-zinc-400 font-medium hover:text-zinc-900 dark:hover:text-zinc-200'
+                      }`;
+                    }}
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                    <span className="text-[11px] leading-tight">Mais</span>
+                  </NavLink>
+                </div>
+              </div>
+            </nav>
+          </div>
+        </div>
+      </StaffCommissionProvider>
+    );
+  }
+
+  return (
+    <StaffCommissionProvider>
+      <div className="restaurant public-site" data-theme={themeMode} style={theme}>
+        <a
+          href="#content"
+          className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 z-50 bg-white p-2 rounded shadow text-xs text-zinc-900"
+        >
+          Pular para o conteúdo
+        </a>
+        <div className="shell">
+          {!isProduct && (
+            <>
+              <header className="public-header">
+                <Link
+                  to={`/${restaurant.slug}${tableQuery}`}
+                  aria-label={`${restaurant.name}, início`}
+                  className="wordmark"
+                >
+                  {restaurant.logo ? (
+                    <img
+                      src={restaurant.logo.url}
+                      className="public-logo"
+                      alt={restaurant.name}
+                    />
+                  ) : (
+                    <>
+                      {restaurant.name}
+                      <span>{restaurant.subtitle}</span>
+                    </>
+                  )}
+                </Link>
+                <div className="public-header-actions">
+                  <span className="badge public-table-badge">
+                    {table.status === "unverified"
+                      ? `Mesa ${table.tableNumber}`
+                      : table.status === "invalid"
+                        ? "Mesa inválida"
+                        : table.status === "expired"
+                          ? "Atendimento indisponível"
+                          : table.status === "loading"
+                            ? "Identificando mesa…"
+                            : "Consulta sem mesa"}
+                  </span>
+                  <ThemeToggleButton />
+                </div>
+              </header>
               <nav className="tabs public-tabs" aria-label="Modo de visualização">
                 <NavLink end to={`/${restaurant.slug}${tableQuery}`}>
                   Home
@@ -315,23 +449,23 @@ function RestaurantLayout() {
                   Explorar
                 </NavLink>
               </nav>
-            )}
-          </>
-        )}
-        <main id="content" className={`public-main ${isProduct ? 'product-main' : ''}`}>
-          <Suspense
-            fallback={
-              <div className="py-6 text-center">
-                <p role="status" className="text-xs text-[var(--ink)] opacity-60">
-                  {isEquipe ? 'Carregando equipe…' : 'Carregando…'}</p>
-              </div>
-            }
-          >
-            <Outlet />
-          </Suspense>
-        </main>
+            </>
+          )}
+          <main id="content" className={`public-main ${isProduct ? 'product-main' : ''}`}>
+            <Suspense
+              fallback={
+                <div className="py-6 text-center">
+                  <p role="status" className="text-xs text-[var(--ink)] opacity-60">
+                    Carregando…
+                  </p>
+                </div>
+              }
+            >
+              <Outlet />
+            </Suspense>
+          </main>
+        </div>
       </div>
-    </div>
     </StaffCommissionProvider>
   );
 }
@@ -444,6 +578,7 @@ export function App() {
           <Route path="acesso" element={<PlatformAccessPage />} />
           <Route element={<RequireStaffAccess />}>
             <Route path="equipe" element={<StaffServicePage />} />
+            <Route path="equipe/comandas" element={<StaffHistoryPage />} />
             <Route path="equipe/historico" element={<StaffHistoryPage />} />
             <Route path="equipe/perfil" element={<StaffProfilePage />} />
           </Route>

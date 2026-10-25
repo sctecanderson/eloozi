@@ -46,7 +46,7 @@ const LEGACY_STORAGE_KEY = 'kds_audio_enabled';
 
 let sharedAudioContext: AudioContext | null = null;
 
-function getAudioContext(): AudioContext | null {
+function initAudio(): AudioContext | null {
   if (typeof window === 'undefined') return null;
   const AudioContextClass =
     window.AudioContext ||
@@ -55,6 +55,17 @@ function getAudioContext(): AudioContext | null {
   if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
     sharedAudioContext = new AudioContextClass();
   }
+  if (sharedAudioContext && sharedAudioContext.state === 'suspended') {
+    sharedAudioContext.resume().catch(() => {});
+  }
+  return sharedAudioContext;
+}
+
+function getAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  if (!sharedAudioContext) {
+    return null;
+  }
   return sharedAudioContext;
 }
 
@@ -62,20 +73,13 @@ function getAudioContext(): AudioContext | null {
  * Desbloqueia o AudioContext após o primeiro clique/toque
  */
 export function unlockAudioContext(): void {
-  const ctx = getAudioContext();
-  if (ctx && ctx.state === 'suspended') {
-    ctx.resume().catch(() => {});
-  }
+  initAudio();
 }
 
-if (typeof window !== 'undefined') {
-  const unlock = () => {
-    unlockAudioContext();
-    window.removeEventListener('pointerdown', unlock);
-    window.removeEventListener('keydown', unlock);
-  };
-  window.addEventListener('pointerdown', unlock, { passive: true });
-  window.addEventListener('keydown', unlock, { passive: true });
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', () => {
+    initAudio();
+  }, { once: true, passive: true });
 }
 
 export function isSoundEnabled(): boolean {
@@ -149,7 +153,7 @@ interface ToneStep {
 
 function playToneSteps(steps: ToneStep[]): void {
   try {
-    const ctx = getAudioContext();
+    const ctx = initAudio();
     if (!ctx) return;
     if (ctx.state === 'suspended') {
       ctx.resume().catch(() => {});

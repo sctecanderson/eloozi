@@ -57,10 +57,16 @@ export interface ReservationItem {
   tableNumber: number;
   customerName: string;
   phone: string;
+  date?: string;
   time: string;
+  status?: string;
   guestsCount: number;
   notes?: string;
   createdAt: string;
+}
+
+function isConfirmedReservation(res: ReservationItem): boolean {
+  return !res.status || ["confirmed", "confirmada", "agendada", "reservada"].includes(res.status);
 }
 
 function formatElapsedTime(openedAt?: string | null): string {
@@ -178,6 +184,7 @@ export function TablesPage() {
   useEffect(() => {
     if (r.id) {
       localStorage.setItem(`elozi_reservas_${r.id}`, JSON.stringify(reservations));
+      window.dispatchEvent(new CustomEvent('elozi:reservations-updated', { detail: { restaurantId: r.id } }));
     }
   }, [reservations, r.id]);
 
@@ -338,7 +345,9 @@ export function TablesPage() {
   // Mapeamento 100% REAL de cada mesa vinda do Supabase
   const displayTables: TableItemView[] = useMemo(() => {
     return tables.map((t) => {
-      const activeReservation = reservations.find((res) => res.tableNumber === t.tableNumber);
+      const activeReservation = reservations.find(
+        (res) => res.tableNumber === t.tableNumber && isConfirmedReservation(res)
+      );
       const isLocked = !t.active || !!t.isLockedByPlan;
       const isWaiting = t.billPending;
       const isOccupied = !!t.visitId && !isWaiting;
@@ -752,12 +761,16 @@ export function TablesPage() {
       return;
     }
 
+    const todayLocal = new Date().toLocaleDateString('sv-SE');
+
     const newRes: ReservationItem = {
       id: crypto.randomUUID(),
       tableNumber: reserveTableNumber,
       customerName: reserveCustomerName.trim(),
       phone: reservePhone.trim(),
+      date: todayLocal,
       time: reserveTime,
+      status: "confirmed",
       guestsCount: reserveGuestsCount,
       notes: reserveNotes.trim(),
       createdAt: new Date().toISOString(),
@@ -779,7 +792,14 @@ export function TablesPage() {
   async function handleSeatReservation(res: ReservationItem) {
     try {
       await openTableVisit(r.slug, res.tableNumber);
-      handleCancelReservation(res.id);
+      // Atualiza o status da reserva para 'seated'
+      setReservations((prev) =>
+        prev.map((item) =>
+          item.id === res.id || item.tableNumber === res.tableNumber
+            ? { ...item, status: "seated" }
+            : item
+        )
+      );
       setNotice(`Cliente acomodado na Mesa ${String(res.tableNumber).padStart(2, "0")}! Atendimento iniciado.`);
       setIsReservationModalOpen(false);
       setRevision((v) => v + 1);
@@ -1452,7 +1472,9 @@ export function TablesPage() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    const res = reservations.find((r) => r.tableNumber === t.tableNumber);
+                                    const res = reservations.find(
+                                      (r) => r.tableNumber === t.tableNumber && isConfirmedReservation(r)
+                                    );
                                     if (res) {
                                       void handleSeatReservation(res);
                                     } else {
@@ -1598,7 +1620,9 @@ export function TablesPage() {
                                         type="button"
                                         onClick={() => {
                                           setOpenMenuTableId(null);
-                                          const res = reservations.find((r) => r.tableNumber === t.tableNumber);
+                                          const res = reservations.find(
+                                            (r) => r.tableNumber === t.tableNumber && isConfirmedReservation(r)
+                                          );
                                           if (res) void handleSeatReservation(res);
                                         }}
                                         className="w-full px-3.5 py-2 text-xs font-semibold text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40 flex items-center gap-2 cursor-pointer"
@@ -1621,7 +1645,9 @@ export function TablesPage() {
                                         type="button"
                                         onClick={() => {
                                           setOpenMenuTableId(null);
-                                          const res = reservations.find((r) => r.tableNumber === t.tableNumber);
+                                          const res = reservations.find(
+                                            (r) => r.tableNumber === t.tableNumber && isConfirmedReservation(r)
+                                          );
                                           if (res) handleCancelReservation(res.id);
                                         }}
                                         className="w-full px-3.5 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40 flex items-center gap-2 cursor-pointer"
@@ -2551,53 +2577,58 @@ export function TablesPage() {
             </form>
 
             {/* Lista de Reservas Ativas */}
-            <div>
-              <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200 mb-2">
-                Reservas Agendadas ({reservations.length}):
-              </p>
-              {reservations.length === 0 ? (
-                <div className="p-4 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 text-xs text-zinc-400 text-center">
-                  Nenhuma reserva cadastrada para o dia.
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                  {reservations.map((res) => (
-                    <div
-                      key={res.id}
-                      className="p-3 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex items-center justify-between gap-3 text-xs shadow-2xs"
-                    >
-                      <div>
-                        <p className="font-bold text-zinc-900 dark:text-white">
-                          Mesa {String(res.tableNumber).padStart(2, "0")} — {res.customerName}
-                        </p>
-                        <p className="text-[11px] text-zinc-500">
-                          Horário: <strong>{res.time}</strong> • {res.guestsCount} pessoas • {res.phone || "Sem tel."}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => void handleSeatReservation(res)}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer"
-                          title="Acomodar cliente e abrir atendimento"
-                        >
-                          Acomodar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleCancelReservation(res.id)}
-                          className="p-1 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs cursor-pointer"
-                          title="Cancelar reserva"
-                        >
-                          ✕
-                        </button>
-                      </div>
+            {(() => {
+              const activeList = reservations.filter((res) => isConfirmedReservation(res));
+              return (
+                <div>
+                  <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200 mb-2">
+                    Reservas Agendadas ({activeList.length}):
+                  </p>
+                  {activeList.length === 0 ? (
+                    <div className="p-4 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 text-xs text-zinc-400 text-center">
+                      Nenhuma reserva ativa cadastrada para o dia.
                     </div>
-                  ))}
+                  ) : (
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {activeList.map((res) => (
+                        <div
+                          key={res.id}
+                          className="p-3 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex items-center justify-between gap-3 text-xs shadow-2xs"
+                        >
+                          <div>
+                            <p className="font-bold text-zinc-900 dark:text-white">
+                              Mesa {String(res.tableNumber).padStart(2, "0")} — {res.customerName}
+                            </p>
+                            <p className="text-[11px] text-zinc-500">
+                              Horário: <strong>{res.time}</strong> • {res.guestsCount} pessoas • {res.phone || "Sem tel."}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void handleSeatReservation(res)}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer"
+                              title="Acomodar cliente e abrir atendimento"
+                            >
+                              Acomodar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleCancelReservation(res.id)}
+                              className="p-1 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs cursor-pointer"
+                              title="Cancelar reserva"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
 
             <div className="flex justify-end pt-2 border-t border-zinc-100 dark:border-zinc-800">
               <button

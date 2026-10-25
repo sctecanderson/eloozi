@@ -174,12 +174,15 @@ export async function addTabConsumption(
 }
 
 export async function cancelTabConsumption(
-  restaurantSlug: string, itemId: string, reason: string,
+  restaurantSlug: string,
+  itemId: string,
+  reason: string = 'Cancelado pelo garçom',
 ) {
-  const normalizedReason = reason.trim();
+  const normalizedReason = reason.trim() || 'Cancelado pelo garçom';
   if (normalizedReason.length < 3 || normalizedReason.length > 300) {
     throw new Error('Informe um motivo entre 3 e 300 caracteres.');
   }
+
   const { data, error } = await supabase
     .rpc('cancel_table_tab_item', {
       p_restaurant_slug: restaurantSlug,
@@ -189,9 +192,8 @@ export async function cancelTabConsumption(
     .single()
     .overrideTypes<TabConsumptionItem, { merge: false }>();
 
-  if (error) throw operationError(error, 'Não foi possível cancelar o lançamento.');
-  if (!data || data.id !== itemId || data.status !== 'cancelled') {
-    throw new Error('O cancelamento não foi confirmado pelo servidor.');
+  if (error) {
+    throw operationError(error, 'Não foi possível cancelar o item.');
   }
   return data;
 }

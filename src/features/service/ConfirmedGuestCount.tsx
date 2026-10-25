@@ -142,7 +142,10 @@ export function ConfirmedGuestCount({
 
     return (
         <div className="mb-3">
-            <span role="status" className="staff-access-pill">
+            <span
+                role="status"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200 border border-amber-200/80 dark:border-amber-900/40"
+            >
                 {count === null
                     ? loading
                         ? 'Carregando acessos…'

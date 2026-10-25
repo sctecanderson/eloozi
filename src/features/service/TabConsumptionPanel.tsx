@@ -338,22 +338,22 @@ function ConsumptionContent({ restaurantSlug, restaurantId, tab, tableNumber }: 
                               : 'Cozinha'}
                         </span>
 
-                        <span className={`inline-block px-2 py-0.5 text-[11px] font-medium rounded border ${
+                        <span className={`inline-block px-2 py-0.5 text-[11px] font-medium rounded-full border ${
                           group.productionStatus === 'pending'
-                            ? 'bg-amber-50 text-amber-800 border-amber-200'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200/60'
                             : group.productionStatus === 'preparing'
-                              ? 'bg-sky-50 text-sky-800 border-sky-200'
+                              ? 'bg-sky-50 text-sky-700 border border-sky-200/60'
                               : group.productionStatus === 'ready'
-                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold'
-                                : 'bg-stone-100 text-stone-600 border-stone-200'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-300 font-bold animate-pulse'
+                                : 'bg-zinc-100 text-zinc-600 border border-zinc-200'
                         }`}>
                           {group.productionStatus === 'pending'
-                            ? 'Aguardando preparo'
+                            ? '● Aguardando início de preparo'
                             : group.productionStatus === 'preparing'
-                              ? 'Em preparo'
+                              ? '● Em preparo na cozinha'
                               : group.productionStatus === 'ready'
-                                ? 'Pronto para entrega'
-                                : 'Entregue'}
+                                ? '● Pronto para servir'
+                                : '✓ Entregue'}
                         </span>
 
                         {!closed && group.productionStatus === 'ready' && (
@@ -361,9 +361,9 @@ function ConsumptionContent({ restaurantSlug, restaurantId, tab, tableNumber }: 
                             type="button"
                             disabled={disabled}
                             onClick={() => void handleConfirmDeliveryItems(group.originalItems)}
-                            className="ml-auto inline-flex items-center gap-1 rounded-md bg-emerald-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-800 transition-colors disabled:opacity-50"
+                            className="ml-auto inline-flex items-center gap-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 text-[11px] font-bold text-white transition-colors disabled:opacity-50 shadow-xs cursor-pointer"
                           >
-                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg><span>Entregar na Mesa ({group.quantity}x)</span>
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg><span>Marcar como entregue</span>
                           </button>
                         )}
                       </div>
