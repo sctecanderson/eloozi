@@ -1,14 +1,47 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
+import { Link } from 'react-router';
 import { supabase } from '../../lib/supabase';
 import {
   closeTableTab,
   createTableTab,
   getTableTabsState,
   linkGuestToTableTab,
+  calculateTabClosurePreview,
+  calculateTabClosureFee,
 } from './tableTabs';
 import type { TableTab, TableTabsState } from './tableTabs';
-import { addTabConsumption, cancelTabConsumption, getTabConsumption } from './tabConsumption';
+import {
+  addTabConsumption,
+  cancelTabConsumption,
+  cancelTabConsumptionBatch,
+  transferTabConsumptionItems,
+  getTabConsumption,
+} from './tabConsumption';
 import type { TabConsumptionItem } from './tabConsumption';
+import {
+  paginateComandaItems,
+  ITEMS_PAGE_SIZE,
+  COLLAPSED_LIMIT,
+} from './comandaItemsPagination';
+import type { PaginationResult } from './comandaItemsPagination';
+import {
+  getIndividualTabs,
+  shouldShowContaConjunta,
+  isSharedLabel,
+} from './contaConjuntaRules';
+import {
+  validateCancellationReason,
+  formatMoveItemAuditReason,
+  formatTransferTableAuditReason,
+} from './cancellationRules';
+import {
+  paginateCatalogProducts,
+  CATALOG_PAGE_SIZE,
+} from './catalogPagination';
+import {
+  calculateSplitBill,
+  parseSplitPeopleCount,
+} from './splitBillRules';
 import { useRestaurant } from '../restaurants/RestaurantProvider';
 import { printTableBillThermal } from '../../components/ThermalReceiptPrint';
 
@@ -17,10 +50,15 @@ interface TableTabsPanelProps {
   restaurantId: string;
   tableVisitId: string;
   tableNumber?: number | string;
+  role?: 'admin' | 'waiter';
   onOpenTabsCountChange?: (count: number) => void;
   showSuccessToast?: boolean;
   onCloseSuccessToast?: () => void;
   onNavigateToCatalog?: (tabId?: string) => void;
+  initialTabId?: string | null;
+  onTabSelected?: (tabId: string | null) => void;
+  initialSearchQuery?: string;
+  onSearchQueryChange?: (query: string) => void;
 }
 
 interface MenuCategoryItem {
@@ -42,73 +80,20 @@ interface MenuProductItem {
   sort_order: number;
 }
 
+export interface TabConsumptionEntry {
+  status: 'loading' | 'loaded' | 'error';
+  items: TabConsumptionItem[];
+  totalInCents: number;
+  error?: string;
+  isStale?: boolean;
+}
+
+export type ReloadConsumptionResult =
+  | { status: 'success'; data: { items: TabConsumptionItem[]; totalInCents: number } }
+  | { status: 'error'; error: string }
+  | { status: 'discarded'; reason: 'unmounted' | 'visit_changed' | 'superseded' };
+
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-
-// Fallback realista caso o restaurante não possua cardápio cadastrado no banco ainda
-const DEFAULT_FALLBACK_PRODUCTS: MenuProductItem[] = [
-  {
-    id: 'sample-caipirinha',
-    category_id: 'sample-cat-bebidas',
-    name: 'Caipirinha de limão',
-    short_description: 'Cachaça, limão e açúcar',
-    description: 'Tradicional caipirinha brasileira feita com cachaça artesanal e limão tahiti.',
-    price_in_cents: 3600,
-    available: true,
-    images: [{ url: 'https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=300&q=80' }],
-    sort_order: 1,
-  },
-  {
-    id: 'sample-picanha',
-    category_id: 'sample-cat-pratos',
-    name: 'Picanha 300g',
-    short_description: 'Ponto médio',
-    description: 'Corte nobre grelhado na brasa, acompanhado de farofa crocante e vinagrete da casa.',
-    price_in_cents: 8900,
-    available: true,
-    images: [{ url: 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=300&q=80' }],
-    sort_order: 2,
-  },
-  {
-    id: 'sample-agua',
-    category_id: 'sample-cat-bebidas',
-    name: 'Água com gás',
-    short_description: 'Água mineral 500ml',
-    description: 'Garrafa de água mineral com gás 500ml servida gelada.',
-    price_in_cents: 800,
-    available: true,
-    images: [{ url: 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?auto=format&fit=crop&w=300&q=80' }],
-    sort_order: 3,
-  },
-  {
-    id: 'sample-bruschetta',
-    category_id: 'sample-cat-entradas',
-    name: 'Bruschetta Italiana',
-    short_description: 'Tomates marinados, manjericão e azeite',
-    description: 'Fatias de pão rústico tostadas com azeite extravirgem, tomate fresco e manjericão.',
-    price_in_cents: 3200,
-    available: true,
-    images: [{ url: 'https://images.unsplash.com/photo-1572695157366-5e585ab2b69f?auto=format&fit=crop&w=300&q=80' }],
-    sort_order: 4,
-  },
-  {
-    id: 'sample-petit-gateau',
-    category_id: 'sample-cat-sobremesas',
-    name: 'Petit Gâteau',
-    short_description: 'Com sorvete de baunilha',
-    description: 'Bolo quente de chocolate com recheio cremoso, servido com bola de sorvete de baunilha.',
-    price_in_cents: 2800,
-    available: true,
-    images: [{ url: 'https://images.unsplash.com/photo-1606313564200-e75d5e30476c?auto=format&fit=crop&w=300&q=80' }],
-    sort_order: 5,
-  },
-];
-
-const DEFAULT_FALLBACK_CATEGORIES: MenuCategoryItem[] = [
-  { id: 'sample-cat-entradas', name: 'Entradas', slug: 'entradas', sort_order: 1 },
-  { id: 'sample-cat-pratos', name: 'Pratos', slug: 'pratos', sort_order: 2 },
-  { id: 'sample-cat-bebidas', name: 'Bebidas', slug: 'bebidas', sort_order: 3 },
-  { id: 'sample-cat-sobremesas', name: 'Sobremesas', slug: 'sobremesas', sort_order: 4 },
-];
 
 export function TableTabsPanel(props: TableTabsPanelProps) {
   return (
@@ -124,9 +109,14 @@ function TableTabsContent({
   restaurantId,
   tableVisitId,
   tableNumber,
+  role = 'waiter',
   onOpenTabsCountChange,
   showSuccessToast,
   onCloseSuccessToast,
+  initialTabId,
+  onTabSelected,
+  initialSearchQuery,
+  onSearchQueryChange,
 }: TableTabsPanelProps) {
   const submitting = useRef(false);
   const initialLoaded = useRef(false);
@@ -153,6 +143,7 @@ function TableTabsContent({
   });
 
   const [selectedTabId, setSelectedTabId] = useState<string | null>(() => {
+    if (initialTabId) return initialTabId;
     try {
       return sessionStorage.getItem(`elz_catalog_tab_${tableVisitId}`);
     } catch {
@@ -160,9 +151,23 @@ function TableTabsContent({
     }
   });
 
-  const [tabConsumptions, setTabConsumptions] = useState<
-    Record<string, { items: TabConsumptionItem[]; totalInCents: number }>
-  >({});
+  const currentVisitIdRef = useRef(tableVisitId);
+  currentVisitIdRef.current = tableVisitId;
+  const loadVersionRef = useRef(0);
+  const catalogVersionRef = useRef(0);
+  const tabVersionRef = useRef<Record<string, number>>({});
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const [tabConsumptions, setTabConsumptions] = useState<Record<string, TabConsumptionEntry>>({});
+  const tabConsumptionsRef = useRef<Record<string, TabConsumptionEntry>>({});
+  tabConsumptionsRef.current = tabConsumptions;
 
   // Edição e persistência de nome das comandas
   const [editingLabels, setEditingLabels] = useState<Record<string, string>>({});
@@ -182,11 +187,19 @@ function TableTabsContent({
   const [isEditingObservation, setIsEditingObservation] = useState(false);
   const [observationInput, setObservationInput] = useState('');
 
-  // Catálogo de produtos e categorias (Tela 4)
+  // Catálogo de produtos e categorias (Tela 4) — estritamente real do banco
   const [categories, setCategories] = useState<MenuCategoryItem[]>([]);
   const [products, setProducts] = useState<MenuProductItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('todos');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(initialSearchQuery || '');
+  const [catalogPage, setCatalogPage] = useState<number>(1);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogReloadKey, setCatalogReloadKey] = useState(0);
+
+  function retryLoadCatalog() {
+    setCatalogReloadKey((k) => k + 1);
+  }
 
   // Menus e ações de comanda
   const [activeMenuTabId, setActiveMenuTabId] = useState<string | null>(null);
@@ -202,14 +215,55 @@ function TableTabsContent({
   const [isMovePersonModalOpen, setIsMovePersonModalOpen] = useState(false);
   const [moveItemId, setMoveItemId] = useState('');
   const [moveTargetTabId, setMoveTargetTabId] = useState('');
+  const [moveReason, setMoveReason] = useState('');
+  const [moveReasonError, setMoveReasonError] = useState('');
 
   const [isTransferTableModalOpen, setIsTransferTableModalOpen] = useState(false);
   const [transferItemId, setTransferItemId] = useState('');
   const [transferTargetTableId, setTransferTargetTableId] = useState('');
+  const [transferTableTargetTabs, setTransferTableTargetTabs] = useState<Array<{ id: string; label: string }>>([]);
+  const [transferTableTargetTabId, setTransferTableTargetTabId] = useState('');
+  const [loadingTargetTabs, setLoadingTargetTabs] = useState(false);
+  const [transferReason, setTransferReason] = useState('');
+  const [transferReasonError, setTransferReasonError] = useState('');
   const [occupiedTables, setOccupiedTables] = useState<
     Array<{ id: string; table_number: number | string; label?: string | null; status?: string }>
   >([]);
   const [loadingOccupiedTables, setLoadingOccupiedTables] = useState(false);
+
+  // Paginação e expansão dos itens da comanda selecionada
+  const [isItemsExpanded, setIsItemsExpanded] = useState(false);
+  const [itemsCurrentPage, setItemsCurrentPage] = useState(1);
+
+  // Paginação independente por lista na visão de Conta Conjunta
+  const [expandedContaConjuntaLists, setExpandedContaConjuntaLists] = useState<Record<string, boolean>>({});
+  const [pageContaConjuntaLists, setPageContaConjuntaLists] = useState<Record<string, number>>({});
+
+  // Modal de cancelamento de item com motivo obrigatório para auditoria
+  interface CancellingItemState {
+    itemIds: string[];
+    productName: string;
+    quantity: number;
+    unitPriceInCents: number;
+    lineTotalInCents: number;
+    tabId: string;
+  }
+  const [cancellingItem, setCancellingItem] = useState<CancellingItemState | null>(null);
+  const [cancellationReason, setCancellationReason] = useState('');
+  const [cancellationSubmitting, setCancellationSubmitting] = useState(false);
+  const [cancellationModalError, setCancellationModalError] = useState('');
+
+  // Modal de Simulação de Divisão de Conta (Estimativa Visual)
+  const [isSplitBillModalOpen, setIsSplitBillModalOpen] = useState(false);
+  const [splitPeopleInput, setSplitPeopleInput] = useState('2');
+
+  // Ao alterar a pessoa/comanda ou visita, atualiza corretamente a lista e a página selecionada
+  useEffect(() => {
+    setIsItemsExpanded(false);
+    setItemsCurrentPage(1);
+    setExpandedContaConjuntaLists({});
+    setPageContaConjuntaLists({});
+  }, [selectedTabId, tableVisitId]);
 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -227,10 +281,14 @@ function TableTabsContent({
     }
   }, [showSuccessToast, onCloseSuccessToast]);
 
-  // Carregar produtos e categorias para o catálogo
+  // Carregar produtos e categorias reais para o catálogo (SEM FALLBACKS FICTÍCIOS)
   useEffect(() => {
     let disposed = false;
+
     async function loadCatalog() {
+      const catVersion = ++catalogVersionRef.current;
+      setCatalogLoading(true);
+      setCatalogError(null);
       try {
         const [catsRes, prodsRes] = await Promise.all([
           supabase
@@ -247,23 +305,30 @@ function TableTabsContent({
             .order('sort_order', { ascending: true }),
         ]);
 
-        if (!disposed) {
-          if (catsRes.data && catsRes.data.length > 0) {
-            setCategories(catsRes.data as MenuCategoryItem[]);
-          } else {
-            setCategories(DEFAULT_FALLBACK_CATEGORIES);
-          }
+        if (disposed || !isMountedRef.current || catVersion !== catalogVersionRef.current) return;
 
-          if (prodsRes.data && prodsRes.data.length > 0) {
-            setProducts(prodsRes.data as MenuProductItem[]);
-          } else {
-            setProducts(DEFAULT_FALLBACK_PRODUCTS);
-          }
+        if (catsRes.error) {
+          throw new Error(`Erro ao carregar categorias: ${catsRes.error.message}`);
         }
-      } catch {
-        if (!disposed) {
-          setCategories(DEFAULT_FALLBACK_CATEGORIES);
-          setProducts(DEFAULT_FALLBACK_PRODUCTS);
+        if (prodsRes.error) {
+          throw new Error(`Erro ao carregar produtos: ${prodsRes.error.message}`);
+        }
+
+        setCategories((catsRes.data as MenuCategoryItem[]) || []);
+        setProducts((prodsRes.data as MenuProductItem[]) || []);
+      } catch (cause) {
+        if (!disposed && isMountedRef.current && catVersion === catalogVersionRef.current) {
+          setCatalogError(
+            cause instanceof Error
+              ? cause.message
+              : 'Não foi possível carregar o cardápio. Verifique a conexão e tente novamente.',
+          );
+          setCategories([]);
+          setProducts([]);
+        }
+      } finally {
+        if (!disposed && isMountedRef.current && catVersion === catalogVersionRef.current) {
+          setCatalogLoading(false);
         }
       }
     }
@@ -272,20 +337,23 @@ function TableTabsContent({
     return () => {
       disposed = true;
     };
-  }, [restaurantId]);
+  }, [restaurantId, catalogReloadKey]);
 
   // Carregar comandas reais do banco (SEM auto-criar registros)
   useEffect(() => {
     let disposed = false;
 
     async function load() {
+      const currentVersion = ++loadVersionRef.current;
+      const targetVisitId = tableVisitId;
+
       if (!initialLoaded.current) {
         setLoading(true);
       }
 
       try {
         const [tabsResult, restaurantRes] = await Promise.all([
-          getTableTabsState(restaurantId, tableVisitId),
+          getTableTabsState(restaurantId, targetVisitId),
           supabase
             .from('restaurants')
             .select('service_fee_percent')
@@ -293,90 +361,168 @@ function TableTabsContent({
             .maybeSingle(),
         ]);
 
-        if (!disposed) {
-          setState(tabsResult);
-          if (restaurantRes.data?.service_fee_percent !== undefined) {
-            setRestaurantFeePercent(Number(restaurantRes.data.service_fee_percent));
+        if (
+          disposed ||
+          !isMountedRef.current ||
+          currentVersion !== loadVersionRef.current ||
+          targetVisitId !== currentVisitIdRef.current
+        ) {
+          return;
+        }
+
+        setState(tabsResult);
+        if (restaurantRes.data?.service_fee_percent !== undefined) {
+          setRestaurantFeePercent(Number(restaurantRes.data.service_fee_percent));
+        }
+
+        const openTabsList = tabsResult.tabs.filter((t) => t.status === 'open');
+        onOpenTabsCountChangeRef.current?.(openTabsList.length);
+
+        // Seleção inteligente da comanda ativa
+        let currentActiveTabId: string | null = null;
+        try {
+          const savedTabId = sessionStorage.getItem(`elz_catalog_tab_${targetVisitId}`);
+          if (savedTabId && tabsResult.tabs.some((t) => t.id === savedTabId && t.status === 'open')) {
+            currentActiveTabId = savedTabId;
           }
+        } catch {}
 
-          const openTabs = tabsResult.tabs.filter((t) => t.status === 'open');
-          onOpenTabsCountChangeRef.current?.(openTabs.length);
+        if (!currentActiveTabId) {
+          setSelectedTabId((prev) => {
+            if (prev && tabsResult.tabs.some((t) => t.id === prev && t.status === 'open')) {
+              currentActiveTabId = prev;
+              return prev;
+            }
+            const fallback = openTabsList[0]?.id || tabsResult.tabs[0]?.id || null;
+            currentActiveTabId = fallback;
+            return fallback;
+          });
+        } else {
+          setSelectedTabId(currentActiveTabId);
+        }
 
-          // Seleção inteligente da comanda ativa
-          let currentActiveTabId: string | null = null;
+        if (currentActiveTabId) {
           try {
-            const savedTabId = sessionStorage.getItem(`elz_catalog_tab_${tableVisitId}`);
-            if (savedTabId && tabsResult.tabs.some((t) => t.id === savedTabId && t.status === 'open')) {
-              currentActiveTabId = savedTabId;
-            }
+            sessionStorage.setItem(`elz_catalog_tab_${targetVisitId}`, currentActiveTabId);
           } catch {}
+        }
 
-          if (!currentActiveTabId) {
-            setSelectedTabId((prev) => {
-              if (prev && tabsResult.tabs.some((t) => t.id === prev && t.status === 'open')) {
-                currentActiveTabId = prev;
-                return prev;
-              }
-              const fallback = openTabs[0]?.id || tabsResult.tabs[0]?.id || null;
-              currentActiveTabId = fallback;
-              return fallback;
-            });
-          } else {
-            setSelectedTabId(currentActiveTabId);
-          }
-
-          if (currentActiveTabId) {
-            try {
-              sessionStorage.setItem(`elz_catalog_tab_${tableVisitId}`, currentActiveTabId);
-            } catch {}
-          }
-
-          // Carrega consumo de cada comanda aberta
-          const consumptions: Record<
-            string,
-            { items: TabConsumptionItem[]; totalInCents: number }
-          > = {};
-          await Promise.all(
-            openTabs.map(async (tab) => {
-              try {
-                const c = await getTabConsumption(restaurantId, tab.id);
-                consumptions[tab.id] = { items: c.items, totalInCents: c.totalInCents };
-              } catch {
-                consumptions[tab.id] = { items: [], totalInCents: 0 };
-              }
-            }),
-          );
-
-          if (!disposed) {
-            setTabConsumptions(consumptions);
-            initialLoaded.current = true;
-
-            // REGRA DE RENDERIZAÇÃO AUTOMÁTICA DA ABA "COMANDA":
-            // 1. Se a comanda ativa possuir itens lançados (items.length > 0): Renderize IMEDIATAMENTE a Tela 4.
-            // 2. Se a comanda ativa não possuir itens: Exiba a Tela 3 (a não ser que o garçom já tenha aberto o catálogo via sessionStorage).
-            const activeItemsCount = currentActiveTabId
-              ? (consumptions[currentActiveTabId]?.items?.filter((it) => it.status === 'active')?.length ?? 0)
-              : 0;
-
-            let storedMode: string | null = null;
-            try {
-              storedMode = sessionStorage.getItem(`elz_catalog_mode_${tableVisitId}`);
-            } catch {}
-
-            if (activeItemsCount > 0) {
-              setIsCatalogOpen(true);
-              try {
-                sessionStorage.setItem(`elz_catalog_mode_${tableVisitId}`, 'true');
-              } catch {}
-            } else if (storedMode === 'true') {
-              setIsCatalogOpen(true);
+        // Inicializa ou preserva entradas em tabConsumptions para as comandas abertas
+        setTabConsumptions((prev) => {
+          const next: Record<string, TabConsumptionEntry> = {};
+          for (const tab of openTabsList) {
+            const cur = prev[tab.id];
+            if (cur) {
+              next[tab.id] = cur;
             } else {
-              setIsCatalogOpen(false);
+              next[tab.id] = {
+                status: 'loading',
+                items: [],
+                totalInCents: 0,
+                isStale: false,
+              };
             }
           }
+          return next;
+        });
+
+        // Carrega consumo de cada comanda aberta com versão compartilhada por comanda
+        await Promise.all(
+          openTabsList.map(async (tab) => {
+            const tabId = tab.id;
+            const tabVersion = (tabVersionRef.current[tabId] = (tabVersionRef.current[tabId] || 0) + 1);
+
+            try {
+              const c = await getTabConsumption(restaurantId, tabId);
+              if (
+                disposed ||
+                !isMountedRef.current ||
+                currentVisitIdRef.current !== targetVisitId
+              ) {
+                return;
+              }
+              if (tabVersionRef.current[tabId] !== tabVersion) return;
+
+              setTabConsumptions((prev) => ({
+                ...prev,
+                [tabId]: {
+                  status: 'loaded',
+                  items: c.items,
+                  totalInCents: c.totalInCents,
+                  isStale: false,
+                },
+              }));
+            } catch (cause) {
+              if (
+                disposed ||
+                !isMountedRef.current ||
+                currentVisitIdRef.current !== targetVisitId
+              ) {
+                return;
+              }
+              if (tabVersionRef.current[tabId] !== tabVersion) return;
+
+              setTabConsumptions((prev) => {
+                const cur = prev[tabId];
+                const hadPreviousData = Boolean(cur && (cur.status === 'loaded' || cur.isStale));
+                return {
+                  ...prev,
+                  [tabId]: {
+                    status: 'error',
+                    items: cur?.items ?? [],
+                    totalInCents: cur?.totalInCents ?? 0,
+                    error:
+                      cause instanceof Error
+                        ? cause.message
+                        : 'Falha ao consultar consumo desta comanda.',
+                    isStale: hadPreviousData,
+                  },
+                };
+              });
+            }
+          }),
+        );
+
+        if (
+          disposed ||
+          !isMountedRef.current ||
+          currentVersion !== loadVersionRef.current ||
+          targetVisitId !== currentVisitIdRef.current
+        ) {
+          return;
+        }
+
+        initialLoaded.current = true;
+
+        // REGRA DE RENDERIZAÇÃO AUTOMÁTICA DA ABA "COMANDA":
+        // 1. Se a comanda ativa possuir itens lançados (items.length > 0): Renderize IMEDIATAMENTE a Tela 4.
+        // 2. Se a comanda ativa não possuir itens: Exiba a Tela 3 (a não ser que o garçom já tenha aberto o catálogo via sessionStorage).
+        const activeItemsCount = currentActiveTabId
+          ? (tabConsumptionsRef.current[currentActiveTabId]?.items?.filter((it) => it.status === 'active')?.length ?? 0)
+          : 0;
+
+        let storedMode: string | null = null;
+        try {
+          storedMode = sessionStorage.getItem(`elz_catalog_mode_${targetVisitId}`);
+        } catch {}
+
+        if (activeItemsCount > 0) {
+          setIsCatalogOpen(true);
+          try {
+            sessionStorage.setItem(`elz_catalog_mode_${targetVisitId}`, 'true');
+          } catch {}
+        } else if (storedMode === 'true') {
+          setIsCatalogOpen(true);
+        } else {
+          setIsCatalogOpen(false);
         }
       } catch (cause) {
-        if (!disposed) {
+        if (
+          !disposed &&
+          isMountedRef.current &&
+          currentVersion === loadVersionRef.current &&
+          targetVisitId === currentVisitIdRef.current
+        ) {
           setActionError(
             cause instanceof Error
               ? cause.message
@@ -384,7 +530,12 @@ function TableTabsContent({
           );
         }
       } finally {
-        if (!disposed) {
+        if (
+          !disposed &&
+          isMountedRef.current &&
+          currentVersion === loadVersionRef.current &&
+          targetVisitId === currentVisitIdRef.current
+        ) {
           setLoading(false);
         }
       }
@@ -403,7 +554,7 @@ function TableTabsContent({
           filter: `table_visit_id=eq.${tableVisitId}`,
         },
         () => {
-          if (!disposed) {
+          if (!disposed && isMountedRef.current && currentVisitIdRef.current === tableVisitId) {
             void load();
           }
         },
@@ -416,88 +567,263 @@ function TableTabsContent({
     };
   }, [restaurantId, tableVisitId, restaurantSlug, refresh]);
 
+  // Função centralizada para recarregar consumo de comanda com controle de versão e resultado explícito
+  async function reloadTabConsumption(tabId: string): Promise<ReloadConsumptionResult> {
+    const targetVisitId = currentVisitIdRef.current;
+    const tabVersion = (tabVersionRef.current[tabId] = (tabVersionRef.current[tabId] || 0) + 1);
+
+    try {
+      const updated = await getTabConsumption(restaurantId, tabId);
+      if (!isMountedRef.current) {
+        return { status: 'discarded', reason: 'unmounted' };
+      }
+      if (currentVisitIdRef.current !== targetVisitId) {
+        return { status: 'discarded', reason: 'visit_changed' };
+      }
+      if (tabVersionRef.current[tabId] !== tabVersion) {
+        return { status: 'discarded', reason: 'superseded' };
+      }
+
+      setTabConsumptions((prev) => ({
+        ...prev,
+        [tabId]: {
+          status: 'loaded',
+          items: updated.items,
+          totalInCents: updated.totalInCents,
+          isStale: false,
+        },
+      }));
+
+      return {
+        status: 'success',
+        data: {
+          items: updated.items,
+          totalInCents: updated.totalInCents,
+        },
+      };
+    } catch (cause) {
+      const errorMsg =
+        cause instanceof Error
+          ? cause.message
+          : 'Falha ao atualizar consumo da comanda.';
+
+      if (!isMountedRef.current) {
+        return { status: 'discarded', reason: 'unmounted' };
+      }
+      if (currentVisitIdRef.current !== targetVisitId) {
+        return { status: 'discarded', reason: 'visit_changed' };
+      }
+      if (tabVersionRef.current[tabId] !== tabVersion) {
+        return { status: 'discarded', reason: 'superseded' };
+      }
+
+      setTabConsumptions((prev) => {
+        const cur = prev[tabId];
+        const hadPreviousData = Boolean(cur && (cur.status === 'loaded' || cur.isStale));
+        return {
+          ...prev,
+          [tabId]: {
+            status: 'error',
+            items: cur?.items ?? [],
+            totalInCents: cur?.totalInCents ?? 0,
+            error: errorMsg,
+            isStale: hadPreviousData,
+          },
+        };
+      });
+
+      return { status: 'error', error: errorMsg };
+    }
+  }
+
+  // Função para re-tentar consulta de consumo de uma comanda específica
+  async function handleRetryTabConsumption(tabId: string) {
+    const targetVisitId = currentVisitIdRef.current;
+    const tabVersion = (tabVersionRef.current[tabId] = (tabVersionRef.current[tabId] || 0) + 1);
+
+    if (!isMountedRef.current || targetVisitId !== currentVisitIdRef.current) return;
+
+    setTabConsumptions((prev) => {
+      const cur = prev[tabId];
+      const hadPreviousData = Boolean(cur && (cur.status === 'loaded' || cur.isStale));
+      return {
+        ...prev,
+        [tabId]: {
+          status: 'loading',
+          items: cur?.items ?? [],
+          totalInCents: cur?.totalInCents ?? 0,
+          isStale: hadPreviousData,
+        },
+      };
+    });
+
+    try {
+      const c = await getTabConsumption(restaurantId, tabId);
+      if (!isMountedRef.current || currentVisitIdRef.current !== targetVisitId) return;
+      if (tabVersionRef.current[tabId] !== tabVersion) return;
+
+      setTabConsumptions((prev) => ({
+        ...prev,
+        [tabId]: {
+          status: 'loaded',
+          items: c.items,
+          totalInCents: c.totalInCents,
+          isStale: false,
+        },
+      }));
+    } catch (cause) {
+      if (!isMountedRef.current || currentVisitIdRef.current !== targetVisitId) return;
+      if (tabVersionRef.current[tabId] !== tabVersion) return;
+
+      setTabConsumptions((prev) => {
+        const cur = prev[tabId];
+        const hadPreviousData = Boolean(cur && (cur.status === 'loaded' || cur.isStale));
+        return {
+          ...prev,
+          [tabId]: {
+            status: 'error',
+            items: cur?.items ?? [],
+            totalInCents: cur?.totalInCents ?? 0,
+            error:
+              cause instanceof Error
+                ? cause.message
+                : 'Falha ao recarregar consumo da comanda.',
+            isStale: hadPreviousData,
+          },
+        };
+      });
+    }
+  }
+
   const disabled = busy || loading;
 
   const activeGuests = state.guests.filter(
     (guest) => Date.parse(guest.expires_at) > Date.now(),
   );
 
+  const openTabs = useMemo(() => {
+    return state.tabs.filter((t) => t.status === 'open');
+  }, [state.tabs]);
+
+  const individualTabs = useMemo(() => {
+    return getIndividualTabs(state.tabs);
+  }, [state.tabs]);
+
+  const hasMultiplePersons = individualTabs.length > 1;
+
   const selectedTab = useMemo(() => {
     return state.tabs.find((t) => t.id === selectedTabId) || null;
   }, [state.tabs, selectedTabId]);
 
   const sharedTab = useMemo(() => {
+    if (!hasMultiplePersons) return null;
     return (
       state.tabs.find(
         (t) =>
           t.status === 'open' &&
-          (t.label.toLowerCase().includes('conjunta') ||
-            t.label.toLowerCase().includes('compartilhada') ||
-            t.label.toLowerCase().includes('mesa toda')),
+          isSharedLabel(t.label),
       ) || null
     );
-  }, [state.tabs]);
+  }, [state.tabs, hasMultiplePersons]);
 
   const isSharedTabSelected = useMemo(() => {
-    if (!selectedTab) return false;
-    const l = selectedTab.label.toLowerCase();
-    return l.includes('conjunta') || l.includes('compartilhada') || l.includes('mesa toda');
-  }, [selectedTab]);
+    if (!hasMultiplePersons || !selectedTab) return false;
+    return isSharedLabel(selectedTab.label);
+  }, [selectedTab, hasMultiplePersons]);
 
-  const selectedTabConsumption = useMemo(() => {
-    if (!selectedTabId) return { items: [], totalInCents: 0 };
-    return tabConsumptions[selectedTabId] || { items: [], totalInCents: 0 };
+  // Se houver apenas 1 pessoa (ou nenhuma) e a conta conjunta estava selecionada, redireciona para a pessoa individual
+  useEffect(() => {
+    if (individualTabs.length === 1 && selectedTab && isSharedLabel(selectedTab.label)) {
+      handleSelectTab(individualTabs[0].id);
+    }
+  }, [individualTabs, selectedTab]);
+
+  const selectedTabConsumption: TabConsumptionEntry = useMemo(() => {
+    if (!selectedTabId) return { status: 'loaded', items: [], totalInCents: 0 };
+    return (
+      tabConsumptions[selectedTabId] || {
+        status: 'loading',
+        items: [],
+        totalInCents: 0,
+      }
+    );
   }, [tabConsumptions, selectedTabId]);
 
-  // Cálculos financeiros totais da mesa
-  const { tableSubtotal, tableFee, tableGrandTotal } = useMemo(() => {
+  // Cálculos financeiros totais da mesa e identificação estrita de dados incompletos/erro/desatualizados
+  const { tableSubtotal, tableFee, tableGrandTotal, tableTotalsIncomplete } = useMemo(() => {
     let subtotal = 0;
-    for (const c of Object.values(tabConsumptions)) {
-      subtotal += c.totalInCents;
+    let incomplete = false;
+
+    // Se houver comandas abertas, cada uma DEVE ter entrada carregada e válida em tabConsumptions
+    for (const t of openTabs) {
+      const c = tabConsumptions[t.id];
+      // Qualquer comanda sem entrada, em carregamento, com erro ou desatualizada torna o total da mesa incompleto
+      if (!c || c.status !== 'loaded' || c.isStale) {
+        incomplete = true;
+      }
+      if (c && c.status === 'loaded') {
+        subtotal += c.totalInCents;
+      }
     }
-    const fee =
-      restaurantFeePercent > 0 ? Math.round((subtotal * restaurantFeePercent) / 100) : 0;
+
+    const fee = calculateTabClosureFee(subtotal, restaurantFeePercent);
     const grand = subtotal + fee;
     return {
       tableSubtotal: subtotal,
       tableFee: fee,
       tableGrandTotal: grand,
+      tableTotalsIncomplete: incomplete,
     };
-  }, [tabConsumptions, restaurantFeePercent]);
+  }, [openTabs, tabConsumptions, restaurantFeePercent]);
 
   // Cálculos financeiros específicos da pessoa/comanda selecionada (Tela 4)
-  const { personSubtotal, personFee, personTotal } = useMemo(() => {
+  const { personSubtotal, personFee, personTotal, personConsumptionIncomplete } = useMemo(() => {
+    const isError = selectedTabConsumption.status === 'error';
+    const isLoading = selectedTabConsumption.status === 'loading';
+    const isStale = Boolean(selectedTabConsumption.isStale);
     const subtotal = selectedTabConsumption.totalInCents;
-    const fee =
-      restaurantFeePercent > 0 ? Math.round((subtotal * restaurantFeePercent) / 100) : 0;
+    const fee = calculateTabClosureFee(subtotal, restaurantFeePercent);
     const total = subtotal + fee;
     return {
       personSubtotal: subtotal,
       personFee: fee,
       personTotal: total,
+      personConsumptionIncomplete: isError || isLoading || isStale,
     };
   }, [selectedTabConsumption, restaurantFeePercent]);
 
   // Cálculos financeiros efetivos (se for Conta Conjunta, consolida a Mesa Toda)
-  const { effectiveSubtotal, effectiveFee, effectiveTotal } = useMemo(() => {
+  const { effectiveSubtotal, effectiveFee, effectiveTotal, effectiveIncomplete } = useMemo(() => {
     if (isSharedTabSelected) {
       return {
         effectiveSubtotal: tableSubtotal,
         effectiveFee: tableFee,
         effectiveTotal: tableGrandTotal,
+        effectiveIncomplete: tableTotalsIncomplete,
       };
     }
     return {
       effectiveSubtotal: personSubtotal,
       effectiveFee: personFee,
       effectiveTotal: personTotal,
+      effectiveIncomplete: personConsumptionIncomplete,
     };
-  }, [isSharedTabSelected, tableSubtotal, tableFee, tableGrandTotal, personSubtotal, personFee, personTotal]);
+  }, [
+    isSharedTabSelected,
+    tableSubtotal,
+    tableFee,
+    tableGrandTotal,
+    tableTotalsIncomplete,
+    personSubtotal,
+    personFee,
+    personTotal,
+    personConsumptionIncomplete,
+  ]);
 
   async function perform(
     operation: () => Promise<unknown>,
-    successMessage: string,
-    onSuccess?: () => void,
+    successMessage: string | ((result: unknown) => string),
+    onSuccess?: (result: unknown) => void,
   ) {
     if (submitting.current || disabled) return;
 
@@ -507,9 +833,12 @@ function TableTabsContent({
     setNotice('');
 
     try {
-      await operation();
-      onSuccess?.();
-      setNotice(successMessage);
+      const result = await operation();
+      onSuccess?.(result);
+      const msg = typeof successMessage === 'function' ? successMessage(result) : successMessage;
+      if (msg) {
+        setNotice(msg);
+      }
       setRefresh((current) => current + 1);
     } catch (cause) {
       setActionError(
@@ -526,6 +855,7 @@ function TableTabsContent({
   // Selecionar comanda ativa com persistência de sessão
   function handleSelectTab(tabId: string) {
     setSelectedTabId(tabId);
+    onTabSelected?.(tabId);
     try {
       sessionStorage.setItem(`elz_catalog_tab_${tableVisitId}`, tabId);
     } catch {}
@@ -673,12 +1003,54 @@ function TableTabsContent({
     );
   }
 
+  // Abertura do modal de encerramento com reset explícito de taxa para a comanda
+  function openCloseTabModal(tabId: string) {
+    // Inicializa a escolha para esta comanda específica: true se o restaurante tiver taxa > 0, senão false
+    setClosingFeeAccepted(restaurantFeePercent > 0);
+    setClosingTabId(tabId);
+  }
+
   // Encerrar comanda
   async function handleCloseTab(tabId: string) {
+    if (submitting.current || busy || disabled) return;
+
+    const tab = state.tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+
+    const consumption = tabConsumptions[tabId];
+    if (!consumption || consumption.status === 'loading') {
+      setActionError('Aguarde a verificação do consumo da comanda antes de realizar o encerramento.');
+      return;
+    }
+    if (consumption.status === 'error') {
+      setActionError(
+        'Não é possível encerrar a comanda pois a verificação de consumo falhou. Toque em "Tentar novamente" na comanda antes de prosseguir.',
+      );
+      return;
+    }
+    if (consumption.isStale) {
+      setActionError(
+        'O consumo desta comanda está desatualizado. Toque em "Tentar novamente" para atualizar os valores reais antes de encerrar.',
+      );
+      return;
+    }
+
     const feeAccepted = restaurantFeePercent > 0 ? closingFeeAccepted : false;
     await perform(
       () => closeTableTab(restaurantSlug, tabId, feeAccepted),
-      'Comanda encerrada com sucesso.',
+      (res) => {
+        const closed = res as TableTab | undefined;
+        if (closed && closed.total_in_cents != null) {
+          const formattedTotal = currency.format((closed.total_in_cents ?? 0) / 100);
+          const feeDetail = closed.service_fee_accepted && (closed.service_fee_in_cents ?? 0) > 0
+            ? ` (com taxa de ${currency.format((closed.service_fee_in_cents ?? 0) / 100)})`
+            : closed.service_fee_percent && closed.service_fee_percent > 0
+              ? ' (sem taxa de serviço)'
+              : '';
+          return `Comanda "${tab.label}" encerrada com sucesso. Total: ${formattedTotal}${feeDetail}.`;
+        }
+        return `Comanda "${tab.label}" encerrada com sucesso.`;
+      },
       () => {
         setClosingTabId(null);
         setActiveMenuTabId(null);
@@ -702,47 +1074,40 @@ function TableTabsContent({
     );
   }
 
-  // Exclusão direta de comanda vazia (R$ 0,00) ou acionamento de encerramento se houver consumo
+  // Encerramento de comanda vazia via RPC autorizada ou acionamento de encerramento se houver consumo
   async function handleDeleteOrCloseTab(tabId: string) {
     const tab = state.tabs.find((t) => t.id === tabId);
     if (!tab) return;
 
     const consumption = tabConsumptions[tabId];
-    const activeItems = consumption?.items?.filter((it) => it.status === 'active') || [];
-    const totalInCents = consumption?.totalInCents || 0;
+    if (!consumption || consumption.status === 'loading') {
+      setActionError('Aguarde a verificação do consumo da comanda antes de realizar o encerramento.');
+      return;
+    }
+    if (consumption.status === 'error') {
+      setActionError(
+        'Não é possível encerrar a comanda pois a verificação de consumo falhou. Toque em "Tentar novamente" na comanda antes de prosseguir.',
+      );
+      return;
+    }
+    if (consumption.isStale) {
+      setActionError(
+        'O consumo desta comanda está desatualizado. Toque em "Tentar novamente" para atualizar os valores reais antes de prosseguir.',
+      );
+      return;
+    }
 
-    // Se a comanda estiver com R$ 0,00 (sem itens consumidos)
-    if (totalInCents === 0 && activeItems.length === 0) {
-      const confirmDelete = window.confirm(`Deseja remover a comanda vazia “${tab.label}”?`);
-      if (!confirmDelete) return;
+    const activeItems = consumption.items.filter((it) => it.status === 'active');
+    const hasActiveItems = activeItems.length > 0;
+
+    // Se a comanda NÃO possuir itens ativos (está vazia ou todos os itens foram cancelados)
+    if (!hasActiveItems) {
+      const confirmClose = window.confirm(`Deseja encerrar a comanda vazia “${tab.label}”?`);
+      if (!confirmClose) return;
 
       await perform(
-        async () => {
-          // Remove vínculos de convidados caso existam
-          try {
-            await supabase.from('table_tab_guests').delete().eq('table_tab_id', tabId);
-          } catch {
-            // Ignora se não houver vínculos ou permissão
-          }
-
-          // Desativa/encerra a comanda (soft delete) usando closeTableTab ou update de status
-          try {
-            await closeTableTab(restaurantSlug, tabId, false);
-          } catch {
-            const { error } = await supabase
-              .from('table_tabs')
-              .update({
-                status: 'closed',
-                closed_at: new Date().toISOString(),
-              })
-              .eq('id', tabId);
-
-            if (error) {
-              throw new Error('Não foi possível remover a comanda: ' + error.message);
-            }
-          }
-        },
-        `Comanda “${tab.label}” desativada.`,
+        () => closeTableTab(restaurantSlug, tabId, false),
+        `Comanda vazia “${tab.label}” encerrada com sucesso.`,
         () => {
           setState((prev) => ({
             ...prev,
@@ -768,12 +1133,12 @@ function TableTabsContent({
         },
       );
     } else {
-      // Se a comanda já possuir itens lançados: aciona o fluxo de encerramento de conta
-      setClosingTabId(tabId);
+      // Se a comanda já possuir itens ativos (inclusive de valor zero): abre modal de conferência com opção de taxa
+      openCloseTabModal(tabId);
     }
   }
 
-  // Lançamento rápido de produto na comanda selecionada (Tela 4 com agrupamento automático)
+  // Lançamento de produto na comanda selecionada (RPC real do Supabase sem mocks)
   async function handleQuickAddItem(product: MenuProductItem) {
     if (!selectedTabId) {
       setActionError('Selecione uma comanda/pessoa para lançar o item.');
@@ -785,89 +1150,15 @@ function TableTabsContent({
       sessionStorage.setItem(`elz_catalog_tab_${tableVisitId}`, selectedTabId);
     } catch {}
 
-    // REGRA DE AGRUPAMENTO:
-    // Se o produto já existir na comanda ativa com o mesmo product_id e status pendente, incrementa quantidade
-    const existing = selectedTabConsumption.items.find(
-      (it) =>
-        it.product_id === product.id &&
-        it.status === 'active' &&
-        (!it.production_status || it.production_status === 'pending'),
-    );
-
-    if (existing) {
-      const newQty = existing.quantity + 1;
-      const newTotal = newQty * existing.unit_price_in_cents;
-
-      // Atualização otimista imediata na UI
-      setTabConsumptions((prev) => {
-        const cur = prev[selectedTabId] || { items: [], totalInCents: 0 };
-        return {
-          ...prev,
-          [selectedTabId]: {
-            items: cur.items.map((it) =>
-              it.id === existing.id
-                ? { ...it, quantity: newQty, line_total_in_cents: newTotal }
-                : it,
-            ),
-            totalInCents: cur.totalInCents + existing.unit_price_in_cents,
-          },
-        };
-      });
-
-      if (!product.id.startsWith('sample-')) {
-        const newItemId = crypto.randomUUID();
-        await perform(
-          () => addTabConsumption(restaurantSlug, selectedTabId, product.id, 1, newItemId),
-          `${product.name} (+1) adicionado à comanda de ${selectedTab?.label || 'cliente'}.`,
-        );
-      } else {
-        setNotice(`${product.name} (+1) atualizado na comanda de ${selectedTab?.label || 'cliente'}.`);
-      }
-      return;
-    }
-
-    // Se ainda não existia, cria novo item com quantidade 1
     const itemId = crypto.randomUUID();
 
-    // Se o produto for do banco real (UUID)
-    if (!product.id.startsWith('sample-')) {
-      await perform(
-        () => addTabConsumption(restaurantSlug, selectedTabId, product.id, 1, itemId),
-        `${product.name} adicionado à comanda de ${selectedTab?.label || 'cliente'}.`,
-      );
-    } else {
-      const newItem: TabConsumptionItem = {
-        id: itemId,
-        restaurant_id: restaurantId,
-        restaurant_table_id: '',
-        table_visit_id: tableVisitId,
-        table_tab_id: selectedTabId,
-        product_id: product.id,
-        product_name: product.name,
-        unit_price_in_cents: product.price_in_cents,
-        quantity: 1,
-        line_total_in_cents: product.price_in_cents,
-        status: 'active',
-        added_by_member_id: '',
-        created_at: new Date().toISOString(),
-        cancelled_by_member_id: null,
-        cancelled_at: null,
-        cancellation_reason: null,
-      };
-
-      setTabConsumptions((prev) => {
-        const cur = prev[selectedTabId] || { items: [], totalInCents: 0 };
-        return {
-          ...prev,
-          [selectedTabId]: {
-            items: [...cur.items, newItem],
-            totalInCents: cur.totalInCents + product.price_in_cents,
-          },
-        };
-      });
-
-      setNotice(`${product.name} adicionado à comanda de ${selectedTab?.label || 'cliente'}.`);
-    }
+    await perform(
+      async () => {
+        await addTabConsumption(restaurantSlug, selectedTabId, product.id, 1, itemId);
+        await reloadTabConsumption(selectedTabId);
+      },
+      `${product.name} adicionado à comanda de ${selectedTab?.label || 'cliente'}.`,
+    );
   }
 
   // Localiza um item e a sua respectiva comanda
@@ -881,96 +1172,137 @@ function TableTabsContent({
     return null;
   }
 
-  // Incrementar quantidade de item consolidado (+1)
+  // Incrementar quantidade de item (+1)
   async function handleIncrementGroup(group: { primaryItemId: string; productName: string; unitPriceInCents: number }) {
     const targetId = group.primaryItemId;
     const found = findItemAndTab(targetId);
     if (!found) return;
     const { tabId, item: currentItem } = found;
 
-    const newQty = currentItem.quantity + 1;
-    const newTotal = newQty * currentItem.unit_price_in_cents;
+    const newItemId = crypto.randomUUID();
+    await perform(
+      async () => {
+        await addTabConsumption(restaurantSlug, tabId, currentItem.product_id, 1, newItemId);
+        await reloadTabConsumption(tabId);
+      },
+      `${group.productName} (+1).`,
+    );
+  }
 
-    setTabConsumptions((prev) => {
-      const cur = prev[tabId] || { items: [], totalInCents: 0 };
-      return {
-        ...prev,
-        [tabId]: {
-          items: cur.items.map((it) =>
-            it.id === targetId ? { ...it, quantity: newQty, line_total_in_cents: newTotal } : it,
-          ),
-          totalInCents: cur.totalInCents + currentItem.unit_price_in_cents,
-        },
-      };
+  // Solicita cancelamento com exigência de motivo
+  function requestCancelItem(
+    group: {
+      itemIds: string[];
+      productName: string;
+      quantity: number;
+      unitPriceInCents: number;
+      lineTotalInCents: number;
+    },
+    quantityToCancel: number = group.quantity,
+  ) {
+    if (disabled || group.itemIds.length === 0) return;
+    const tabId = selectedTabId || findItemAndTab(group.itemIds[0])?.tabId || '';
+    const safeQty = Math.max(1, Math.min(quantityToCancel, group.quantity));
+    const itemIdsToCancel =
+      safeQty >= group.itemIds.length
+        ? group.itemIds
+        : group.itemIds.slice(group.itemIds.length - safeQty);
+
+    setCancellingItem({
+      itemIds: itemIdsToCancel,
+      productName: group.productName,
+      quantity: safeQty,
+      unitPriceInCents: group.unitPriceInCents,
+      lineTotalInCents: group.unitPriceInCents * safeQty,
+      tabId,
     });
+    setCancellationReason('');
+    setCancellationModalError('');
+  }
 
-    if (!currentItem.product_id.startsWith('sample-')) {
-      const newItemId = crypto.randomUUID();
-      await perform(
-        () => addTabConsumption(restaurantSlug, tabId, currentItem.product_id, 1, newItemId),
-        `${group.productName} (+1).`,
+  // Executa cancelamento com motivo persistido na RPC autorizada
+  async function handleConfirmCancellation() {
+    if (!cancellingItem) return;
+
+    const validation = validateCancellationReason(cancellationReason);
+    if (!validation.valid) {
+      setCancellationModalError(validation.error || 'Informe o motivo do cancelamento.');
+      return;
+    }
+
+    setCancellationSubmitting(true);
+    setCancellationModalError('');
+
+    try {
+      const result = await cancelTabConsumptionBatch(
+        restaurantSlug,
+        cancellingItem.itemIds,
+        validation.normalized,
       );
+
+      // Recarrega o consumo se pelo menos 1 item foi cancelado com sucesso
+      if (result.cancelledIds.length > 0 && cancellingItem.tabId) {
+        await reloadTabConsumption(cancellingItem.tabId);
+      }
+
+      if (result.failed.length === 0) {
+        // Sucesso total
+        setNotice(`${cancellingItem.quantity}x ${cancellingItem.productName} cancelado com sucesso.`);
+        setCancellingItem(null);
+        setCancellationReason('');
+      } else if (result.cancelledIds.length > 0) {
+        // Sucesso parcial: discrimina com clareza os itens cancelados e os que falharam sem abortar
+        const failMsg = result.failed.map((f) => f.error).join('; ');
+        setCancellationModalError(
+          `${result.cancelledIds.length} item(ns) cancelado(s) com sucesso. ${result.failed.length} falharam: ${failMsg}`,
+        );
+        // Atualiza o estado do modal para manter apenas os itens pendentes que falharam
+        setCancellingItem((prev) =>
+          prev
+            ? {
+                ...prev,
+                itemIds: result.failed.map((f) => f.id),
+                quantity: result.failed.length,
+                lineTotalInCents: prev.unitPriceInCents * result.failed.length,
+              }
+            : null,
+        );
+      } else {
+        // Falha total sem nenhum cancelamento parcial indevido
+        const failMsg = result.failed.map((f) => f.error).join('; ') || 'Falha ao cancelar os itens selecionados.';
+        setCancellationModalError(failMsg);
+      }
+    } catch (cause) {
+      console.error('Falha ao persistir cancelamento:', cause);
+      // Em resultado incerto ou erro na chamada, recarrega o estado do servidor para garantir sincronismo
+      if (cancellingItem.tabId) {
+        try {
+          await reloadTabConsumption(cancellingItem.tabId);
+        } catch {
+          // ignore reload error
+        }
+      }
+      const msg = cause instanceof Error ? cause.message : 'Falha ao persistir o cancelamento no servidor.';
+      setCancellationModalError(msg);
+    } finally {
+      setCancellationSubmitting(false);
     }
   }
 
   // Decrementar quantidade de item consolidado (-1)
-  async function handleDecrementGroup(group: { primaryItemId: string; itemIds: string[]; productName: string; lineTotalInCents: number; unitPriceInCents: number; quantity: number }) {
-    if (disabled || group.itemIds.length === 0) return;
-
-    if (group.itemIds.length > 1) {
-      const targetId = group.itemIds[group.itemIds.length - 1];
-      const found = findItemAndTab(targetId);
-      if (!found) return;
-      const { tabId, item: currentItem } = found;
-
-      setTabConsumptions((prev) => {
-        const cur = prev[tabId] || { items: [], totalInCents: 0 };
-        return {
-          ...prev,
-          [tabId]: {
-            items: cur.items.filter((it) => it.id !== targetId),
-            totalInCents: Math.max(0, cur.totalInCents - currentItem.line_total_in_cents),
-          },
-        };
-      });
-
-      if (!currentItem.product_id.startsWith('sample-')) {
-        await perform(
-          () => cancelTabConsumption(restaurantSlug, targetId, 'Item decrementado pelo garçom'),
-          `${group.productName} (-1).`,
-        );
-      }
-    } else {
-      await handleRemoveGroup(group);
-    }
+  function handleDecrementGroup(group: { primaryItemId: string; itemIds: string[]; productName: string; lineTotalInCents: number; unitPriceInCents: number; quantity: number }) {
+    requestCancelItem(group, 1);
   }
 
   // Remover grupo de item da comanda
-  async function handleRemoveGroup(group: { itemIds: string[]; productName: string; lineTotalInCents: number }) {
-    setTabConsumptions((prev) => {
-      const updated = { ...prev };
-      for (const [tabId, cur] of Object.entries(updated)) {
-        const remaining = cur.items.filter((it) => !group.itemIds.includes(it.id));
-        if (remaining.length !== cur.items.length) {
-          const newTotal = remaining
-            .filter((it) => it.status === 'active')
-            .reduce((acc, it) => acc + it.line_total_in_cents, 0);
-          updated[tabId] = { items: remaining, totalInCents: newTotal };
-        }
-      }
-      return updated;
+  function handleRemoveGroup(group: { itemIds: string[]; productName: string; lineTotalInCents: number; unitPriceInCents?: number; quantity?: number }) {
+    requestCancelItem({
+      itemIds: group.itemIds,
+      productName: group.productName,
+      quantity: group.quantity || group.itemIds.length,
+      unitPriceInCents: group.unitPriceInCents || Math.round(group.lineTotalInCents / Math.max(1, group.itemIds.length)),
+      lineTotalInCents: group.lineTotalInCents,
     });
-
-    await perform(
-      async () => {
-        for (const id of group.itemIds) {
-          if (!id.startsWith('sample-')) {
-            await cancelTabConsumption(restaurantSlug, id, 'Cancelado pelo garçom');
-          }
-        }
-      },
-      `${group.productName} removido da comanda.`,
-    );
   }
 
   // Ação rápida: Garçom marca item pronto como entregue na mesa
@@ -1023,14 +1355,47 @@ function TableTabsContent({
     );
   }
 
-  // Limpar itens da comanda atual
-  function handleClearPersonItems() {
-    if (!selectedTabId) return;
-    setTabConsumptions((prev) => ({
-      ...prev,
-      [selectedTabId]: { items: [], totalInCents: 0 },
-    }));
-    setNotice(`Itens de ${selectedTab?.label} limpos.`);
+  // Limpar itens da comanda atual com tratamento de erros parciais, confirmação, bloqueio estrito e recarregamento garantido
+  async function handleClearPersonItems() {
+    if (submitting.current || disabled || !selectedTabId) return;
+
+    const targetTabId = selectedTabId;
+    const targetVisitId = tableVisitId;
+    const consumption = tabConsumptions[targetTabId];
+
+    // Bloqueia se o consumo da comanda estiver ausente, carregando, com erro ou desatualizado
+    if (!consumption || consumption.status === 'loading') {
+      setActionError('Aguarde a verificação do consumo da comanda antes de limpar os itens.');
+      return;
+    }
+    if (consumption.status === 'error') {
+      setActionError(
+        'Não é possível limpar itens pois a verificação de consumo falhou. Toque em "Tentar novamente" na comanda antes de prosseguir.',
+      );
+      return;
+    }
+    if (consumption.isStale) {
+      setActionError(
+        'O consumo desta comanda está desatualizado. Toque em "Atualizar consumo" antes de limpar os itens.',
+      );
+      return;
+    }
+
+    // Apenas itens com status 'active' podem ser cancelados
+    const itemsToClear = consumption.items.filter((it) => it.status === 'active');
+    if (itemsToClear.length === 0) return;
+
+    // Abre o modal exigindo motivo de cancelamento em conformidade com a auditoria
+    setCancellingItem({
+      itemIds: itemsToClear.map((it) => it.id),
+      productName: `Todos os itens (${itemsToClear.length})`,
+      quantity: itemsToClear.reduce((acc, it) => acc + it.quantity, 0),
+      unitPriceInCents: 0,
+      lineTotalInCents: consumption.totalInCents,
+      tabId: targetTabId,
+    });
+    setCancellationReason('');
+    setCancellationModalError('');
   }
 
   // Finalizar e enviar para a cozinha
@@ -1051,8 +1416,30 @@ function TableTabsContent({
     return list;
   }, [tabConsumptions]);
 
-  // Imprimir pré-conta térmica
+  // Imprimir pré-conta térmica (bloqueia estritamente se houver dados incompletos, pendentes ou desatualizados)
   function handlePrintReceipt() {
+    const isMesaView = isSharedTabSelected || !isCatalogOpen;
+
+    if (isMesaView) {
+      if (tableTotalsIncomplete) {
+        setActionError(
+          'Não é possível imprimir a pré-conta enquanto houver comanda com consumo incompleto, pendente ou desatualizado.',
+        );
+        return;
+      }
+    } else {
+      if (
+        !selectedTabConsumption ||
+        selectedTabConsumption.status !== 'loaded' ||
+        selectedTabConsumption.isStale
+      ) {
+        setActionError(
+          'Não é possível imprimir a pré-conta enquanto o consumo desta comanda estiver incompleto, pendente ou desatualizado.',
+        );
+        return;
+      }
+    }
+
     const itemsToPrint = isSharedTabSelected
       ? allActiveItems
       : selectedTabConsumption.items.filter((it) => it.status === 'active');
@@ -1091,6 +1478,15 @@ function TableTabsContent({
       return prod.category_id === cat.id;
     });
   }, [products, searchQuery, selectedCategory, categories]);
+
+  // Ao mudar de categoria ou busca, reseta para a primeira página do catálogo
+  useEffect(() => {
+    setCatalogPage(1);
+  }, [selectedCategory, searchQuery]);
+
+  const paginatedCatalog = useMemo(() => {
+    return paginateCatalogProducts(filteredProducts, catalogPage, CATALOG_PAGE_SIZE);
+  }, [filteredProducts, catalogPage]);
 
   const activeItems = selectedTabConsumption.items.filter((it) => it.status === 'active');
 
@@ -1152,6 +1548,10 @@ function TableTabsContent({
   const groupedActiveItems = useMemo(() => {
     return groupItemsByProductAndStatus(activeItems);
   }, [activeItems]);
+
+  const paginatedItemsResult = useMemo(() => {
+    return paginateComandaItems(groupedActiveItems, isItemsExpanded, itemsCurrentPage);
+  }, [groupedActiveItems, isItemsExpanded, itemsCurrentPage]);
 
   const totalActiveQuantity = useMemo(() => {
     if (isSharedTabSelected) {
@@ -1305,7 +1705,10 @@ function TableTabsContent({
       setActionError('Não há outras pessoas/comandas abertas nesta mesa para receber o item.');
       return;
     }
-    setMoveTargetTabId(targets[0].id);
+    // Deixa o destino sem seleção inicial e exige escolha explícita
+    setMoveTargetTabId('');
+    setMoveReason('');
+    setMoveReasonError('');
     setIsMovePersonModalOpen(true);
   }
 
@@ -1315,48 +1718,45 @@ function TableTabsContent({
       return;
     }
 
+    const validation = validateCancellationReason(moveReason);
+    if (!validation.valid) {
+      setMoveReasonError(validation.error || 'Informe a descrição do motivo para a auditoria.');
+      return;
+    }
+
     const found = findItemAndTab(moveItemId);
     if (!found) {
       setActionError('Item não encontrado.');
       return;
     }
     const { tabId: sourceTabId, item } = found;
+    const sourceTab = state.tabs.find((t) => t.id === sourceTabId);
     const targetTab = state.tabs.find((t) => t.id === moveTargetTabId);
 
-    const newItemId = crypto.randomUUID();
-
-    // Atualização otimista imediata na UI
-    setTabConsumptions((prev) => {
-      const sourceCur = prev[sourceTabId] || { items: [], totalInCents: 0 };
-      const targetCur = prev[moveTargetTabId] || { items: [], totalInCents: 0 };
-      return {
-        ...prev,
-        [sourceTabId]: {
-          items: sourceCur.items.filter((i) => i.id !== moveItemId),
-          totalInCents: Math.max(0, sourceCur.totalInCents - item.line_total_in_cents),
-        },
-        [moveTargetTabId]: {
-          items: [...targetCur.items, { ...item, id: newItemId, table_tab_id: moveTargetTabId }],
-          totalInCents: targetCur.totalInCents + item.line_total_in_cents,
-        },
-      };
-    });
+    const auditReason = formatMoveItemAuditReason(
+      validation.normalized,
+      sourceTab?.label || 'origem',
+      targetTab?.label || 'destino',
+    );
 
     await perform(
       async () => {
-        if (!item.product_id.startsWith('sample-')) {
-          await cancelTabConsumption(
+        try {
+          await transferTabConsumptionItems({
             restaurantSlug,
-            moveItemId,
-            `Movido para ${targetTab?.label || 'outra comanda'}`,
-          );
-          await addTabConsumption(
-            restaurantSlug,
-            moveTargetTabId,
-            item.product_id,
-            item.quantity,
-            newItemId,
-          );
+            sourceTabId,
+            targetTabId: moveTargetTabId,
+            itemIds: [moveItemId],
+            reason: auditReason,
+          });
+
+          await Promise.all([
+            reloadTabConsumption(sourceTabId),
+            reloadTabConsumption(moveTargetTabId),
+          ]);
+        } catch (err) {
+          await reloadTabConsumption(sourceTabId).catch(() => {});
+          throw err;
         }
       },
       `Item movido para ${targetTab?.label || 'outra pessoa'} com sucesso!`,
@@ -1364,8 +1764,58 @@ function TableTabsContent({
         setIsMovePersonModalOpen(false);
         setMoveItemId('');
         setMoveTargetTabId('');
+        setMoveReason('');
+        setMoveReasonError('');
       },
     );
+  }
+
+  async function loadTransferTableTargetTabs(tableId: string) {
+    setTransferTableTargetTabId('');
+    if (!tableId) {
+      setTransferTableTargetTabs([]);
+      return;
+    }
+    setLoadingTargetTabs(true);
+    try {
+      const { data: visit, error: visitErr } = await supabase
+        .from('table_visits')
+        .select('id')
+        .eq('restaurant_table_id', tableId)
+        .eq('status', 'open')
+        .order('opened_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (visitErr || !visit) {
+        setTransferTableTargetTabs([]);
+        setTransferTableTargetTabId('');
+        return;
+      }
+
+      const { data: tabs, error: tabsErr } = await supabase
+        .from('table_tabs')
+        .select('id, label')
+        .eq('table_visit_id', visit.id)
+        .eq('status', 'open')
+        .order('created_at', { ascending: true });
+
+      if (tabsErr || !tabs) {
+        setTransferTableTargetTabs([]);
+        setTransferTableTargetTabId('');
+        return;
+      }
+
+      setTransferTableTargetTabs(tabs);
+      // Sem seleção inicial automática da comanda de destino
+      setTransferTableTargetTabId('');
+    } catch (e) {
+      console.error('Erro ao buscar comandas da mesa de destino:', e);
+      setTransferTableTargetTabs([]);
+      setTransferTableTargetTabId('');
+    } finally {
+      setLoadingTargetTabs(false);
+    }
   }
 
   async function handleOpenTransferTableModal() {
@@ -1374,6 +1824,11 @@ function TableTabsContent({
       return;
     }
     setTransferItemId(movableItems[0].id);
+    setTransferTargetTableId('');
+    setTransferTableTargetTabs([]);
+    setTransferTableTargetTabId('');
+    setTransferReason('');
+    setTransferReasonError('');
     setIsTransferTableModalOpen(true);
     setLoadingOccupiedTables(true);
 
@@ -1403,12 +1858,13 @@ function TableTabsContent({
       for (const t of otherTables) {
         uniqueMap.set(t.id, t);
       }
-      const uniqueTables = Array.from(uniqueMap.values()).sort((a, b) => a.table_number - b.table_number);
+      const uniqueTables = Array.from(uniqueMap.values()).sort((a, b) => Number(a.table_number) - Number(b.table_number));
 
       setOccupiedTables(uniqueTables);
-      if (uniqueTables.length > 0) {
-        setTransferTargetTableId(uniqueTables[0].id);
-      }
+      // Deixa o destino sem seleção inicial e exige escolha explícita do operador
+      setTransferTargetTableId('');
+      setTransferTableTargetTabs([]);
+      setTransferTableTargetTabId('');
     } catch (e) {
       console.error('Erro ao buscar mesas ocupadas:', e);
       setActionError('Não foi possível carregar as outras mesas ocupadas.');
@@ -1423,6 +1879,17 @@ function TableTabsContent({
       return;
     }
 
+    if (!transferTableTargetTabId) {
+      setTransferReasonError('Selecione a comanda de destino na mesa.');
+      return;
+    }
+
+    const validation = validateCancellationReason(transferReason);
+    if (!validation.valid) {
+      setTransferReasonError(validation.error || 'Informe a descrição do motivo para a auditoria.');
+      return;
+    }
+
     const targetTable = occupiedTables.find((t) => t.id === transferTargetTableId);
     if (!targetTable) return;
 
@@ -1432,14 +1899,23 @@ function TableTabsContent({
       return;
     }
     const { tabId: sourceTabId, item } = found;
-    const newItemId = crypto.randomUUID();
+    const auditReason = formatTransferTableAuditReason(
+      validation.normalized,
+      tableNumber || 'origem',
+      targetTable.table_number,
+    );
 
-    // Remove do estado local da mesa atual (otimista)
+    // Salva o snapshot anterior para restauração imediata em caso de falha ou resposta incerta
+    const previousConsumption = tabConsumptions[sourceTabId];
+
+    // Atualização otimista no estado local
     setTabConsumptions((prev) => {
-      const sourceCur = prev[sourceTabId] || { items: [], totalInCents: 0 };
+      const sourceCur = prev[sourceTabId];
+      if (!sourceCur) return prev;
       return {
         ...prev,
         [sourceTabId]: {
+          ...sourceCur,
           items: sourceCur.items.filter((i) => i.id !== transferItemId),
           totalInCents: Math.max(0, sourceCur.totalInCents - item.line_total_in_cents),
         },
@@ -1448,49 +1924,26 @@ function TableTabsContent({
 
     await perform(
       async () => {
-        // 1. Obter visita ativa da mesa de destino
-        const { data: visit, error: visitErr } = await supabase
-          .from('table_visits')
-          .select('id')
-          .eq('restaurant_table_id', transferTargetTableId)
-          .eq('status', 'open')
-          .order('started_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (visitErr || !visit) {
-          throw new Error('Não foi encontrada sessão ativa para a Mesa ' + targetTable.table_number + '.');
-        }
-
-        // 2. Obter comanda aberta da mesa de destino
-        const { data: targetTabs, error: tabsErr } = await supabase
-          .from('table_tabs')
-          .select('id')
-          .eq('table_visit_id', visit.id)
-          .eq('status', 'open')
-          .order('created_at', { ascending: true })
-          .limit(1);
-
-        if (tabsErr || !targetTabs || targetTabs.length === 0) {
-          throw new Error('A Mesa ' + targetTable.table_number + ' não possui comanda aberta para receber o item.');
-        }
-
-        const destTabId = targetTabs[0].id;
-
-        // 3. Cancela na mesa de origem e adiciona na mesa de destino via RPC autorizada
-        if (!item.product_id.startsWith('sample-')) {
-          await cancelTabConsumption(
+        try {
+          await transferTabConsumptionItems({
             restaurantSlug,
-            transferItemId,
-            `Transferido para Mesa ${targetTable.table_number}`,
-          );
-          await addTabConsumption(
-            restaurantSlug,
-            destTabId,
-            item.product_id,
-            item.quantity,
-            newItemId,
-          );
+            sourceTabId,
+            targetTabId: transferTableTargetTabId,
+            itemIds: [transferItemId],
+            reason: auditReason,
+          });
+
+          await reloadTabConsumption(sourceTabId);
+        } catch (err) {
+          // Se a RPC falhar ou a resposta for incerta, restaura o estado local e recarrega do servidor
+          if (previousConsumption) {
+            setTabConsumptions((prev) => ({
+              ...prev,
+              [sourceTabId]: previousConsumption,
+            }));
+          }
+          await reloadTabConsumption(sourceTabId).catch(() => {});
+          throw err;
         }
       },
       `Item transferido com sucesso para a Mesa ${targetTable.table_number}!`,
@@ -1498,6 +1951,10 @@ function TableTabsContent({
         setIsTransferTableModalOpen(false);
         setTransferItemId('');
         setTransferTargetTableId('');
+        setTransferTableTargetTabs([]);
+        setTransferTableTargetTabId('');
+        setTransferReason('');
+        setTransferReasonError('');
       },
     );
   }
@@ -1745,7 +2202,11 @@ function TableTabsContent({
                               }}
                               className="w-full text-left px-3 py-2 rounded-xl text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 font-medium transition cursor-pointer"
                             >
-                              {tabConsumptions[tab.id]?.totalInCents === 0 ? 'Excluir comanda' : 'Encerrar comanda'}
+                              {tabConsumptions[tab.id]?.status === 'error'
+                                ? 'Verificar / Encerrar comanda'
+                                : (tabConsumptions[tab.id]?.items.filter((it) => it.status === 'active').length ?? 0) === 0
+                                  ? 'Encerrar comanda vazia'
+                                  : 'Encerrar comanda'}
                             </button>
                           ) : (
                             <div className="px-3 py-2 text-zinc-400 font-medium">
@@ -1755,8 +2216,8 @@ function TableTabsContent({
                         </div>
                       )}
 
-                      {/* Badge de status de celular na Tela 3 */}
-                      <div className="px-2 pt-1">
+                      {/* Badges de status da comanda na Tela 3 */}
+                      <div className="px-2 pt-1 flex items-center justify-between gap-2">
                         {state.links.some((l) => l.table_tab_id === tab.id) ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -1772,7 +2233,57 @@ function TableTabsContent({
                             <span>Vincular celular</span>
                           </button>
                         )}
+
+                        {tabConsumptions[tab.id]?.status === 'error' ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleRetryTabConsumption(tab.id)}
+                            className="text-[10px] text-rose-600 dark:text-rose-400 font-bold underline cursor-pointer hover:text-rose-800"
+                          >
+                            Erro no consumo · Tentar novamente
+                          </button>
+                        ) : tabConsumptions[tab.id]?.status === 'loading' ? (
+                          <span className="text-[10px] text-zinc-400 font-medium">
+                            Carregando consumo…
+                          </span>
+                        ) : null}
                       </div>
+
+                      {/* Ação Visível: Fechar comanda para cada comanda aberta na guia Comanda (Tela 3) */}
+                      {tab.status === 'open' && (
+                        <div className="mt-2.5 pt-2 border-t border-zinc-100 dark:border-zinc-800/80 px-2 flex items-center justify-between gap-2">
+                          <div className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-200">
+                            {tabConsumptions[tab.id]?.status === 'loading' ? (
+                              <span className="text-zinc-400 font-normal">Calculando consumo…</span>
+                            ) : tabConsumptions[tab.id]?.status === 'error' ? (
+                              <span className="text-rose-500 font-normal">Erro no consumo</span>
+                            ) : (
+                              <span>
+                                {currency.format((tabConsumptions[tab.id]?.totalInCents ?? 0) / 100)}
+                                <span className="text-[10px] font-normal text-zinc-400 ml-1.5">
+                                  ({(tabConsumptions[tab.id]?.items.filter((it) => it.status === 'active').length ?? 0)} {(tabConsumptions[tab.id]?.items.filter((it) => it.status === 'active').length ?? 0) === 1 ? 'item' : 'itens'})
+                                </span>
+                              </span>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={disabled || busy || tabConsumptions[tab.id]?.status === 'loading'}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDeleteOrCloseTab(tab.id);
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl text-xs font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-900/60 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                            title={`Fechar comanda ${tab.label}`}
+                          >
+                            <svg className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span>Fechar comanda</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })
@@ -1780,57 +2291,123 @@ function TableTabsContent({
             </div>
           </div>
 
-          {/* 3. Card Central de Estado Vazio (Fiel a 3.jpg) */}
+          {/* 3. Card Central de Estado Vazio / Carregamento / Erro */}
           <div className="bg-white dark:bg-zinc-900 rounded-3xl p-8 border border-zinc-200/60 dark:border-zinc-800 shadow-xs flex flex-col items-center text-center my-1 transition-all">
-            <div className="w-16 h-16 rounded-full bg-[#FAF4EE] dark:bg-zinc-800 flex items-center justify-center text-[#782006] dark:text-amber-400">
-              <svg
-                className="w-8 h-8 text-[#782006] dark:text-amber-400"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
-                <line x1="9" y1="12" x2="15" y2="12" />
-                <line x1="9" y1="16" x2="13" y2="16" />
-                <circle cx="18" cy="18" r="3.5" className="fill-[#FAF4EE] dark:fill-zinc-800" strokeWidth="1.8" />
-                <line x1="18" y1="16.2" x2="18" y2="19.8" strokeWidth="1.8" />
-                <line x1="16.2" y1="18" x2="19.8" y2="18" strokeWidth="1.8" />
-              </svg>
-            </div>
+            {selectedTabConsumption.status === 'loading' ? (
+              <>
+                <div className="w-10 h-10 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[#782006] dark:text-amber-400">
+                  <div className="w-5 h-5 border-2 border-[#782006] border-t-transparent rounded-full animate-spin" />
+                </div>
+                <h4 className="font-bold text-sm text-zinc-900 dark:text-white mt-3.5">
+                  Carregando consumo…
+                </h4>
+                <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1 max-w-[280px]">
+                  Consultando os lançamentos da comanda selecionada no servidor.
+                </p>
+              </>
+            ) : selectedTabConsumption.status === 'error' ? (
+              <>
+                <div className="w-16 h-16 rounded-full bg-rose-50 dark:bg-rose-950/30 flex items-center justify-center text-rose-600 dark:text-rose-400">
+                  <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                </div>
+                <h4 className="font-bold text-sm text-zinc-900 dark:text-white mt-3.5">
+                  Falha ao consultar consumo
+                </h4>
+                <p className="text-xs text-rose-600 dark:text-rose-400 mt-1 max-w-[280px]">
+                  {selectedTabConsumption.error || 'Não foi possível carregar os itens desta comanda.'}
+                </p>
+                {selectedTabConsumption.isStale && (
+                  <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1">
+                    Aviso: exibindo dados desatualizados em cache.
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => selectedTabId && void handleRetryTabConsumption(selectedTabId)}
+                  className="bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 px-5 rounded-2xl text-xs shadow-md mt-4 transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>Tentar novamente</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="w-16 h-16 rounded-full bg-[#FAF4EE] dark:bg-zinc-800 flex items-center justify-center text-[#782006] dark:text-amber-400">
+                  <svg
+                    className="w-8 h-8 text-[#782006] dark:text-amber-400"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                    <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+                    <line x1="9" y1="12" x2="15" y2="12" />
+                    <line x1="9" y1="16" x2="13" y2="16" />
+                    <circle cx="18" cy="18" r="3.5" className="fill-[#FAF4EE] dark:fill-zinc-800" strokeWidth="1.8" />
+                    <line x1="18" y1="16.2" x2="18" y2="19.8" strokeWidth="1.8" />
+                    <line x1="16.2" y1="18" x2="19.8" y2="18" strokeWidth="1.8" />
+                  </svg>
+                </div>
 
-            <h4 className="font-bold text-sm text-zinc-900 dark:text-white mt-3.5">
-              {selectedTabConsumption.items.length > 0
-                ? `${selectedTabConsumption.items.length} ${selectedTabConsumption.items.length === 1 ? 'item adicionado' : 'itens adicionados'}`
-                : 'Nenhum item adicionado'}
-            </h4>
-            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1 max-w-[280px]">
-              {selectedTabConsumption.items.length > 0
-                ? 'Acesse os itens ou adicione novos produtos do cardápio.'
-                : 'Selecione uma comanda e adicione os itens do cardápio para começar.'}
-            </p>
+                <h4 className="font-bold text-sm text-zinc-900 dark:text-white mt-3.5">
+                  {selectedTabConsumption.items.length > 0
+                    ? `${selectedTabConsumption.items.length} ${selectedTabConsumption.items.length === 1 ? 'item adicionado' : 'itens adicionados'}`
+                    : 'Nenhum item adicionado'}
+                </h4>
+                <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1 max-w-[280px]">
+                  {selectedTabConsumption.items.length > 0
+                    ? 'Acesse os itens ou adicione novos produtos do cardápio.'
+                    : 'Selecione uma comanda e adicione os itens do cardápio para começar.'}
+                </p>
 
-            {/* Botão Largo Primário: + Adicionar items (Transiciona para o Catálogo / Tela 4) */}
-            <button
-              type="button"
-              onClick={() => void handleTransitionToCatalog()}
-              className="bg-[#4A1505] hover:bg-[#381004] text-white font-bold py-3 px-6 rounded-2xl text-xs shadow-md mt-4 transition cursor-pointer flex items-center gap-1.5"
-            >
-              <span>+</span>
-              <span>{selectedTabConsumption.items.length > 0 ? 'Ver / Adicionar itens' : 'Adicionar items'}</span>
-            </button>
+                {/* Botão Largo Primário: + Adicionar items (Transiciona para o Catálogo / Tela 4) */}
+                <button
+                  type="button"
+                  onClick={() => void handleTransitionToCatalog()}
+                  className="bg-[#4A1505] hover:bg-[#381004] text-white font-bold py-3 px-6 rounded-2xl text-xs shadow-md mt-4 transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>+</span>
+                  <span>{selectedTabConsumption.items.length > 0 ? 'Ver / Adicionar itens' : 'Adicionar items'}</span>
+                </button>
+              </>
+            )}
           </div>
 
           {/* 4. Resumo Financeiro Inicial da Mesa e Ações Rápidas */}
           <div className="space-y-2 pt-1">
+            {tableTotalsIncomplete && (
+              <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 p-2.5 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-amber-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  <span className="text-[11px] font-medium leading-tight">
+                    Atenção: Os totais abaixo são parciais pois há comanda(s) com consumo pendente ou erro de consulta.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRefresh((r) => r + 1)}
+                  className="font-bold underline text-amber-900 dark:text-amber-100 hover:text-black shrink-0 cursor-pointer text-[11px]"
+                >
+                  Recarregar
+                </button>
+              </div>
+            )}
+
             <div className="grid grid-cols-3 gap-2 p-3 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200/60 dark:border-zinc-800 shadow-xs">
               <div>
                 <span className="text-[10px] text-zinc-400 font-medium block">Total da mesa</span>
                 <span className="text-xs font-bold text-zinc-900 dark:text-white mt-0.5 block">
-                  {currency.format(tableSubtotal / 100)}
+                  {tableTotalsIncomplete ? `${currency.format(tableSubtotal / 100)} (parcial)` : currency.format(tableSubtotal / 100)}
                 </span>
               </div>
 
@@ -1848,7 +2425,7 @@ function TableTabsContent({
                   Total geral
                 </span>
                 <span className="text-sm font-extrabold text-[#782006] dark:text-amber-400 mt-0.5 block">
-                  {currency.format(tableGrandTotal / 100)}
+                  {tableTotalsIncomplete ? `${currency.format(tableGrandTotal / 100)}*` : currency.format(tableGrandTotal / 100)}
                 </span>
               </div>
             </div>
@@ -1885,7 +2462,9 @@ function TableTabsContent({
               <button
                 type="button"
                 onClick={handlePrintReceipt}
-                className="p-2.5 rounded-2xl border border-amber-900/10 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xs flex items-center justify-center gap-1.5 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition cursor-pointer"
+                disabled={tableTotalsIncomplete}
+                title={tableTotalsIncomplete ? 'Pré-conta indisponível enquanto houver comanda com consumo incompleto' : 'Imprimir pré-conta'}
+                className="p-2.5 rounded-2xl border border-amber-900/10 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xs flex items-center justify-center gap-1.5 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <svg className="w-3.5 h-3.5 text-[#782006] dark:text-amber-300 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M6 9V2h12v7" />
@@ -1894,6 +2473,43 @@ function TableTabsContent({
                 </svg>
                 <span className="truncate">Imprimir pré-conta</span>
               </button>
+            </div>
+
+            {/* Ação Visível em Tela 3: Dividir conta e Fechar comanda selecionada lado a lado */}
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <button
+                type="button"
+                onClick={() => setIsSplitBillModalOpen(true)}
+                className="py-2.5 px-2 sm:px-3 rounded-2xl border border-amber-300 dark:border-amber-800/80 bg-amber-50/90 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-[#782006] dark:text-amber-300 font-semibold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer text-center"
+                title="Simular divisão estimada da conta"
+              >
+                <svg className="w-3.5 h-3.5 text-[#782006] dark:text-amber-300 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+                <span className="truncate">Dividir conta</span>
+              </button>
+
+              {selectedTab && selectedTab.status === 'open' && (
+                <button
+                  type="button"
+                  disabled={disabled || busy || (selectedTabId ? tabConsumptions[selectedTabId]?.status === 'loading' : false)}
+                  onClick={() => {
+                    if (selectedTabId) {
+                      void handleDeleteOrCloseTab(selectedTabId);
+                    }
+                  }}
+                  className="py-2.5 px-2 sm:px-3 rounded-2xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/80 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 font-semibold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-center"
+                  title={`Fechar comanda ${selectedTab.label || 'cliente'}`}
+                >
+                  <svg className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="truncate">Fechar comanda</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2012,17 +2628,142 @@ function TableTabsContent({
               </button>
             )}
 
-            {/* Card "+ Conta conjunta (Mesa toda)" permanente */}
-            {(() => {
-              const sharedTab = state.tabs.find(
-                (t) =>
-                  t.status === 'open' &&
-                  (t.label.toLowerCase().includes('conjunta') ||
-                    t.label.toLowerCase().includes('compartilhada') ||
-                    t.label.toLowerCase().includes('mesa toda')),
+            {/* Cards individuais de cada comanda/pessoa */}
+            {individualTabs.map((tab) => {
+              const isSelected = selectedTabId === tab.id;
+              const tabConsumption = tabConsumptions[tab.id];
+              const tabTotal = tabConsumption?.totalInCents ?? 0;
+              const linkedGuest = state.links.find((l) => l.table_tab_id === tab.id);
+              const isMobileConnected = Boolean(linkedGuest);
+
+              return (
+                <div
+                  key={tab.id}
+                  onClick={() => handleSelectTab(tab.id)}
+                  className={`rounded-2xl p-2.5 min-w-[115px] shrink-0 transition-all cursor-pointer flex flex-col justify-between ${
+                    isSelected
+                      ? 'border-2 border-[#4A1505] bg-[#FAF4EE] dark:bg-zinc-800 shadow-xs'
+                      : 'border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-zinc-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="text-amber-900/80 dark:text-amber-300">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                        <circle cx="12" cy="7" r="4" />
+                      </svg>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleDeleteOrCloseTab(tab.id);
+                      }}
+                      title={`Fechar comanda ${tab.label}`}
+                      aria-label={`Fechar comanda ${tab.label}`}
+                      className="text-zinc-400 hover:text-rose-600 p-0.5 rounded cursor-pointer transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 6h18" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  <div onClick={(e) => e.stopPropagation()}>
+                    {editingCardTabId === tab.id ? (
+                      <input
+                        type="text"
+                        autoFocus
+                        value={editingLabels[tab.id] !== undefined ? editingLabels[tab.id] : (tab.label || '')}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setEditingLabels((prev) => ({ ...prev, [tab.id]: val }));
+                        }}
+                        onBlur={(e) => {
+                          setEditingCardTabId(null);
+                          void handleUpdateTabLabel(tab.id, e.target.value);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.currentTarget.blur();
+                          } else if (e.key === 'Escape') {
+                            setEditingCardTabId(null);
+                          }
+                        }}
+                        className="font-bold text-xs text-zinc-900 dark:text-white bg-transparent border-b border-[#4A1505] focus:outline-none w-full"
+                      />
+                    ) : (
+                      <h4
+                        onDoubleClick={() => setEditingCardTabId(tab.id)}
+                        onClick={() => handleSelectTab(tab.id)}
+                        title="Clique para selecionar ou duplo clique para renomear"
+                        className="font-bold text-xs text-zinc-900 dark:text-white truncate cursor-pointer hover:underline"
+                      >
+                        {tab.label}
+                      </h4>
+                    )}
+
+                    <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 block mt-0.5">
+                      {tabConsumption?.status === 'error' ? (
+                        <span className="text-rose-600 dark:text-rose-400 font-bold text-[10px]">
+                          Erro · Indisponível
+                        </span>
+                      ) : tabConsumption?.status === 'loading' ? (
+                        <span className="text-zinc-400 text-[10px]">Carregando…</span>
+                      ) : (
+                        <>
+                          {tabConsumption?.isStale && (
+                            <span className="text-amber-600 dark:text-amber-400 text-[9px] mr-1">
+                              (desatualizado)
+                            </span>
+                          )}
+                          {currency.format(tabTotal / 100)}
+                        </>
+                      )}
+                    </span>
+
+                    {tabConsumption?.status === 'error' && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleRetryTabConsumption(tab.id);
+                        }}
+                        className="text-[10px] text-rose-600 dark:text-rose-400 underline font-bold hover:text-rose-800 mt-0.5 block cursor-pointer"
+                      >
+                        Tentar novamente
+                      </button>
+                    )}
+
+                    {/* Badge de celular vinculado no carrossel */}
+                    {isMobileConnected ? (
+                      <div className="flex items-center gap-1 mt-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                        <span className="truncate">Conectado pelo celular</span>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLinkingGuestTabId(tab.id);
+                        }}
+                        className="inline-flex items-center gap-1 text-[10px] text-amber-800 dark:text-amber-300 hover:underline mt-1 cursor-pointer"
+                      >
+                        <span>📱</span>
+                        <span className="truncate">Vincular celular</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
               );
+            })}
+
+            {/* Card "+ Conta conjunta (Mesa toda)" posicionado à direita, somente se houver mais de uma pessoa real */}
+            {hasMultiplePersons && (() => {
               const isSelected = sharedTab ? selectedTabId === sharedTab.id : false;
-              const sharedTotal = sharedTab ? (tabConsumptions[sharedTab.id]?.totalInCents ?? 0) : 0;
 
               return (
                 <div
@@ -2079,122 +2820,16 @@ function TableTabsContent({
                       {sharedTab ? 'Conta conjunta' : '+ Conta conjunta'}
                     </h4>
                     <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 block mt-0.5">
-                      {tableSubtotal > 0 ? currency.format(tableSubtotal / 100) : 'Mesa toda'}
+                      {tableTotalsIncomplete
+                        ? `${currency.format(tableSubtotal / 100)} (parcial)`
+                        : tableSubtotal > 0
+                          ? currency.format(tableSubtotal / 100)
+                          : 'Mesa toda'}
                     </span>
                   </div>
                 </div>
               );
             })()}
-
-            {/* Cards individuais de cada comanda/pessoa */}
-            {state.tabs
-              .filter(
-                (t) =>
-                  t.status === 'open' &&
-                  !t.label.toLowerCase().includes('conjunta') &&
-                  !t.label.toLowerCase().includes('compartilhada') &&
-                  !t.label.toLowerCase().includes('mesa toda'),
-              )
-              .map((tab) => {
-                const isSelected = selectedTabId === tab.id;
-                const tabTotal = tabConsumptions[tab.id]?.totalInCents ?? 0;
-                const linkedGuest = state.links.find((l) => l.table_tab_id === tab.id);
-                const isMobileConnected = Boolean(linkedGuest);
-
-                return (
-                  <div
-                    key={tab.id}
-                    onClick={() => handleSelectTab(tab.id)}
-                    className={`rounded-2xl p-2.5 min-w-[115px] shrink-0 transition-all cursor-pointer flex flex-col justify-between ${
-                      isSelected
-                        ? 'border-2 border-[#4A1505] bg-[#FAF4EE] dark:bg-zinc-800 shadow-xs'
-                        : 'border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-zinc-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="text-amber-900/80 dark:text-amber-300">
-                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                          <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
-                          <circle cx="12" cy="7" r="4" />
-                        </svg>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void handleDeleteOrCloseTab(tab.id);
-                        }}
-                        title="Remover ou encerrar comanda"
-                        className="text-zinc-400 hover:text-rose-600 p-0.5 rounded cursor-pointer transition-colors"
-                      >
-                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M3 6h18" />
-                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                          <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                        </svg>
-                      </button>
-                    </div>
-
-                    <div onClick={(e) => e.stopPropagation()}>
-                      {editingCardTabId === tab.id ? (
-                        <input
-                          type="text"
-                          autoFocus
-                          value={editingLabels[tab.id] !== undefined ? editingLabels[tab.id] : (tab.label || '')}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setEditingLabels((prev) => ({ ...prev, [tab.id]: val }));
-                          }}
-                          onBlur={(e) => {
-                            setEditingCardTabId(null);
-                            void handleUpdateTabLabel(tab.id, e.target.value);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.currentTarget.blur();
-                            } else if (e.key === 'Escape') {
-                              setEditingCardTabId(null);
-                            }
-                          }}
-                          className="font-bold text-xs text-zinc-900 dark:text-white bg-transparent border-b border-[#4A1505] focus:outline-none w-full"
-                        />
-                      ) : (
-                        <h4
-                          onDoubleClick={() => setEditingCardTabId(tab.id)}
-                          onClick={() => handleSelectTab(tab.id)}
-                          title="Clique para selecionar ou duplo clique para renomear"
-                          className="font-bold text-xs text-zinc-900 dark:text-white truncate cursor-pointer hover:underline"
-                        >
-                          {tab.label}
-                        </h4>
-                      )}
-                      <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 block mt-0.5">
-                        {currency.format(tabTotal / 100)}
-                      </span>
-
-                      {/* Badge de celular vinculado no carrossel */}
-                      {isMobileConnected ? (
-                        <div className="flex items-center gap-1 mt-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                          <span className="truncate">Conectado pelo celular</span>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setLinkingGuestTabId(tab.id);
-                          }}
-                          className="inline-flex items-center gap-1 text-[10px] text-amber-800 dark:text-amber-300 hover:underline mt-1 cursor-pointer"
-                        >
-                          <span>📱</span>
-                          <span className="truncate">Vincular celular</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
           </div>
 
           {/* B. Seção "Registrar consumo" & Catálogo */}
@@ -2218,111 +2853,226 @@ function TableTabsContent({
               </div>
             </div>
 
-            {/* Campo de Busca */}
-            <div className="relative flex items-center rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3.5 py-2.5 shadow-xs">
-              <svg className="w-4 h-4 text-zinc-400 shrink-0 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar prato ou bebida..."
-                className="w-full text-xs text-zinc-800 dark:text-white placeholder:text-zinc-400 bg-transparent focus:outline-none"
-              />
-              <svg className="w-4 h-4 text-zinc-400 shrink-0 ml-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </div>
+            {catalogLoading ? (
+              <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 text-center space-y-2">
+                <div className="w-6 h-6 border-2 border-[#4A1505] border-t-transparent rounded-full animate-spin mx-auto" />
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">Carregando cardápio…</p>
+              </div>
+            ) : catalogError ? (
+              <div className="bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40 rounded-2xl p-4 text-center space-y-2">
+                <p className="text-xs font-semibold text-rose-700 dark:text-rose-300">
+                  {catalogError}
+                </p>
+                <button
+                  type="button"
+                  onClick={retryLoadCatalog}
+                  className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition cursor-pointer"
+                >
+                  Tentar novamente
+                </button>
+              </div>
+            ) : products.length === 0 ? (
+              <div className="bg-zinc-50 dark:bg-zinc-900 border border-dashed border-zinc-300 dark:border-zinc-800 rounded-2xl p-6 text-center space-y-2">
+                <div className="w-10 h-10 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-400 mx-auto">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M6 2v20" />
+                    <path d="M18 2v6a3 3 0 0 1-3 3 3 3 0 0 1-3-3V2" />
+                  </svg>
+                </div>
+                <h4 className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
+                  Nenhum produto cadastrado no cardápio
+                </h4>
+                {role === 'admin' ? (
+                  <div className="pt-1">
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">
+                      Como administrador, você pode cadastrar categorias e pratos agora.
+                    </p>
+                    <Link
+                      to={`/${restaurantSlug}/admin/catalogo`}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#4A1505] hover:bg-[#381004] text-white text-xs font-bold rounded-xl transition shadow-xs"
+                    >
+                      <span>Cadastrar produtos no cardápio</span>
+                      <span>→</span>
+                    </Link>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 max-w-xs mx-auto">
+                    Solicite ao administrador o cadastro de produtos no cardápio para realizar lançamentos.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <>
+                {/* Campo de Busca */}
+                <div className="relative flex items-center rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3.5 py-2.5 shadow-xs">
+                  <svg className="w-4 h-4 text-zinc-400 shrink-0 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setCatalogPage(1);
+                      onSearchQueryChange?.(e.target.value);
+                    }}
+                    placeholder="Buscar prato ou bebida..."
+                    className="w-full text-xs text-zinc-800 dark:text-white placeholder:text-zinc-400 bg-transparent focus:outline-none"
+                  />
+                  <svg className="w-4 h-4 text-zinc-400 shrink-0 ml-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </div>
 
-            {/* Categorias horizontais com scroll */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-              <button
-                type="button"
-                onClick={() => setSelectedCategory('todos')}
-                className={`rounded-xl px-3.5 py-2 text-xs font-semibold shadow-xs flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer ${
-                  selectedCategory === 'todos'
-                    ? 'bg-[#4A1505] text-white'
-                    : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/80 dark:border-zinc-700 hover:bg-zinc-50'
-                }`}
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="3" y="3" width="7" height="7" rx="1.5" />
-                  <rect x="14" y="3" width="7" height="7" rx="1.5" />
-                  <rect x="3" y="14" width="7" height="7" rx="1.5" />
-                  <rect x="14" y="14" width="7" height="7" rx="1.5" />
-                </svg>
-                <span>Todos</span>
-              </button>
-
-              {categories.map((cat) => {
-                const isCatActive = selectedCategory === cat.slug || selectedCategory === cat.id;
-                return (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => setSelectedCategory(cat.slug || cat.id)}
-                    className={`rounded-xl px-3.5 py-2 text-xs font-semibold shadow-xs flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer ${
-                      isCatActive
-                        ? 'bg-[#4A1505] text-white'
-                        : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/80 dark:border-zinc-700 hover:bg-zinc-50'
-                    }`}
-                  >
-                    <span>{cat.name}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Lista compacta de produtos */}
-            <div className="space-y-2">
-              {filteredProducts.map((prod) => {
-                const imageUrl = prod.images?.[0]?.url;
-
-                return (
-                  <div
-                    key={prod.id}
-                    className="bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-2xl p-2.5 flex items-center justify-between gap-3 shadow-xs hover:border-zinc-200 transition"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      {imageUrl ? (
-                        <img
-                          src={imageUrl}
-                          alt={prod.name}
-                          className="w-14 h-14 rounded-xl object-cover shrink-0 bg-zinc-100 dark:bg-zinc-800"
-                        />
-                      ) : (
-                        <div className="w-14 h-14 rounded-xl bg-[#FAF4EE] dark:bg-zinc-800 flex items-center justify-center text-[#782006] shrink-0 font-bold text-sm">
-                          {prod.name.charAt(0)}
-                        </div>
-                      )}
-
-                      <div className="min-w-0">
-                        <h4 className="font-bold text-xs text-zinc-900 dark:text-white leading-snug truncate">
-                          {prod.name}
-                        </h4>
-                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 line-clamp-1 mt-0.5">
-                          {prod.short_description || prod.description}
-                        </p>
-                        <span className="text-xs font-extrabold text-[#782006] dark:text-amber-400 mt-1 block">
-                          {currency.format(prod.price_in_cents / 100)}
-                        </span>
-                      </div>
-                    </div>
-
+                {/* Categorias horizontais com scroll */}
+                {categories.length > 0 && (
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
                     <button
                       type="button"
-                      onClick={() => void handleQuickAddItem(prod)}
-                      title="Adicionar à comanda selecionada"
-                      className="w-8 h-8 rounded-full border border-amber-900/20 dark:border-zinc-700 bg-white dark:bg-zinc-800 flex items-center justify-center text-[#782006] dark:text-amber-300 font-bold text-base active:scale-95 shadow-xs hover:border-amber-900/50 hover:bg-[#FAF4EE] dark:hover:bg-zinc-700 transition cursor-pointer shrink-0"
+                      onClick={() => {
+                        setSelectedCategory('todos');
+                        setCatalogPage(1);
+                      }}
+                      className={`rounded-xl px-3.5 py-2 text-xs font-semibold shadow-xs flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer ${
+                        selectedCategory === 'todos'
+                          ? 'bg-[#4A1505] text-white'
+                          : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/80 dark:border-zinc-700 hover:bg-zinc-50'
+                      }`}
                     >
-                      +
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                        <rect x="14" y="14" width="7" height="7" rx="1.5" />
+                      </svg>
+                      <span>Todos</span>
                     </button>
+
+                    {categories.map((cat) => {
+                      const isCatActive = selectedCategory === cat.slug || selectedCategory === cat.id;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedCategory(cat.slug || cat.id);
+                            setCatalogPage(1);
+                          }}
+                          className={`rounded-xl px-3.5 py-2 text-xs font-semibold shadow-xs flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer ${
+                            isCatActive
+                              ? 'bg-[#4A1505] text-white'
+                              : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/80 dark:border-zinc-700 hover:bg-zinc-50'
+                          }`}
+                        >
+                          <span>{cat.name}</span>
+                        </button>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
+                )}
+
+                {/* Lista compacta de produtos com paginação de até 5 cards */}
+                <div className="space-y-2">
+                  {filteredProducts.length === 0 ? (
+                    <p className="text-xs text-zinc-400 italic py-2 text-center">
+                      Nenhum produto encontrado com os filtros atuais.
+                    </p>
+                  ) : (
+                    paginatedCatalog.displayedProducts.map((prod) => {
+                      const imageUrl = prod.images?.[0]?.url;
+
+                      return (
+                        <div
+                          key={prod.id}
+                          className="bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 rounded-2xl p-2.5 flex items-center justify-between gap-3 shadow-xs hover:border-zinc-200 transition"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            {imageUrl ? (
+                              <img
+                                src={imageUrl}
+                                alt={prod.name}
+                                className="w-14 h-14 rounded-xl object-cover shrink-0 bg-zinc-100 dark:bg-zinc-800"
+                              />
+                            ) : (
+                              <div className="w-14 h-14 rounded-xl bg-[#FAF4EE] dark:bg-zinc-800 flex items-center justify-center text-[#782006] shrink-0 font-bold text-sm">
+                                {prod.name.charAt(0)}
+                              </div>
+                            )}
+
+                            <div className="min-w-0">
+                              <h4 className="font-bold text-xs text-zinc-900 dark:text-white leading-snug truncate">
+                                {prod.name}
+                              </h4>
+                              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 line-clamp-1 mt-0.5">
+                                {prod.short_description || prod.description}
+                              </p>
+                              <span className="text-xs font-extrabold text-[#782006] dark:text-amber-400 mt-1 block">
+                                {currency.format(prod.price_in_cents / 100)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => void handleQuickAddItem(prod)}
+                            title="Adicionar à comanda selecionada"
+                            className="w-8 h-8 rounded-full border border-amber-900/20 dark:border-zinc-700 bg-white dark:bg-zinc-800 flex items-center justify-center text-[#782006] dark:text-amber-300 font-bold text-base active:scale-95 shadow-xs hover:border-amber-900/50 hover:bg-[#FAF4EE] dark:hover:bg-zinc-700 transition cursor-pointer shrink-0"
+                          >
+                            +
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Controles de paginação do catálogo quando houver mais de 5 produtos */}
+                {paginatedCatalog.isPaginated && (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                    <span className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
+                      {paginatedCatalog.rangeText}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={!paginatedCatalog.hasPreviousPage}
+                        onClick={() => setCatalogPage((p) => Math.max(1, p - 1))}
+                        className="px-2.5 py-1 text-xs font-semibold rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                        aria-label="Página anterior do catálogo"
+                      >
+                        Anterior
+                      </button>
+                      {paginatedCatalog.pageNumbers.map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={() => setCatalogPage(num)}
+                          className={`w-7 h-7 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
+                            num === paginatedCatalog.currentPage
+                              ? 'bg-[#4A1505] text-white shadow-xs'
+                              : 'bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50'
+                          }`}
+                          aria-label={`Página ${num} do catálogo`}
+                          aria-current={num === paginatedCatalog.currentPage ? 'page' : undefined}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        disabled={!paginatedCatalog.hasNextPage}
+                        onClick={() => setCatalogPage((p) => Math.min(paginatedCatalog.totalPages, p + 1))}
+                        className="px-2.5 py-1 text-xs font-semibold rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                        aria-label="Próxima página do catálogo"
+                      >
+                        Próxima
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           {/* C. Seção "Itens de [Nome da Comanda]" */}
@@ -2377,20 +3127,36 @@ function TableTabsContent({
                 </span>
               </div>
 
-              {activeItems.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleClearPersonItems}
-                  className="text-xs text-zinc-400 hover:text-red-500 flex items-center gap-1 cursor-pointer transition-colors"
-                >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M3 6h18" />
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                  </svg>
-                  <span>Limpar</span>
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {activeItems.length > 0 && (() => {
+                  const consumption = selectedTabId ? tabConsumptions[selectedTabId] : undefined;
+                  const isClearBlocked =
+                    !consumption ||
+                    consumption.status !== 'loaded' ||
+                    Boolean(consumption.isStale);
+
+                  return (
+                    <button
+                      type="button"
+                      disabled={disabled || isClearBlocked}
+                      onClick={handleClearPersonItems}
+                      title={
+                        isClearBlocked
+                          ? 'Não é possível limpar enquanto o consumo estiver carregando, com erro ou desatualizado'
+                          : 'Limpar todos os itens da comanda'
+                      }
+                      className="text-xs text-zinc-400 hover:text-red-500 flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-zinc-400"
+                    >
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 6h18" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      </svg>
+                      <span>Limpar</span>
+                    </button>
+                  );
+                })()}
+              </div>
             </div>
 
             {/* Listagem de Itens: Consolidada para Conta Conjunta ou Individual */}
@@ -2398,8 +3164,12 @@ function TableTabsContent({
               <div className="space-y-4">
                 {/* 1. Itens compartilhados diretamente na mesa */}
                 {(() => {
-                  const sharedItems = sharedTab ? (tabConsumptions[sharedTab.id]?.items ?? []) : [];
+                  const sharedConsumption = sharedTab ? tabConsumptions[sharedTab.id] : undefined;
+                  const sharedItems = sharedConsumption?.items ?? [];
                   const groupedShared = groupItemsByProductAndStatus(sharedItems);
+                  const isSharedExpanded = expandedContaConjuntaLists['shared'] ?? false;
+                  const sharedPage = pageContaConjuntaLists['shared'] ?? 1;
+                  const paginatedShared = paginateComandaItems(groupedShared, isSharedExpanded, sharedPage);
 
                   return (
                     <div className="rounded-2xl p-3 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-900/10 dark:border-amber-900/30 space-y-2">
@@ -2414,17 +3184,116 @@ function TableTabsContent({
                           Itens compartilhados da mesa
                         </span>
                         <span className="font-extrabold text-amber-950 dark:text-amber-200">
-                          {currency.format((sharedTab ? (tabConsumptions[sharedTab.id]?.totalInCents ?? 0) : 0) / 100)}
+                          {sharedConsumption?.status === 'error' ? (
+                            <span className="text-rose-600 text-[11px]">Indisponível</span>
+                          ) : sharedConsumption?.status === 'loading' ? (
+                            <span className="text-zinc-400 text-[11px]">…</span>
+                          ) : (
+                            currency.format((sharedConsumption?.totalInCents ?? 0) / 100)
+                          )}
                         </span>
                       </div>
 
-                      {groupedShared.length === 0 ? (
+                      {sharedConsumption?.status === 'error' ? (
+                        <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40 text-xs flex items-center justify-between gap-2">
+                          <span className="text-rose-700 dark:text-rose-300 text-[11px] font-medium">
+                            {sharedConsumption.error || 'Erro ao carregar itens compartilhados'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => sharedTab && void handleRetryTabConsumption(sharedTab.id)}
+                            className="text-rose-800 dark:text-rose-200 font-bold underline text-[11px] cursor-pointer"
+                          >
+                            Tentar novamente
+                          </button>
+                        </div>
+                      ) : sharedConsumption?.status === 'loading' ? (
+                        <p className="text-[11px] text-zinc-400 italic py-1">
+                          Consultando itens coletivos…
+                        </p>
+                      ) : groupedShared.length === 0 ? (
                         <p className="text-[11px] text-amber-900/60 dark:text-amber-300/60 italic py-1">
                           Nenhum item lançado no coletivo. Novos pedidos aqui serão divididos pela mesa.
                         </p>
                       ) : (
-                        <div className="divide-y divide-amber-900/10 dark:divide-amber-900/20">
-                          {groupedShared.map((group) => renderItemRow(group))}
+                        <div className="space-y-2">
+                          <div className="divide-y divide-amber-900/10 dark:divide-amber-900/20">
+                            {paginatedShared.displayedItems.map((group) => renderItemRow(group))}
+                          </div>
+
+                          {groupedShared.length > 2 && (
+                            <div className="pt-1">
+                              {!isSharedExpanded ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedContaConjuntaLists((prev) => ({ ...prev, shared: true }))
+                                  }
+                                  className="w-full py-2 px-3 rounded-xl border border-dashed border-amber-900/30 hover:border-amber-900 bg-amber-100/50 hover:bg-amber-100 dark:bg-amber-900/20 text-amber-950 dark:text-amber-200 font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                                >
+                                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <polyline points="6 9 12 15 18 9" />
+                                  </svg>
+                                  <span>Ver mais (+{groupedShared.length - 2} itens)</span>
+                                </button>
+                              ) : (
+                                paginatedShared.isPaginated && (
+                                  <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-1.5 border-t border-amber-900/10 dark:border-amber-900/20">
+                                    <span className="text-[11px] text-amber-950/70 dark:text-amber-300/70 font-medium">
+                                      {paginatedShared.rangeText}
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        disabled={!paginatedShared.hasPreviousPage}
+                                        onClick={() =>
+                                          setPageContaConjuntaLists((prev) => ({
+                                            ...prev,
+                                            shared: Math.max(1, (prev.shared || 1) - 1),
+                                          }))
+                                        }
+                                        className="px-2 py-1 text-xs font-semibold rounded-lg border border-amber-900/20 bg-white dark:bg-zinc-800 text-amber-950 dark:text-amber-200 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                                      >
+                                        Anterior
+                                      </button>
+                                      {paginatedShared.pageNumbers.map((num) => (
+                                        <button
+                                          key={num}
+                                          type="button"
+                                          onClick={() =>
+                                            setPageContaConjuntaLists((prev) => ({
+                                              ...prev,
+                                              shared: num,
+                                            }))
+                                          }
+                                          className={`w-7 h-7 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
+                                            num === paginatedShared.currentPage
+                                              ? 'bg-[#4A1505] text-white shadow-xs'
+                                              : 'bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50'
+                                          }`}
+                                        >
+                                          {num}
+                                        </button>
+                                      ))}
+                                      <button
+                                        type="button"
+                                        disabled={!paginatedShared.hasNextPage}
+                                        onClick={() =>
+                                          setPageContaConjuntaLists((prev) => ({
+                                            ...prev,
+                                            shared: Math.min(paginatedShared.totalPages, (prev.shared || 1) + 1),
+                                          }))
+                                        }
+                                        className="px-2 py-1 text-xs font-semibold rounded-lg border border-amber-900/20 bg-white dark:bg-zinc-800 text-amber-950 dark:text-amber-200 hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                                      >
+                                        Próxima
+                                      </button>
+                                    </div>
+                                  </div>
+                                )
+                              )}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -2446,8 +3315,11 @@ function TableTabsContent({
                         !t.label.toLowerCase().includes('mesa toda'),
                     )
                     .map((personTab) => {
-                      const personConsumption = tabConsumptions[personTab.id] || { items: [], totalInCents: 0 };
+                      const personConsumption = tabConsumptions[personTab.id] || { status: 'loading', items: [], totalInCents: 0 };
                       const personGrouped = groupItemsByProductAndStatus(personConsumption.items);
+                      const isPersonExpanded = expandedContaConjuntaLists[personTab.id] ?? false;
+                      const personPage = pageContaConjuntaLists[personTab.id] ?? 1;
+                      const paginatedPerson = paginateComandaItems(personGrouped, isPersonExpanded, personPage);
 
                       return (
                         <div
@@ -2458,19 +3330,126 @@ function TableTabsContent({
                             <span className="font-bold text-zinc-900 dark:text-white flex items-center gap-1.5">
                               <span className="w-2 h-2 rounded-full bg-[#4A1505] dark:bg-amber-400 shrink-0" />
                               {personTab.label}
+                              {personConsumption.isStale && (
+                                <span className="text-[10px] font-normal text-amber-600 dark:text-amber-400">
+                                  (desatualizado)
+                                </span>
+                              )}
                             </span>
                             <span className="font-extrabold text-zinc-900 dark:text-white">
-                              {currency.format(personConsumption.totalInCents / 100)}
+                              {personConsumption.status === 'error' ? (
+                                <span className="text-rose-600 text-[11px]">Indisponível</span>
+                              ) : personConsumption.status === 'loading' ? (
+                                <span className="text-zinc-400 text-[11px]">…</span>
+                              ) : (
+                                currency.format(personConsumption.totalInCents / 100)
+                              )}
                             </span>
                           </div>
 
-                          {personGrouped.length === 0 ? (
+                          {personConsumption.status === 'loading' ? (
+                            <p className="text-[11px] text-zinc-400 italic py-1">
+                              Carregando itens…
+                            </p>
+                          ) : personConsumption.status === 'error' ? (
+                            <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40 text-xs flex items-center justify-between gap-2">
+                              <span className="text-rose-700 dark:text-rose-300 text-[11px] font-medium">
+                                {personConsumption.error || 'Erro ao consultar consumo'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void handleRetryTabConsumption(personTab.id)}
+                                className="text-rose-800 dark:text-rose-200 font-bold underline text-[11px] cursor-pointer"
+                              >
+                                Tentar novamente
+                              </button>
+                            </div>
+                          ) : personGrouped.length === 0 ? (
                             <p className="text-[11px] text-zinc-400 italic py-1">
                               Sem itens lançados para esta pessoa.
                             </p>
                           ) : (
-                            <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                              {personGrouped.map((group) => renderItemRow(group))}
+                            <div className="space-y-2">
+                              <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                                {paginatedPerson.displayedItems.map((group) => renderItemRow(group))}
+                              </div>
+
+                              {personGrouped.length > 2 && (
+                                <div className="pt-1">
+                                  {!isPersonExpanded ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setExpandedContaConjuntaLists((prev) => ({
+                                          ...prev,
+                                          [personTab.id]: true,
+                                        }))
+                                      }
+                                      className="w-full py-2 px-3 rounded-xl border border-dashed border-[#4A1505]/30 hover:border-[#4A1505] bg-[#FAF4EE]/60 hover:bg-[#FAF4EE] dark:bg-zinc-800/40 dark:hover:bg-zinc-800 text-[#4A1505] dark:text-amber-300 font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                                    >
+                                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <polyline points="6 9 12 15 18 9" />
+                                      </svg>
+                                      <span>Ver mais (+{personGrouped.length - 2} itens)</span>
+                                    </button>
+                                  ) : (
+                                    paginatedPerson.isPaginated && (
+                                      <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-1.5 border-t border-zinc-100 dark:border-zinc-800">
+                                        <span className="text-[11px] text-zinc-500 font-medium">
+                                          {paginatedPerson.rangeText}
+                                        </span>
+                                        <div className="flex items-center gap-1">
+                                          <button
+                                            type="button"
+                                            disabled={!paginatedPerson.hasPreviousPage}
+                                            onClick={() =>
+                                              setPageContaConjuntaLists((prev) => ({
+                                                ...prev,
+                                                [personTab.id]: Math.max(1, (prev[personTab.id] || 1) - 1),
+                                              }))
+                                            }
+                                            className="px-2 py-1 text-xs font-semibold rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                                          >
+                                            Anterior
+                                          </button>
+                                          {paginatedPerson.pageNumbers.map((num) => (
+                                            <button
+                                              key={num}
+                                              type="button"
+                                              onClick={() =>
+                                                setPageContaConjuntaLists((prev) => ({
+                                                  ...prev,
+                                                  [personTab.id]: num,
+                                                }))
+                                              }
+                                              className={`w-7 h-7 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
+                                                num === paginatedPerson.currentPage
+                                                  ? 'bg-[#4A1505] text-white shadow-xs'
+                                                  : 'bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50'
+                                              }`}
+                                            >
+                                              {num}
+                                            </button>
+                                          ))}
+                                          <button
+                                            type="button"
+                                            disabled={!paginatedPerson.hasNextPage}
+                                            onClick={() =>
+                                              setPageContaConjuntaLists((prev) => ({
+                                                ...prev,
+                                                [personTab.id]: Math.min(paginatedPerson.totalPages, (prev[personTab.id] || 1) + 1),
+                                              }))
+                                            }
+                                            className="px-2 py-1 text-xs font-semibold rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                                          >
+                                            Próxima
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )
+                                  )}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -2480,12 +3459,116 @@ function TableTabsContent({
               </div>
             ) : (
               <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                {groupedActiveItems.length === 0 ? (
+                {selectedTabConsumption.status === 'loading' ? (
+                  <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 text-center space-y-1 my-2">
+                    <div className="w-5 h-5 border-2 border-[#4A1505] border-t-transparent rounded-full animate-spin mx-auto" />
+                    <p className="text-xs text-zinc-500">Consultando consumo no servidor…</p>
+                  </div>
+                ) : selectedTabConsumption.status === 'error' ? (
+                  <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40 text-center space-y-2 my-2">
+                    <p className="text-xs font-semibold text-rose-700 dark:text-rose-300">
+                      {selectedTabConsumption.error || 'Falha ao carregar o consumo desta comanda.'}
+                    </p>
+                    {selectedTabConsumption.isStale && (
+                      <p className="text-[10px] text-amber-700 dark:text-amber-300">
+                        Aviso: exibindo dados desatualizados em cache.
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => selectedTabId && void handleRetryTabConsumption(selectedTabId)}
+                      className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition cursor-pointer"
+                    >
+                      Tentar novamente
+                    </button>
+                  </div>
+                ) : groupedActiveItems.length === 0 ? (
                   <p className="text-xs text-zinc-400 italic py-2">
                     Nenhum item lançado para esta comanda ainda. Clique no '+' acima para adicionar.
                   </p>
                 ) : (
-                  groupedActiveItems.map((group) => renderItemRow(group))
+                  <div className="space-y-2">
+                    <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                      {paginatedItemsResult.displayedItems.map((group) => renderItemRow(group))}
+                    </div>
+
+                    {/* Controles de "Ver mais" e Paginação numérica quando houver mais de 2 itens */}
+                    {groupedActiveItems.length > 2 && (
+                      <div className="pt-1">
+                        {!isItemsExpanded ? (
+                          <button
+                            type="button"
+                            onClick={() => setIsItemsExpanded(true)}
+                            className="w-full py-2 px-3 rounded-xl border border-dashed border-[#4A1505]/30 hover:border-[#4A1505] bg-[#FAF4EE]/60 hover:bg-[#FAF4EE] dark:bg-zinc-800/40 dark:hover:bg-zinc-800 text-[#4A1505] dark:text-amber-300 font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points="6 9 12 15 18 9" />
+                            </svg>
+                            <span>Ver mais (+{groupedActiveItems.length - 2} itens)</span>
+                          </button>
+                        ) : (
+                          <div className="space-y-2">
+                            {/* Paginação se total > 5 */}
+                            {paginatedItemsResult.isPaginated && (
+                              <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-1.5 border-t border-zinc-100 dark:border-zinc-800">
+                                <span className="text-[11px] text-zinc-500 font-medium">
+                                  {paginatedItemsResult.rangeText}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    disabled={!paginatedItemsResult.hasPreviousPage}
+                                    onClick={() => setItemsCurrentPage((p) => Math.max(1, p - 1))}
+                                    className="px-2 py-1 text-xs font-semibold rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                                  >
+                                    Anterior
+                                  </button>
+                                  {paginatedItemsResult.pageNumbers.map((num) => (
+                                    <button
+                                      key={num}
+                                      type="button"
+                                      onClick={() => setItemsCurrentPage(num)}
+                                      className={`w-7 h-7 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
+                                        num === paginatedItemsResult.currentPage
+                                          ? 'bg-[#4A1505] text-white shadow-xs'
+                                          : 'bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50'
+                                      }`}
+                                    >
+                                      {num}
+                                    </button>
+                                  ))}
+                                  <button
+                                    type="button"
+                                    disabled={!paginatedItemsResult.hasNextPage}
+                                    onClick={() => setItemsCurrentPage((p) => Math.min(paginatedItemsResult.totalPages, p + 1))}
+                                    className="px-2 py-1 text-xs font-semibold rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                                  >
+                                    Próxima
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsItemsExpanded(false);
+                                  setItemsCurrentPage(1);
+                                }}
+                                className="text-[11px] font-semibold text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 flex items-center gap-1 cursor-pointer py-1"
+                              >
+                                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <polyline points="18 15 12 9 6 15" />
+                                </svg>
+                                <span>Ver menos</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -2560,11 +3643,41 @@ function TableTabsContent({
 
           {/* D. Bloco Financeiro e Fechamento */}
           <div className="space-y-2 pt-1">
+            {effectiveIncomplete && (
+              <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 p-2.5 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-amber-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  <span className="text-[11px] font-medium leading-tight">
+                    {isSharedTabSelected
+                      ? 'Atenção: Os totais abaixo são parciais pois há comanda(s) com consumo pendente ou erro de consulta.'
+                      : 'Atenção: O consumo desta comanda está pendente ou com erro de consulta.'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isSharedTabSelected) {
+                      setRefresh((r) => r + 1);
+                    } else if (selectedTabId) {
+                      void handleRetryTabConsumption(selectedTabId);
+                    }
+                  }}
+                  className="font-bold underline text-amber-900 dark:text-amber-100 hover:text-black shrink-0 cursor-pointer text-[11px]"
+                >
+                  Recarregar
+                </button>
+              </div>
+            )}
+
             <div className="grid grid-cols-3 gap-2 p-3 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200/60 dark:border-zinc-800 shadow-xs">
               <div>
                 <span className="text-[10px] text-zinc-400 font-medium block">Subtotal</span>
                 <span className="text-xs font-bold text-zinc-900 dark:text-white mt-0.5 block">
-                  {currency.format(effectiveSubtotal / 100)}
+                  {effectiveIncomplete ? `${currency.format(effectiveSubtotal / 100)} (parcial)` : currency.format(effectiveSubtotal / 100)}
                 </span>
               </div>
 
@@ -2582,7 +3695,7 @@ function TableTabsContent({
                   {isSharedTabSelected ? 'Total da mesa' : 'Total da pessoa'}
                 </span>
                 <span className="text-sm font-extrabold text-[#782006] dark:text-amber-400 mt-0.5 block">
-                  {currency.format(effectiveTotal / 100)}
+                  {effectiveIncomplete ? `${currency.format(effectiveTotal / 100)}*` : currency.format(effectiveTotal / 100)}
                 </span>
               </div>
             </div>
@@ -2619,7 +3732,9 @@ function TableTabsContent({
               <button
                 type="button"
                 onClick={handlePrintReceipt}
-                className="p-2.5 rounded-2xl border border-amber-900/10 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xs flex items-center justify-center gap-1.5 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition cursor-pointer"
+                disabled={effectiveIncomplete}
+                title={effectiveIncomplete ? 'Pré-conta indisponível enquanto houver comanda com consumo incompleto' : 'Imprimir pré-conta'}
+                className="p-2.5 rounded-2xl border border-amber-900/10 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xs flex items-center justify-center gap-1.5 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <svg className="w-3.5 h-3.5 text-[#782006] dark:text-amber-300 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M6 9V2h12v7" />
@@ -2630,10 +3745,55 @@ function TableTabsContent({
               </button>
             </div>
 
+            {/* Ação Visível: Dividir conta e Fechar comanda individual no respectivo contexto (Tela 4) */}
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <button
+                type="button"
+                onClick={() => setIsSplitBillModalOpen(true)}
+                className="py-3 px-2 sm:px-3 rounded-2xl border border-amber-300 dark:border-amber-800/80 bg-amber-50/90 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-[#782006] dark:text-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer text-center"
+                title="Simular divisão estimada da conta"
+              >
+                <svg className="w-4 h-4 text-[#782006] dark:text-amber-300 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+                <span className="truncate">Dividir conta</span>
+              </button>
+
+              {selectedTab && selectedTab.status === 'open' && (
+                <button
+                  type="button"
+                  disabled={
+                    disabled ||
+                    busy ||
+                    (selectedTabId ? tabConsumptions[selectedTabId]?.status === 'loading' : false)
+                  }
+                  onClick={() => {
+                    if (selectedTabId) {
+                      void handleDeleteOrCloseTab(selectedTabId);
+                    }
+                  }}
+                  className="py-3 px-2 sm:px-3 rounded-2xl border border-rose-300 dark:border-rose-900/60 bg-rose-50/90 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-center"
+                  title={isSharedTabSelected ? 'Fechar conta conjunta' : `Fechar comanda de ${selectedTab.label || 'cliente'}`}
+                >
+                  <svg className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="truncate">
+                    {isSharedTabSelected
+                      ? 'Fechar conta conjunta'
+                      : `Fechar comanda de ${selectedTab.label || 'cliente'}`}
+                  </span>
+                </button>
+              )}
+            </div>
+
             <button
               type="button"
               onClick={handleFinalizeAndSendToKitchen}
-              disabled={disabled || activeItems.length === 0}
+              disabled={disabled || activeItems.length === 0 || selectedTabConsumption.status === 'error'}
               className="bg-[#4A1505] hover:bg-[#381004] text-white font-bold py-3.5 rounded-2xl w-full shadow-md flex items-center justify-center gap-2 mt-3 active:scale-95 transition cursor-pointer disabled:opacity-50"
             >
               <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -2649,10 +3809,251 @@ function TableTabsContent({
         </div>
       )}
 
+      {/* ========================================================================= */}
+      {/* MODAL: SIMULAÇÃO DE DIVISÃO DE CONTA (ESTIMATIVA VISUAL ENTRE PESSOAS)   */}
+      {/* ========================================================================= */}
+      {isSplitBillModalOpen && (() => {
+        const totalToSplitInCents = effectiveTotal;
+        const activePeopleCount = parseSplitPeopleCount(splitPeopleInput);
+        const splitResult = calculateSplitBill(totalToSplitInCents, activePeopleCount);
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-5 max-w-sm w-full shadow-2xl space-y-4">
+              {/* Cabeçalho */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-[#782006] dark:text-amber-400 flex items-center justify-center shrink-0">
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-zinc-900 dark:text-white leading-tight">
+                      Dividir conta
+                    </h3>
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Simulação visual para os clientes
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSplitBillModalOpen(false)}
+                  className="w-7 h-7 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-500 dark:text-zinc-300 flex items-center justify-center text-xs transition cursor-pointer"
+                  aria-label="Fechar"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Total Atual */}
+              <div className="bg-[#FAF6F0] dark:bg-zinc-800/70 rounded-2xl p-3 border border-amber-900/10 dark:border-zinc-800 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider block">
+                    {isSharedTabSelected ? 'Total da conta conjunta' : `Total da comanda (${selectedTab?.label || 'cliente'})`}
+                  </span>
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                    Subtotal + serviço ({restaurantFeePercent}%)
+                  </span>
+                </div>
+                <span className="text-base font-black text-[#782006] dark:text-amber-400 tabular-nums">
+                  {currency.format(totalToSplitInCents / 100)}
+                </span>
+              </div>
+
+              {/* Seletor de Quantidade de Pessoas (com botões − / + e campo editável) */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="split-people-input" className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">
+                    Quantidade de pessoas
+                  </label>
+                  <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                    A partir de 2 pessoas
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* Botão − */}
+                  <button
+                    type="button"
+                    disabled={activePeopleCount <= 2}
+                    onClick={() => {
+                      const next = Math.max(2, activePeopleCount - 1);
+                      setSplitPeopleInput(String(next));
+                    }}
+                    className="w-11 h-11 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-800 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed font-extrabold text-lg flex items-center justify-center transition shadow-xs cursor-pointer select-none"
+                    aria-label="Diminuir uma pessoa"
+                  >
+                    −
+                  </button>
+
+                  {/* Campo numérico editável */}
+                  <div className="flex-1 relative">
+                    <input
+                      id="split-people-input"
+                      type="number"
+                      min="2"
+                      step="1"
+                      value={splitPeopleInput}
+                      onChange={(e) => setSplitPeopleInput(e.target.value)}
+                      onBlur={() => {
+                        setSplitPeopleInput(String(parseSplitPeopleCount(splitPeopleInput)));
+                      }}
+                      className="w-full h-11 px-3 text-center text-base font-extrabold text-zinc-900 dark:text-white bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-2xl focus:outline-hidden focus:ring-2 focus:ring-[#782006] dark:focus:ring-amber-400 tabular-nums shadow-xs"
+                      aria-label="Número de pessoas para divisão da conta"
+                    />
+                  </div>
+
+                  {/* Botão + */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = activePeopleCount + 1;
+                      setSplitPeopleInput(String(next));
+                    }}
+                    className="w-11 h-11 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-800 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 font-extrabold text-lg flex items-center justify-center transition shadow-xs cursor-pointer select-none"
+                    aria-label="Adicionar uma pessoa"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+              {/* Resultado da Estimativa */}
+              <div className="bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-900/40 rounded-2xl p-3.5 space-y-2.5">
+                <div className="text-center pb-2 border-b border-amber-200/60 dark:border-amber-900/40">
+                  <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 block">
+                    Valor estimado por pessoa ({activePeopleCount} {activePeopleCount === 1 ? 'pessoa' : 'pessoas'})
+                  </span>
+                  <div className="text-xl font-black text-[#782006] dark:text-amber-300 mt-0.5 tabular-nums">
+                    {splitResult.hasRemainder ? (
+                      <span>
+                        {currency.format(splitResult.baseAmountInCents / 100)}
+                        {' a '}
+                        {currency.format((splitResult.baseAmountInCents + 1) / 100)}
+                      </span>
+                    ) : (
+                      <span>
+                        {currency.format(splitResult.baseAmountInCents / 100)}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-zinc-500 dark:text-zinc-400 mt-0.5 block">
+                    {splitResult.summaryMessage}
+                  </span>
+                </div>
+
+                {/* Demonstrativo individual (até 10 pessoas) ou consolidado compacto (> 10 pessoas) */}
+                {!splitResult.isCompact ? (
+                  <div className="space-y-1.5 pt-0.5">
+                    <span className="text-[10px] font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-wider block">
+                      Demonstrativo por pessoa ({splitResult.shares.length})
+                    </span>
+                    <div className="max-h-52 overflow-y-auto space-y-1 pr-0.5">
+                      {splitResult.shares.map((share) => (
+                        <div
+                          key={share.personIndex}
+                          className="flex items-center justify-between text-xs py-1 px-2.5 rounded-lg bg-white/80 dark:bg-zinc-800/80 border border-amber-900/5 dark:border-zinc-700/50"
+                        >
+                          <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                            {share.label}
+                          </span>
+                          <span className="font-bold text-zinc-900 dark:text-white tabular-nums">
+                            {currency.format(share.amountInCents / 100)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 pt-0.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-wider block">
+                        Demonstrativo consolidado ({activePeopleCount} pessoas)
+                      </span>
+                      <span className="text-[10px] bg-amber-200/60 dark:bg-amber-900/40 text-amber-900 dark:text-amber-200 px-1.5 py-0.5 rounded-md font-semibold">
+                        Visão compacta
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      {splitResult.compactGroups.map((grp, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between text-xs py-1.5 px-2.5 rounded-lg bg-white/80 dark:bg-zinc-800/80 border border-amber-900/5 dark:border-zinc-700/50"
+                        >
+                          <div>
+                            <span className="font-bold text-zinc-800 dark:text-zinc-200">
+                              {grp.label}
+                            </span>
+                            <span className="text-[10px] text-zinc-400 dark:text-zinc-500 block">
+                              pagam cada uma:
+                            </span>
+                          </div>
+                          <div className="text-right">
+                            <span className="font-black text-[#782006] dark:text-amber-300 tabular-nums text-sm">
+                              {currency.format(grp.amountInCents / 100)}
+                            </span>
+                            <span className="text-[10px] text-zinc-400 dark:text-zinc-500 block tabular-nums">
+                              Subtotal: {currency.format(grp.totalGroupInCents / 100)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Aviso explícito de estimativa (Exigência do Requisito) */}
+              <div className="p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-800 text-[11px] text-zinc-600 dark:text-zinc-400 leading-relaxed flex items-start gap-2">
+                <svg className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <span>
+                  <strong>Estimativa para divisão entre pessoas:</strong> Este cálculo é apenas uma simulação visual. Não altera valores, não registra pagamentos e não fecha a comanda. O acerto é realizado diretamente entre os clientes.
+                </span>
+              </div>
+
+              {/* Botão de Fechar */}
+              <button
+                type="button"
+                onClick={() => setIsSplitBillModalOpen(false)}
+                className="w-full py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-white dark:text-zinc-900 font-bold text-xs shadow-xs transition cursor-pointer"
+              >
+                Concluir consulta
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Modal global de confirmação de encerramento de comanda com consumo */}
       {closingTabId && (() => {
         const tabToClose = state.tabs.find((t) => t.id === closingTabId);
         if (!tabToClose) return null;
+        const closeConsumption = tabConsumptions[closingTabId];
+        const isConsumptionBlocked =
+          !closeConsumption ||
+          closeConsumption.status === 'loading' ||
+          closeConsumption.status === 'error' ||
+          Boolean(closeConsumption.isStale);
+
+        const subtotalInCents = closeConsumption?.totalInCents ?? 0;
+        const preview = calculateTabClosurePreview(
+          subtotalInCents,
+          restaurantFeePercent,
+          closingFeeAccepted,
+        );
+        const hasFeeConfigured = restaurantFeePercent > 0;
+        const baseFeeInCents = calculateTabClosureFee(subtotalInCents, restaurantFeePercent);
+
         return (
           <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-5 max-w-sm w-full shadow-2xl space-y-4">
@@ -2661,21 +4062,105 @@ function TableTabsContent({
                   Encerrar comanda “{tabToClose.label}”?
                 </h3>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-                  Esta comanda possui consumo registrado. Deseja fechar e calcular o total para pagamento?
+                  Confira os valores e a opção de taxa de serviço antes de finalizar a comanda para pagamento.
                 </p>
               </div>
+
+              {closeConsumption?.status === 'loading' && (
+                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 text-xs">
+                  Aguarde: verificando consumo da comanda...
+                </div>
+              )}
+
+              {closeConsumption?.status === 'error' && (
+                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 text-rose-800 dark:text-rose-200 text-xs space-y-2">
+                  <p>Falha ao verificar consumo da comanda.</p>
+                  <button
+                    type="button"
+                    onClick={() => void handleRetryTabConsumption(closingTabId)}
+                    className="text-xs font-semibold underline cursor-pointer"
+                  >
+                    Tentar novamente
+                  </button>
+                </div>
+              )}
+
+              {closeConsumption?.isStale && (
+                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 text-xs space-y-2">
+                  <p>O consumo desta comanda está desatualizado.</p>
+                  <button
+                    type="button"
+                    onClick={() => void handleRetryTabConsumption(closingTabId)}
+                    className="text-xs font-semibold underline cursor-pointer"
+                  >
+                    Atualizar consumo
+                  </button>
+                </div>
+              )}
+
+              {closeConsumption?.status === 'loaded' && !closeConsumption.isStale && (
+                <div className="p-3.5 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/80 dark:border-zinc-700/60 space-y-2 text-xs">
+                  <div className="flex justify-between items-center text-zinc-600 dark:text-zinc-300">
+                    <span>Subtotal dos itens</span>
+                    <span className="font-semibold text-zinc-900 dark:text-white">
+                      {currency.format(preview.subtotalInCents / 100)}
+                    </span>
+                  </div>
+
+                  {hasFeeConfigured && (
+                    <div className="space-y-1.5 pt-1.5 border-t border-zinc-200/50 dark:border-zinc-700/50">
+                      <div className="flex items-center justify-between">
+                        <label className="flex items-center gap-2 cursor-pointer select-none text-zinc-700 dark:text-zinc-200">
+                          <input
+                            type="checkbox"
+                            checked={closingFeeAccepted}
+                            onChange={(e) => setClosingFeeAccepted(e.target.checked)}
+                            disabled={busy}
+                            className="w-4 h-4 rounded text-amber-800 focus:ring-amber-800 dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer"
+                          />
+                          <span className="font-medium">
+                            Taxa de serviço ({restaurantFeePercent}%)
+                          </span>
+                        </label>
+                        <span
+                          className={`font-semibold ${
+                            closingFeeAccepted
+                              ? 'text-zinc-900 dark:text-white'
+                              : 'text-zinc-400 line-through'
+                          }`}
+                        >
+                          {currency.format(baseFeeInCents / 100)}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400 pl-6">
+                        {closingFeeAccepted
+                          ? 'Taxa opcional incluída no total.'
+                          : 'Taxa opcional retirada por solicitação do cliente.'}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between items-center pt-2 border-t border-zinc-200/80 dark:border-zinc-700/60 font-bold text-sm">
+                    <span className="text-zinc-900 dark:text-white">Total para pagamento</span>
+                    <span className="text-[#782006] dark:text-amber-400 text-base">
+                      {currency.format(preview.totalInCents / 100)}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               <div className="flex gap-2">
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || isConsumptionBlocked}
                   onClick={() => void handleCloseTab(closingTabId)}
-                  className="flex-1 py-2.5 rounded-xl bg-amber-800 hover:bg-amber-900 text-white font-semibold text-xs transition cursor-pointer disabled:opacity-50"
+                  className="flex-1 py-2.5 rounded-xl bg-amber-800 hover:bg-amber-900 text-white font-semibold text-xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {busy ? 'Encerrando…' : 'Confirmar encerramento'}
                 </button>
                 <button
                   type="button"
+                  disabled={busy}
                   onClick={() => setClosingTabId(null)}
                   className="px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 font-medium text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer"
                 >
@@ -2818,8 +4303,8 @@ function TableTabsContent({
                     setMoveItemId(id);
                     const itemTab = findItemAndTab(id)?.tabId;
                     const availableTargets = state.tabs.filter((t) => t.status === 'open' && t.id !== itemTab);
-                    if (availableTargets.length > 0 && !availableTargets.some((t) => t.id === moveTargetTabId)) {
-                      setMoveTargetTabId(availableTargets[0].id);
+                    if (!availableTargets.some((t) => t.id === moveTargetTabId)) {
+                      setMoveTargetTabId('');
                     }
                   }}
                   className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white"
@@ -2837,7 +4322,7 @@ function TableTabsContent({
 
               <div>
                 <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 mb-1">
-                  Pessoa / Comanda de destino
+                  Pessoa / Comanda de destino <span className="text-rose-500">*</span>
                 </label>
                 {movableTargetTabs.length === 0 ? (
                   <p className="text-xs text-zinc-400 italic py-1">
@@ -2847,8 +4332,9 @@ function TableTabsContent({
                   <select
                     value={moveTargetTabId}
                     onChange={(e) => setMoveTargetTabId(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white"
+                    className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white cursor-pointer"
                   >
+                    <option value="">Selecione a pessoa/comanda de destino...</option>
                     {movableTargetTabs.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.label.toLowerCase().includes('conjunt') || t.label.toLowerCase().includes('compartilh')
@@ -2859,12 +4345,31 @@ function TableTabsContent({
                   </select>
                 )}
               </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 mb-1">
+                  Motivo da movimentação (auditoria) <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={moveReason}
+                  onChange={(e) => {
+                    setMoveReason(e.target.value);
+                    setMoveReasonError('');
+                  }}
+                  placeholder="Ex.: Solicitado pelo cliente, reorganização de pedidos..."
+                  className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:border-[#4A1505] focus:outline-none resize-none"
+                />
+                {moveReasonError && (
+                  <p className="text-[11px] text-rose-500 font-medium mt-1">{moveReasonError}</p>
+                )}
+              </div>
             </div>
 
             <div className="flex gap-2 pt-2">
               <button
                 type="button"
-                disabled={busy || !moveItemId || !moveTargetTabId || movableTargetTabs.length === 0}
+                disabled={busy || !moveItemId || !moveTargetTabId || movableTargetTabs.length === 0 || moveReason.trim().length < 3}
                 onClick={handleConfirmMovePerson}
                 className="flex-1 py-2.5 rounded-xl bg-[#4A1505] text-white font-semibold text-xs disabled:opacity-50 cursor-pointer hover:bg-[#381004] transition"
               >
@@ -2876,6 +4381,8 @@ function TableTabsContent({
                   setIsMovePersonModalOpen(false);
                   setMoveItemId('');
                   setMoveTargetTabId('');
+                  setMoveReason('');
+                  setMoveReasonError('');
                 }}
                 className="px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 font-medium text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer"
               >
@@ -2930,9 +4437,14 @@ function TableTabsContent({
                 ) : (
                   <select
                     value={transferTargetTableId}
-                    onChange={(e) => setTransferTargetTableId(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white"
+                    onChange={(e) => {
+                      const newTableId = e.target.value;
+                      setTransferTargetTableId(newTableId);
+                      void loadTransferTableTargetTabs(newTableId);
+                    }}
+                    className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white cursor-pointer"
                   >
+                    <option value="">Selecione a mesa de destino...</option>
                     {occupiedTables.map((t) => (
                       <option key={t.id} value={t.id}>
                         Mesa {t.table_number}{t.label ? ` (${t.label})` : ''}
@@ -2941,12 +4453,69 @@ function TableTabsContent({
                   </select>
                 )}
               </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 mb-1">
+                  Comanda de destino (seleção explícita) <span className="text-rose-500">*</span>
+                </label>
+                {loadingTargetTabs ? (
+                  <p className="text-xs text-zinc-400 py-1.5">Carregando comandas da mesa...</p>
+                ) : !transferTargetTableId ? (
+                  <p className="text-xs text-zinc-400 italic py-1">
+                    Selecione a mesa de destino para listar as comandas abertas.
+                  </p>
+                ) : transferTableTargetTabs.length === 0 ? (
+                  <p className="text-xs text-rose-500 italic py-1">
+                    A mesa selecionada não possui comanda aberta para receber o item.
+                  </p>
+                ) : (
+                  <select
+                    value={transferTableTargetTabId}
+                    onChange={(e) => {
+                      setTransferTableTargetTabId(e.target.value);
+                      setTransferReasonError('');
+                    }}
+                    className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white cursor-pointer"
+                  >
+                    <option value="">Selecione a comanda de destino...</option>
+                    {transferTableTargetTabs.map((tab) => (
+                      <option key={tab.id} value={tab.id}>
+                        {tab.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                    Motivo da transferência (auditoria) <span className="text-rose-500">*</span>
+                  </label>
+                  <span className="text-[10px] text-zinc-400">
+                    {transferReason.trim().length}/300
+                  </span>
+                </div>
+                <textarea
+                  rows={2}
+                  value={transferReason}
+                  onChange={(e) => {
+                    setTransferReason(e.target.value);
+                    setTransferReasonError('');
+                  }}
+                  placeholder="Ex.: Mudança de mesa do cliente, reagrupamento..."
+                  className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:border-[#4A1505] focus:outline-none resize-none"
+                />
+                {transferReasonError && (
+                  <p className="text-[11px] text-rose-500 font-medium mt-1">{transferReasonError}</p>
+                )}
+              </div>
             </div>
 
             <div className="flex gap-2 pt-2">
               <button
                 type="button"
-                disabled={busy || !transferItemId || !transferTargetTableId || occupiedTables.length === 0}
+                disabled={busy || !transferItemId || !transferTargetTableId || !transferTableTargetTabId || occupiedTables.length === 0 || transferReason.trim().length < 3}
                 onClick={handleConfirmTransferTable}
                 className="flex-1 py-2.5 rounded-xl bg-[#4A1505] text-white font-semibold text-xs disabled:opacity-50 cursor-pointer hover:bg-[#381004] transition"
               >
@@ -2958,10 +4527,111 @@ function TableTabsContent({
                   setIsTransferTableModalOpen(false);
                   setTransferItemId('');
                   setTransferTargetTableId('');
+                  setTransferTableTargetTabs([]);
+                  setTransferTableTargetTabId('');
+                  setTransferReason('');
+                  setTransferReasonError('');
                 }}
                 className="px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 font-medium text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer"
               >
                 Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Cancelamento de Produto com Motivo Obrigatório para Auditoria */}
+      {cancellingItem && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-5 max-w-sm w-full shadow-2xl space-y-4">
+            <div>
+              <h3 className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-2">
+                <svg className="w-4 h-4 text-rose-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 6h18" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+                Cancelar item da comanda
+              </h3>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                Confirme os dados do item e informe o motivo do cancelamento para fins de auditoria.
+              </p>
+            </div>
+
+            {/* Confirmação clara: produto, quantidade e valor */}
+            <div className="p-3.5 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/80 dark:border-zinc-700/60 space-y-1 text-xs">
+              <div className="flex justify-between items-center text-zinc-900 dark:text-white font-bold">
+                <span className="text-xs">{cancellingItem.quantity}x {cancellingItem.productName}</span>
+                {cancellingItem.lineTotalInCents > 0 && (
+                  <span className="font-semibold text-rose-700 dark:text-rose-400">
+                    {currency.format(cancellingItem.lineTotalInCents / 100)}
+                  </span>
+                )}
+              </div>
+              {cancellingItem.unitPriceInCents > 0 && cancellingItem.quantity > 1 && (
+                <p className="text-[11px] text-zinc-500">
+                  {currency.format(cancellingItem.unitPriceInCents / 100)} cada
+                </p>
+              )}
+            </div>
+
+            {/* Descrição do motivo */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                Motivo do cancelamento <span className="text-rose-500">*</span>
+              </label>
+              <textarea
+                autoFocus
+                rows={3}
+                value={cancellationReason}
+                onChange={(e) => {
+                  setCancellationReason(e.target.value);
+                  setCancellationModalError('');
+                }}
+                placeholder="Ex.: Cliente desistiu, lançado por engano, produto esgotado..."
+                className="w-full text-xs p-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:border-[#4A1505] focus:outline-none resize-none"
+              />
+              <div className="flex justify-between text-[11px] text-zinc-400">
+                <span>Mínimo 3 caracteres</span>
+                <span>{cancellationReason.trim().length}/300</span>
+              </div>
+            </div>
+
+            {cancellationModalError && (
+              <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/40 text-xs text-rose-700 dark:text-rose-300">
+                {cancellationModalError}
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                disabled={cancellationSubmitting}
+                onClick={() => {
+                  setCancellingItem(null);
+                  setCancellationReason('');
+                  setCancellationModalError('');
+                }}
+                className="flex-1 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 font-semibold text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer"
+              >
+                Voltar
+              </button>
+
+              <button
+                type="button"
+                disabled={cancellationSubmitting || cancellationReason.trim().length < 3}
+                onClick={() => void handleConfirmCancellation()}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                {cancellationSubmitting ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Cancelando...</span>
+                  </>
+                ) : (
+                  <span>Confirmar</span>
+                )}
               </button>
             </div>
           </div>

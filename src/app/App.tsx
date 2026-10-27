@@ -22,6 +22,7 @@ import { ThemeToggleButton } from "../features/theme/ThemeToggleButton";
 import { StaffCommissionProvider } from "../features/service/StaffCommissionContext";
 import { SoundSettingsControl } from "../features/alerts/SoundSettingsControl";
 import { StaffCommissionHeaderPill } from "../features/service/StaffCommissionHeaderPill";
+import { StaffChamadosProvider, useStaffChamados } from "../features/service/StaffChamadosContext";
 import { LandingPage } from "../features/landing/LandingPage";
 
 const ProductPage = lazy(() =>
@@ -69,6 +70,16 @@ const StaffServicePage = lazy(() =>
     default: m.StaffServicePage,
   })),
 );
+const StaffComandasOperationalPage = lazy(() =>
+  import("../features/service/StaffComandasOperationalPage").then((m) => ({
+    default: m.StaffComandasOperationalPage,
+  })),
+);
+const ComandasPage = lazy(() =>
+  import("../features/service/ComandasPage").then((m) => ({
+    default: m.ComandasPage,
+  })),
+);
 const StaffHistoryPage = lazy(() =>
   import("../features/service/StaffHistoryPage").then((m) => ({
     default: m.StaffHistoryPage,
@@ -77,6 +88,16 @@ const StaffHistoryPage = lazy(() =>
 const StaffProfilePage = lazy(() =>
   import("../features/service/StaffProfilePage").then((m) => ({
     default: m.StaffProfilePage,
+  })),
+);
+const ChamadosPage = lazy(() =>
+  import("../features/service/ChamadosPage").then((m) => ({
+    default: m.ChamadosPage,
+  })),
+);
+const StaffMaisPage = lazy(() =>
+  import("../features/service/StaffMaisPage").then((m) => ({
+    default: m.StaffMaisPage,
   })),
 );
 const AdminCatalogPage = lazy(() =>
@@ -245,149 +266,166 @@ function RestaurantLayout() {
       </div>
     );
 
+function StaffBottomNav({ restaurantSlug }: { restaurantSlug: string }) {
+  const { totalPendingCount } = useStaffChamados();
+  const location = useLocation();
+
+  const getNavLinkClass = (isActive: boolean) =>
+    `flex flex-col items-center justify-center gap-1 py-1.5 px-2 sm:px-3 rounded-2xl transition-all cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#4A1505] dark:focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#FCF9F5] dark:focus-visible:ring-offset-zinc-900 active:scale-[0.96] aria-disabled:opacity-40 aria-disabled:cursor-not-allowed ${
+      isActive
+        ? 'bg-[#FAF4EE] dark:bg-zinc-800 text-[#4A1505] dark:text-white font-bold shadow-xs dark:ring-1 dark:ring-white/20 active:bg-[#F3EBE1] dark:active:bg-zinc-700/80'
+        : 'text-zinc-600 dark:text-zinc-100 font-medium hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60 active:bg-zinc-200/50 dark:active:bg-zinc-800/80 dark:active:text-white'
+    }`;
+
+  const isAtendimentoActive =
+    location.pathname === `/${restaurantSlug}/equipe` &&
+    !location.search.includes('mesa');
+
+  const isComandasActive =
+    location.pathname.includes('/comandas') ||
+    (location.pathname === `/${restaurantSlug}/equipe` && location.search.includes('mesa'));
+
+  const isChamadosActive = location.pathname.includes('/chamados');
+
+  const isMaisActive =
+    location.pathname.includes('/mais') ||
+    location.pathname.includes('/perfil') ||
+    location.pathname.includes('/historico');
+
+  return (
+    <nav className="fixed bottom-0 left-0 right-0 z-40 flex justify-center pointer-events-none" aria-label="Navegação da equipe">
+      <div className="w-full max-w-md md:max-w-lg px-2 sm:px-4 pb-3 pointer-events-auto">
+        <div className="bg-[#FCF9F5]/95 dark:bg-zinc-900/95 backdrop-blur-md rounded-3xl border border-amber-900/10 dark:border-zinc-800 shadow-lg dark:shadow-2xl dark:shadow-black/60 py-2 sm:py-2.5 px-1.5 sm:px-3 flex items-center justify-around">
+          {/* 1. Atendimento */}
+          <NavLink
+            to={`/${restaurantSlug}/equipe`}
+            end
+            className={getNavLinkClass(isAtendimentoActive)}
+            aria-current={isAtendimentoActive ? 'page' : undefined}
+          >
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 4v2" />
+              <path d="M4 18h16a1 1 0 0 0 1-1A9 9 0 0 0 3 17a1 1 0 0 0 1 1z" />
+              <path d="M2 20h20" />
+            </svg>
+            <span className="text-[11px] leading-tight">Atendimento</span>
+          </NavLink>
+
+          {/* 2. Comandas */}
+          <NavLink
+            to={`/${restaurantSlug}/equipe/comandas`}
+            className={getNavLinkClass(isComandasActive)}
+            aria-current={isComandasActive ? 'page' : undefined}
+          >
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+            <span className="text-[11px] leading-tight">Comandas</span>
+          </NavLink>
+
+          {/* 3. Chamados com Badge Vermelho */}
+          <NavLink
+            to={`/${restaurantSlug}/equipe/chamados`}
+            className={getNavLinkClass(isChamadosActive)}
+            aria-current={isChamadosActive ? 'page' : undefined}
+          >
+            <div className="relative">
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+              </svg>
+              {totalPendingCount > 0 && (
+                <span
+                  className="absolute -top-1.5 -right-2.5 bg-rose-600 text-white text-[10px] font-extrabold min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center leading-none shadow-sm dark:shadow-rose-950/60 dark:ring-1 dark:ring-zinc-900"
+                  aria-label={`${totalPendingCount} chamados pendentes`}
+                >
+                  {totalPendingCount}
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] leading-tight">Chamados</span>
+          </NavLink>
+
+          {/* 4. Mais */}
+          <NavLink
+            to={`/${restaurantSlug}/equipe/mais`}
+            className={getNavLinkClass(isMaisActive)}
+            aria-current={isMaisActive ? 'page' : undefined}
+          >
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="1.5" />
+              <circle cx="19" cy="12" r="1.5" />
+              <circle cx="5" cy="12" r="1.5" />
+            </svg>
+            <span className="text-[11px] leading-tight">Mais</span>
+          </NavLink>
+        </div>
+      </div>
+    </nav>
+  );
+}
+
   if (isEquipe) {
     return (
       <StaffCommissionProvider>
-        <div className="min-h-screen bg-[#FAF6F2] dark:bg-zinc-950 flex justify-center" data-theme={themeMode} style={theme}>
-          <a
-            href="#content"
-            className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 z-50 bg-white p-2 rounded shadow text-xs text-zinc-900"
-          >
-            Pular para o conteúdo
-          </a>
-          <div className="w-full max-w-md md:max-w-lg min-h-screen flex flex-col relative px-4 pt-3 pb-28 shadow-xl bg-[#FAF6F2] dark:bg-zinc-950 border-x border-amber-900/5">
-            {!isStaffTableDetail && (
-              <header className="public-header">
-                <Link
-                  to={`/${restaurant.slug}/equipe`}
-                  aria-label={`${restaurant.name}, início`}
-                  className="wordmark"
-                >
-                  {restaurant.logo ? (
-                    <img
-                      src={restaurant.logo.url}
-                      className="public-logo"
-                      alt={restaurant.name}
-                    />
-                  ) : (
-                    <>
-                      {restaurant.name}
-                      <span>{restaurant.subtitle}</span>
-                    </>
-                  )}
-                </Link>
-                <div className="public-header-actions">
-                  <SoundSettingsControl />
-                  <ThemeToggleButton />
-                </div>
-              </header>
-            )}
-
-            <main id="content" className="flex-1">
-              <Suspense
-                fallback={
-                  <div className="py-6 text-center">
-                    <p role="status" className="text-xs text-[var(--ink)] opacity-60">
-                      Carregando equipe…
-                    </p>
-                  </div>
-                }
-              >
-                <Outlet />
-              </Suspense>
-            </main>
-
-            {/* Barra Inferior Fixa (BottomNav) */}
-            <nav className="fixed bottom-0 left-0 right-0 z-40 flex justify-center pointer-events-none" aria-label="Navegação da equipe">
-              <div className="w-full max-w-md md:max-w-lg px-4 pb-3 pointer-events-auto">
-                <div className="bg-[#FCF9F5]/95 dark:bg-zinc-900/95 backdrop-blur-md rounded-3xl border border-amber-900/10 shadow-lg py-2.5 px-4 flex items-center justify-around">
-                  {/* Itens: Atendimento, Comandas, Chamados, Mais */}
-                  <NavLink
+        <StaffChamadosProvider restaurantSlug={restaurant.slug} restaurantId={restaurant.id}>
+          <div className="min-h-screen bg-[#FAF6F2] dark:bg-zinc-950 flex justify-center" data-theme={themeMode} style={theme}>
+            <a
+              href="#content"
+              className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 z-50 bg-white p-2 rounded shadow text-xs text-zinc-900"
+            >
+              Pular para o conteúdo
+            </a>
+            <div className="w-full max-w-md md:max-w-lg min-h-screen flex flex-col relative px-4 pt-3 pb-28 shadow-xl bg-[#FAF6F2] dark:bg-zinc-950 border-x border-amber-900/5">
+              {!isStaffTableDetail && (
+                <header className="public-header">
+                  <Link
                     to={`/${restaurant.slug}/equipe`}
-                    end
-                    className={() => {
-                      const isAtendimentoActive =
-                        location.pathname === `/${restaurant.slug}/equipe` &&
-                        !location.search.includes('status=waiting');
-                      return `flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition-all cursor-pointer ${
-                        isAtendimentoActive
-                          ? 'bg-[#FAF4EE] dark:bg-zinc-800 text-[#4A1505] dark:text-amber-300 font-bold'
-                          : 'text-zinc-600 dark:text-zinc-400 font-medium hover:text-zinc-900 dark:hover:text-zinc-200'
-                      }`;
-                    }}
+                    aria-label={`${restaurant.name}, início`}
+                    className="wordmark"
                   >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 4v2" />
-                      <path d="M4 18h16a1 1 0 0 0 1-1A9 9 0 0 0 3 17a1 1 0 0 0 1 1z" />
-                      <path d="M2 20h20" />
-                    </svg>
-                    <span className="text-[11px] leading-tight">Atendimento</span>
-                  </NavLink>
+                    {restaurant.logo ? (
+                      <img
+                        src={restaurant.logo.url}
+                        className="public-logo"
+                        alt={restaurant.name}
+                      />
+                    ) : (
+                      <>
+                        {restaurant.name}
+                        <span>{restaurant.subtitle}</span>
+                      </>
+                    )}
+                  </Link>
+                  <div className="public-header-actions">
+                    <SoundSettingsControl />
+                    <ThemeToggleButton />
+                  </div>
+                </header>
+              )}
 
-                  <NavLink
-                    to={`/${restaurant.slug}/equipe/comandas`}
-                    className={() => {
-                      const isComandasActive =
-                        location.pathname.includes('/comandas') ||
-                        location.pathname.includes('/historico');
-                      return `flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition-all cursor-pointer ${
-                        isComandasActive
-                          ? 'bg-[#FAF4EE] dark:bg-zinc-800 text-[#4A1505] dark:text-amber-300 font-bold'
-                          : 'text-zinc-600 dark:text-zinc-400 font-medium hover:text-zinc-900 dark:hover:text-zinc-200'
-                      }`;
-                    }}
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <polyline points="14 2 14 8 20 8" />
-                      <line x1="16" y1="13" x2="8" y2="13" />
-                      <line x1="16" y1="17" x2="8" y2="17" />
-                    </svg>
-                    <span className="text-[11px] leading-tight">Comandas</span>
-                  </NavLink>
+              <main id="content" className="flex-1">
+                <Suspense
+                  fallback={
+                    <div className="py-6 text-center">
+                      <p role="status" className="text-xs text-[var(--ink)] opacity-60">
+                        Carregando equipe…
+                      </p>
+                    </div>
+                  }
+                >
+                  <Outlet />
+                </Suspense>
+              </main>
 
-                  <NavLink
-                    to={`/${restaurant.slug}/equipe?status=waiting`}
-                    className={() => {
-                      const isChamadosActive =
-                        location.pathname === `/${restaurant.slug}/equipe` &&
-                        location.search.includes('status=waiting');
-                      return `flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition-all cursor-pointer ${
-                        isChamadosActive
-                          ? 'bg-[#FAF4EE] dark:bg-zinc-800 text-[#4A1505] dark:text-amber-300 font-bold'
-                          : 'text-zinc-600 dark:text-zinc-400 font-medium hover:text-zinc-900 dark:hover:text-zinc-200'
-                      }`;
-                    }}
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                    </svg>
-                    <span className="text-[11px] leading-tight">Chamados</span>
-                  </NavLink>
-
-                  <NavLink
-                    to={`/${restaurant.slug}/equipe/perfil`}
-                    className={() => {
-                      const isPerfilActive = location.pathname.includes('/perfil');
-                      return `flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition-all cursor-pointer ${
-                        isPerfilActive
-                          ? 'bg-[#FAF4EE] dark:bg-zinc-800 text-[#4A1505] dark:text-amber-300 font-bold'
-                          : 'text-zinc-600 dark:text-zinc-400 font-medium hover:text-zinc-900 dark:hover:text-zinc-200'
-                      }`;
-                    }}
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                      <circle cx="12" cy="7" r="4" />
-                    </svg>
-                    <span className="text-[11px] leading-tight">Mais</span>
-                  </NavLink>
-                </div>
-              </div>
-            </nav>
+              {/* Barra Inferior Fixa (BottomNav) */}
+              <StaffBottomNav restaurantSlug={restaurant.slug} />
+            </div>
           </div>
-        </div>
+        </StaffChamadosProvider>
       </StaffCommissionProvider>
     );
   }
@@ -424,9 +462,16 @@ function RestaurantLayout() {
                   )}
                 </Link>
                 <div className="public-header-actions">
-                  <span className="badge public-table-badge">
+                  <span className="badge public-table-badge inline-flex items-center gap-1.5 cursor-default">
                     {table.status === "unverified"
-                      ? `Mesa ${table.tableNumber}`
+                      ? (
+                        <>
+                          <span>Mesa {table.tableNumber}</span>
+                          <svg className="w-3.5 h-3.5 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <polyline points="6 9 12 15 18 9" />
+                          </svg>
+                        </>
+                      )
                       : table.status === "invalid"
                         ? "Mesa inválida"
                         : table.status === "expired"
@@ -439,14 +484,36 @@ function RestaurantLayout() {
                 </div>
               </header>
               <nav className="tabs public-tabs" aria-label="Modo de visualização">
-                <NavLink end to={`/${restaurant.slug}${tableQuery}`}>
-                  Home
+                <NavLink
+                  end
+                  to={`/${restaurant.slug}${tableQuery}`}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
+                  </svg>
+                  <span>Home</span>
                 </NavLink>
-                <NavLink to={`/${restaurant.slug}/cardapio${tableQuery}`}>
-                  Cardápio
+                <NavLink
+                  to={`/${restaurant.slug}/cardapio${tableQuery}`}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M18 2v6a3 3 0 0 1-3 3 3 3 0 0 1-3-3V2" />
+                    <path d="M15 2v18" />
+                    <path d="M7 2h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7v8H5V2h2z" />
+                  </svg>
+                  <span>Cardápio</span>
                 </NavLink>
-                <NavLink to={`/${restaurant.slug}/explorar${tableQuery}`}>
-                  Explorar
+                <NavLink
+                  to={`/${restaurant.slug}/explorar${tableQuery}`}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                  <span>Explorar</span>
                 </NavLink>
               </nav>
             </>
@@ -578,8 +645,10 @@ export function App() {
           <Route path="acesso" element={<PlatformAccessPage />} />
           <Route element={<RequireStaffAccess />}>
             <Route path="equipe" element={<StaffServicePage />} />
-            <Route path="equipe/comandas" element={<StaffHistoryPage />} />
+            <Route path="equipe/comandas" element={<StaffComandasOperationalPage />} />
             <Route path="equipe/historico" element={<StaffHistoryPage />} />
+            <Route path="equipe/chamados" element={<ChamadosPage />} />
+            <Route path="equipe/mais" element={<StaffMaisPage />} />
             <Route path="equipe/perfil" element={<StaffProfilePage />} />
           </Route>
 

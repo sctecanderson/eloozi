@@ -244,7 +244,7 @@ export function SubscriptionBillingPage() {
   const handleVerifyPixPayment = async (invoiceId: string) => {
     try {
       setCheckingPayment(true);
-      const res = await confirmSubscriptionInvoice(invoiceId);
+      const res = await confirmSubscriptionInvoice(invoiceId, { restaurantId: r.id });
       if (res.status === 'paid') {
         setCheckoutSuccess({
           invoiceId: res.invoice_id,

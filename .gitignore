@@ -1,15 +1,22 @@
 node_modules/
 dist/
+vercel.json
+
 .env
 .env.*
 !.env.example
+
+.agents/
+/docs/validacoes/
+
 supabase/.temp/
 .backup-check/
 .deletion-check/
 .tools/
+
 __pycache__/
 *.pyc
 
-# Configuração local de ambiente
-.env.local
-.env.*.local
+/RELATORIO_FINAL_RESERVAS.md
+/RELATORIO_VALIDACAO_BANCO_ISOLADO.md
+/eloozi_reservas*.zip

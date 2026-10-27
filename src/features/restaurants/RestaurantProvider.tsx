@@ -24,6 +24,7 @@ export interface RestaurantIdentity extends Restaurant {
   subscriptionPlan?: string;
   maxTables?: number;
   subscriptionExpiresAt?: string | null;
+  subscriptionIsTrial?: boolean;
   billingStatus?: 'active' | 'grace_period' | 'expired';
   brandPrimaryColor?: string;
   headerNameColor?: string;
@@ -81,6 +82,12 @@ export function parseRestaurant(value: unknown): RestaurantIdentity {
       : typeof v.max_tables === "number" && Number.isFinite(v.max_tables)
       ? v.max_tables
       : 10;
+  const subscriptionIsTrial =
+    typeof v.subscriptionIsTrial === "boolean"
+      ? v.subscriptionIsTrial
+      : typeof v.subscription_is_trial === "boolean"
+      ? v.subscription_is_trial
+      : false;
   const subscriptionExpiresAt =
     typeof v.subscriptionExpiresAt === "string"
       ? v.subscriptionExpiresAt
@@ -145,6 +152,7 @@ export function parseRestaurant(value: unknown): RestaurantIdentity {
     subscriptionPlan,
     maxTables,
     subscriptionExpiresAt,
+    subscriptionIsTrial,
     billingStatus,
     brandPrimaryColor,
     headerNameColor,

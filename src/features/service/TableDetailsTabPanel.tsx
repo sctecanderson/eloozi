@@ -40,6 +40,8 @@ interface DetailConsumptionItem {
   line_total_in_cents: number;
   status: string;
   created_at: string;
+  cancelled_at?: string | null;
+  cancellation_reason?: string | null;
 }
 
 const currency = new Intl.NumberFormat('pt-BR', {
@@ -115,9 +117,8 @@ export function TableDetailsTabPanel({
             .eq('status', 'active'),
           supabase
             .from('table_tab_items')
-            .select('id, table_tab_id, product_name, unit_price_in_cents, quantity, line_total_in_cents, status, created_at')
-            .eq('table_visit_id', tableVisit.id)
-            .eq('status', 'active'),
+            .select('id, table_tab_id, product_name, unit_price_in_cents, quantity, line_total_in_cents, status, created_at, cancelled_at, cancellation_reason')
+            .eq('table_visit_id', tableVisit.id),
           supabase
             .from('restaurants')
             .select('name, service_fee_percent')
@@ -158,7 +159,9 @@ export function TableDetailsTabPanel({
 
   // Cálculos financeiros consolidados
   const subtotalInCents = useMemo(() => {
-    return items.reduce((acc, it) => acc + (it.line_total_in_cents || 0), 0);
+    return items
+      .filter((it) => it.status === 'active')
+      .reduce((acc, it) => acc + (it.line_total_in_cents || 0), 0);
   }, [items]);
 
   const feeInCents = useMemo(() => {
@@ -265,8 +268,21 @@ export function TableDetailsTabPanel({
         timestamp: d.getTime(),
         time: new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(d),
         title: 'Pedido registrado',
-        description: `${items.length} ${items.length === 1 ? 'item enviado' : 'itens enviados'} para produção`,
+        description: `${items.filter((it) => it.status === 'active').length} item(ns) em produção/consumo`,
       });
+    }
+
+    // 5. Itens cancelados (Auditoria na linha do tempo)
+    for (const it of items) {
+      if (it.status === 'cancelled' && it.cancelled_at) {
+        const d = new Date(it.cancelled_at);
+        events.push({
+          timestamp: d.getTime(),
+          time: new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(d),
+          title: `Item cancelado (${it.quantity}x ${it.product_name})`,
+          description: `Motivo: ${it.cancellation_reason || 'Não informado'}`,
+        });
+      }
     }
 
     // Ordenar cronologicamente
@@ -276,19 +292,21 @@ export function TableDetailsTabPanel({
   // Ação: Fechar Mesa
   async function handleConfirmClose() {
     if (busyClose) return;
+
+    const openTabs = tabs.filter((t) => t.status === 'open');
+    if (openTabs.length > 0) {
+      alert('Encerre todas as comandas abertas antes de finalizar o atendimento da mesa.');
+      setIsCloseConfirmOpen(false);
+      return;
+    }
+
     setBusyClose(true);
 
     try {
-      // 1. Fechar todas as comandas abertas da visita
-      const openTabs = tabs.filter((t) => t.status === 'open');
-      for (const tab of openTabs) {
-        await closeTableTab(restaurantSlug, tab.id);
-      }
-
-      // 2. Encerrar o atendimento da visita
+      // 1. Encerrar o atendimento da visita
       await closeTableVisit(restaurantSlug, tableVisit.id);
 
-      // 3. Notificar pai para limpar cache e redirecionar
+      // 2. Notificar pai para limpar cache e redirecionar
       onCloseVisitSuccess();
     } catch (e) {
       console.error('Erro ao fechar mesa:', e);
@@ -443,89 +461,7 @@ export function TableDetailsTabPanel({
       </div>
 
       {/* =========================================================
-          BLOCO 2: OBSERVAÇÕES E ATENDIMENTO
-         ========================================================= */}
-      <div className="rounded-3xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-xs space-y-3.5">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-[#F7EFE9] dark:bg-zinc-800 text-[#8B1E0F] dark:text-amber-400 flex items-center justify-center shrink-0">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="16" y1="13" x2="8" y2="13" />
-              <line x1="16" y1="17" x2="8" y2="17" />
-              <polyline points="10 9 9 9 8 9" />
-            </svg>
-          </div>
-          <div>
-            <h3 className="font-bold text-sm text-zinc-900 dark:text-white leading-tight">Observações e atendimento</h3>
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Informações importantes para o atendimento.</p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2.5">
-          {/* 1. Divisão / Comandas */}
-          <div className="bg-[#FAF6F0] dark:bg-zinc-800/60 rounded-2xl p-3 border border-amber-900/5 dark:border-zinc-800 space-y-1">
-            <div className="flex items-center gap-1.5 text-zinc-400">
-              <svg className="w-4 h-4 text-[#8B1E0F] dark:text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-              <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">Divisão</span>
-            </div>
-            <p className="text-xs text-zinc-800 dark:text-zinc-200 font-medium leading-relaxed">
-              {tabs.length > 1
-                ? `Dividido em ${tabs.length} comandas (${tabs.map((t) => t.label).join(', ')})`
-                : tabs.length === 1
-                ? `Cliente prefere dividir em 1 pessoa (${tabs[0].label})`
-                : 'Sem comandas abertas no momento.'}
-            </p>
-          </div>
-
-          {/* 2. Alergias / Restrições */}
-          <div className="bg-[#FAF6F0] dark:bg-zinc-800/60 rounded-2xl p-3 border border-amber-900/5 dark:border-zinc-800 space-y-1">
-            <div className="flex items-center gap-1.5 text-zinc-400">
-              <svg className="w-4 h-4 text-[#8B1E0F] dark:text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-              </svg>
-              <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">Alergias / Restrições</span>
-            </div>
-            <p className="text-xs text-zinc-800 dark:text-zinc-200 font-medium leading-relaxed">
-              {tableObservation || 'Sem alergias informadas'}
-            </p>
-          </div>
-
-          {/* 3. Início do Atendimento */}
-          <div className="bg-[#FAF6F0] dark:bg-zinc-800/60 rounded-2xl p-3 border border-amber-900/5 dark:border-zinc-800 space-y-1">
-            <div className="flex items-center gap-1.5 text-zinc-400">
-              <svg className="w-4 h-4 text-[#8B1E0F] dark:text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <polyline points="12 6 12 12 16 14" />
-              </svg>
-              <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">Início do atendimento</span>
-            </div>
-            <p className="text-xs text-zinc-800 dark:text-zinc-200 font-medium">
-              Atendimento iniciado às <strong className="font-bold text-zinc-900 dark:text-white">{openedAtFormatted}</strong>
-            </p>
-          </div>
-
-          {/* 4. Última Atualização */}
-          <div className="bg-[#FAF6F0] dark:bg-zinc-800/60 rounded-2xl p-3 border border-amber-900/5 dark:border-zinc-800 space-y-1">
-            <div className="flex items-center gap-1.5 text-zinc-400">
-              <svg className="w-4 h-4 text-[#8B1E0F] dark:text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-              </svg>
-              <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">Última atualização</span>
-            </div>
-            <p className="text-xs text-zinc-800 dark:text-zinc-200 font-medium">
-              Última atualização às <strong className="font-bold text-zinc-900 dark:text-white">{lastUpdateFormatted}</strong>
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* =========================================================
-          BLOCO 3: RESUMO FINANCEIRO
+          BLOCO 2: RESUMO FINANCEIRO
          ========================================================= */}
       <div className="rounded-3xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-xs space-y-3.5">
         <div className="flex items-center gap-2.5">
@@ -578,50 +514,7 @@ export function TableDetailsTabPanel({
       </div>
 
       {/* =========================================================
-          BLOCO 4: HISTÓRICO RÁPIDO (TIMELINE DINÂMICA)
-         ========================================================= */}
-      <div className="rounded-3xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-xs space-y-3.5">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-[#F7EFE9] dark:bg-zinc-800 text-[#8B1E0F] dark:text-amber-400 flex items-center justify-center shrink-0">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="8" y1="6" x2="21" y2="6" />
-              <line x1="8" y1="12" x2="21" y2="12" />
-              <line x1="8" y1="18" x2="21" y2="18" />
-              <line x1="3" y1="6" x2="3.01" y2="6" />
-              <line x1="3" y1="12" x2="3.01" y2="12" />
-              <line x1="3" y1="18" x2="3.01" y2="18" />
-            </svg>
-          </div>
-          <div>
-            <h3 className="font-bold text-sm text-zinc-900 dark:text-white leading-tight">Histórico rápido</h3>
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Últimos eventos desta mesa.</p>
-          </div>
-        </div>
-
-        <div className="pl-2 pt-1 pb-1">
-          <div className="relative border-l-2 border-red-200 dark:border-red-900/60 ml-2 space-y-4 py-1">
-            {timelineEvents.map((evt, idx) => (
-              <div key={idx} className="relative pl-5 flex items-start justify-between gap-3">
-                <span className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-[#8B1E0F] dark:bg-rose-500 ring-4 ring-white dark:ring-zinc-900" />
-                <div className="flex-1 min-w-0">
-                  <h4 className="text-xs font-bold text-zinc-900 dark:text-white leading-tight">
-                    {evt.title}
-                  </h4>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                    {evt.description}
-                  </p>
-                </div>
-                <span className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 shrink-0 tabular-nums">
-                  {evt.time}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* =========================================================
-          BLOCO 5: AÇÕES RÁPIDAS
+          BLOCO 3: AÇÕES RÁPIDAS
          ========================================================= */}
       <div className="space-y-2 pt-1">
         <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 block">
@@ -705,47 +598,184 @@ export function TableDetailsTabPanel({
       </div>
 
       {/* =========================================================
-          MODAL: FECHAR MESA (CONFIRMAÇÃO)
+          BLOCO 4: OBSERVAÇÕES E ATENDIMENTO
          ========================================================= */}
-      {isCloseConfirmOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-5 max-w-sm w-full shadow-2xl space-y-4">
-            <div>
-              <h3 className="font-bold text-sm text-zinc-900 dark:text-white">
-                Encerrar atendimento da Mesa {String(tableNumber).padStart(2, '0')}?
-              </h3>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-                Deseja encerrar o atendimento e fechar a Mesa {String(tableNumber).padStart(2, '0')}?
-              </p>
-              <div className="mt-3 p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 flex items-center justify-between">
-                <span className="text-xs font-semibold text-rose-900 dark:text-rose-200">Total a fechar:</span>
-                <span className="text-sm font-extrabold text-[#8B1E0F] dark:text-rose-300">
-                  {currency.format(totalInCents / 100)}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-1">
-              <button
-                type="button"
-                disabled={busyClose}
-                onClick={() => void handleConfirmClose()}
-                className="flex-1 py-2.5 rounded-xl bg-red-700 hover:bg-red-800 text-white font-bold text-xs shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
-              >
-                {busyClose ? 'Fechando mesa...' : 'Confirmar fechamento'}
-              </button>
-              <button
-                type="button"
-                disabled={busyClose}
-                onClick={() => setIsCloseConfirmOpen(false)}
-                className="px-4 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 cursor-pointer"
-              >
-                Cancelar
-              </button>
-            </div>
+      <div className="rounded-3xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-xs space-y-3.5">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-[#F7EFE9] dark:bg-zinc-800 text-[#8B1E0F] dark:text-amber-400 flex items-center justify-center shrink-0">
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="font-bold text-sm text-zinc-900 dark:text-white leading-tight">Observações e atendimento</h3>
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Informações importantes para o atendimento.</p>
           </div>
         </div>
-      )}
+
+        <div className="grid grid-cols-2 gap-2.5">
+          {/* 1. Divisão / Comandas */}
+          <div className="bg-[#FAF6F0] dark:bg-zinc-800/60 rounded-2xl p-3 border border-amber-900/5 dark:border-zinc-800 space-y-1">
+            <div className="flex items-center gap-1.5 text-zinc-400">
+              <svg className="w-4 h-4 text-[#8B1E0F] dark:text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+              <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">Divisão</span>
+            </div>
+            <p className="text-xs text-zinc-800 dark:text-zinc-200 font-medium leading-relaxed">
+              {tabs.length > 1
+                ? `Dividido em ${tabs.length} comandas (${tabs.map((t) => t.label).join(', ')})`
+                : tabs.length === 1
+                ? `Cliente prefere dividir em 1 pessoa (${tabs[0].label})`
+                : 'Sem comandas abertas no momento.'}
+            </p>
+          </div>
+
+          {/* 2. Alergias / Restrições */}
+          <div className="bg-[#FAF6F0] dark:bg-zinc-800/60 rounded-2xl p-3 border border-amber-900/5 dark:border-zinc-800 space-y-1">
+            <div className="flex items-center gap-1.5 text-zinc-400">
+              <svg className="w-4 h-4 text-[#8B1E0F] dark:text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+              </svg>
+              <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">Alergias / Restrições</span>
+            </div>
+            <p className="text-xs text-zinc-800 dark:text-zinc-200 font-medium leading-relaxed">
+              {tableObservation || 'Sem alergias informadas'}
+            </p>
+          </div>
+
+          {/* 3. Início do Atendimento */}
+          <div className="bg-[#FAF6F0] dark:bg-zinc-800/60 rounded-2xl p-3 border border-amber-900/5 dark:border-zinc-800 space-y-1">
+            <div className="flex items-center gap-1.5 text-zinc-400">
+              <svg className="w-4 h-4 text-[#8B1E0F] dark:text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+              <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">Início do atendimento</span>
+            </div>
+            <p className="text-xs text-zinc-800 dark:text-zinc-200 font-medium">
+              Atendimento iniciado às <strong className="font-bold text-zinc-900 dark:text-white">{openedAtFormatted}</strong>
+            </p>
+          </div>
+
+          {/* 4. Última Atualização */}
+          <div className="bg-[#FAF6F0] dark:bg-zinc-800/60 rounded-2xl p-3 border border-amber-900/5 dark:border-zinc-800 space-y-1">
+            <div className="flex items-center gap-1.5 text-zinc-400">
+              <svg className="w-4 h-4 text-[#8B1E0F] dark:text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+              <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">Última atualização</span>
+            </div>
+            <p className="text-xs text-zinc-800 dark:text-zinc-200 font-medium">
+              Última atualização às <strong className="font-bold text-zinc-900 dark:text-white">{lastUpdateFormatted}</strong>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* =========================================================
+          BLOCO 5: HISTÓRICO RÁPIDO (TIMELINE DINÂMICA)
+         ========================================================= */}
+      <div className="rounded-3xl border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-xs space-y-3.5">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-[#F7EFE9] dark:bg-zinc-800 text-[#8B1E0F] dark:text-amber-400 flex items-center justify-center shrink-0">
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="8" y1="6" x2="21" y2="6" />
+              <line x1="8" y1="12" x2="21" y2="12" />
+              <line x1="8" y1="18" x2="21" y2="18" />
+              <line x1="3" y1="6" x2="3.01" y2="6" />
+              <line x1="3" y1="12" x2="3.01" y2="12" />
+              <line x1="3" y1="18" x2="3.01" y2="18" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="font-bold text-sm text-zinc-900 dark:text-white leading-tight">Histórico rápido</h3>
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Últimos eventos desta mesa.</p>
+          </div>
+        </div>
+
+        <div className="pl-2 pt-1 pb-1">
+          <div className="relative border-l-2 border-red-200 dark:border-red-900/60 ml-2 space-y-4 py-1">
+            {timelineEvents.map((evt, idx) => (
+              <div key={idx} className="relative pl-5 flex items-start justify-between gap-3">
+                <span className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-[#8B1E0F] dark:bg-rose-500 ring-4 ring-white dark:ring-zinc-900" />
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-xs font-bold text-zinc-900 dark:text-white leading-tight">
+                    {evt.title}
+                  </h4>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                    {evt.description}
+                  </p>
+                </div>
+                <span className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 shrink-0 tabular-nums">
+                  {evt.time}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* =========================================================
+          MODAL: FECHAR MESA (CONFIRMAÇÃO)
+         ========================================================= */}
+      {isCloseConfirmOpen && (() => {
+        const openTabsCount = tabs.filter((t) => t.status === 'open').length;
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-5 max-w-sm w-full shadow-2xl space-y-4">
+              <div>
+                <h3 className="font-bold text-sm text-zinc-900 dark:text-white">
+                  Encerrar atendimento da Mesa {String(tableNumber).padStart(2, '0')}?
+                </h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                  Deseja encerrar o atendimento e fechar a Mesa {String(tableNumber).padStart(2, '0')}?
+                </p>
+
+                {openTabsCount > 0 ? (
+                  <div className="mt-3 p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200">
+                    <p className="font-semibold">Mesa possui {openTabsCount} comanda(s) aberta(s).</p>
+                    <p className="mt-0.5 text-[11px]">Encerre todas as comandas abertas antes de finalizar o atendimento da mesa.</p>
+                  </div>
+                ) : (
+                  <div className="mt-3 p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-rose-900 dark:text-rose-200">Total a fechar:</span>
+                    <span className="text-sm font-extrabold text-[#8B1E0F] dark:text-rose-300">
+                      {currency.format(totalInCents / 100)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={busyClose || openTabsCount > 0}
+                  onClick={() => void handleConfirmClose()}
+                  className="flex-1 py-2.5 rounded-xl bg-red-700 hover:bg-red-800 text-white font-bold text-xs shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {busyClose ? 'Fechando mesa...' : 'Confirmar fechamento'}
+                </button>
+                <button
+                  type="button"
+                  disabled={busyClose}
+                  onClick={() => setIsCloseConfirmOpen(false)}
+                  className="px-4 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* =========================================================
           MODAL: ADICIONAR OBSERVAÇÃO

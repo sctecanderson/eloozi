@@ -20,6 +20,24 @@ import {
   BatchPrintPreviewModal,
 } from "./PrintableTableQRCodes";
 import { printTableBillThermal, type ThermalBillItem } from "../../components/ThermalReceiptPrint";
+import {
+  listReservations,
+  createReservation,
+  cancelReservation,
+  seatReservationArrival,
+  toReservationItem,
+  isConfirmedReservation,
+  getOperationalDate,
+  analyzeLocalReservations,
+  prepareLocalReservationsForImport,
+  executeLocalReservationsImport,
+  isWebLocksAvailable,
+  withManifestLock,
+  type ReservationItem,
+  type LocalImportAnalysis,
+  type LocalReservationPreviewItem,
+  type ImportExecutionResult,
+} from "../reservations/reservationService";
 
 const money = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -52,22 +70,7 @@ export interface TableItemView {
   revision: number;
 }
 
-export interface ReservationItem {
-  id: string;
-  tableNumber: number;
-  customerName: string;
-  phone: string;
-  date?: string;
-  time: string;
-  status?: string;
-  guestsCount: number;
-  notes?: string;
-  createdAt: string;
-}
 
-function isConfirmedReservation(res: ReservationItem): boolean {
-  return !res.status || ["confirmed", "confirmada", "agendada", "reservada"].includes(res.status);
-}
 
 function formatElapsedTime(openedAt?: string | null): string {
   if (!openedAt) return "-";
@@ -147,7 +150,16 @@ export function TablesPage() {
   const [isConsultTabModalOpen, setIsConsultTabModalOpen] = useState(false);
   const [selectedConsultTableId, setSelectedConsultTableId] = useState<string | null>(null);
   const [consultItems, setConsultItems] = useState<
-    Array<{ id: string; product_name: string; quantity: number; unit_price_in_cents: number; line_total_in_cents: number }>
+    Array<{
+      id: string;
+      product_name: string;
+      quantity: number;
+      unit_price_in_cents: number;
+      line_total_in_cents: number;
+      status?: string;
+      cancelled_at?: string | null;
+      cancellation_reason?: string | null;
+    }>
   >([]);
   const [loadingConsultItems, setLoadingConsultItems] = useState(false);
 
@@ -163,14 +175,17 @@ export function TablesPage() {
 
   // 4. Reserva (Gerenciar reservas)
   const [isReservationModalOpen, setIsReservationModalOpen] = useState(false);
-  const [reservations, setReservations] = useState<ReservationItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(`elozi_reservas_${r.id}`);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [localAnalysis, setLocalAnalysis] = useState<LocalImportAnalysis | null>(null);
+  const [importResult, setImportResult] = useState<ImportExecutionResult | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+
+  const [reservations, setReservations] = useState<ReservationItem[]>([]);
+  const [reservationsLoading, setReservationsLoading] = useState(false);
+  const [reservationsError, setReservationsError] = useState<string | null>(null);
+  const [isSubmittingReservation, setIsSubmittingReservation] = useState(false);
+  const reservationsLoadVersionRef = useRef(0);
+
   const [reserveTableNumber, setReserveTableNumber] = useState<number | null>(null);
   const [reserveCustomerName, setReserveCustomerName] = useState("");
   const [reservePhone, setReservePhone] = useState("");
@@ -180,13 +195,74 @@ export function TablesPage() {
 
   const planLabel = PLAN_LABELS[r.subscriptionPlan ?? "basic"] ?? "Básico";
 
-  // Salva reservas no localStorage quando alteradas
+  // Carrega reservas reais do Supabase com base no fuso operacional do restaurante
   useEffect(() => {
-    if (r.id) {
-      localStorage.setItem(`elozi_reservas_${r.id}`, JSON.stringify(reservations));
-      window.dispatchEvent(new CustomEvent('elozi:reservations-updated', { detail: { restaurantId: r.id } }));
+    if (!r.id) {
+      setReservations([]);
+      setReservationsLoading(false);
+      setReservationsError(null);
+      setLocalAnalysis(null);
+      setImportResult(null);
+      return;
     }
-  }, [reservations, r.id]);
+
+    let disposed = false;
+    const currentVersion = ++reservationsLoadVersionRef.current;
+
+    async function load() {
+      setReservationsLoading(true);
+      setReservationsError(null);
+      try {
+        const opDate = getOperationalDate(r.timezone);
+        const data = await listReservations(r.id, { startDate: opDate, endDate: opDate });
+        if (!disposed && currentVersion === reservationsLoadVersionRef.current) {
+          setReservations(data.map(toReservationItem));
+        }
+      } catch (err) {
+        if (!disposed && currentVersion === reservationsLoadVersionRef.current) {
+          setReservationsError(err instanceof Error ? err.message : 'Falha ao carregar reservas.');
+        }
+      } finally {
+        if (!disposed && currentVersion === reservationsLoadVersionRef.current) {
+          setReservationsLoading(false);
+        }
+      }
+    }
+
+    void load();
+
+    // Inspeciona armazenamento local para checagem de dados pendentes
+    try {
+      const raw = localStorage.getItem(`elozi_reservas_${r.id}`);
+      const activeTableNumbers = new Set(displayTables.map((t) => t.tableNumber));
+      const analysis = analyzeLocalReservations(raw, activeTableNumbers, !loading && displayTables.length > 0, r.id);
+      setLocalAnalysis(analysis);
+    } catch {
+      // ignore
+    }
+
+    // Canal Realtime para sincronização com garçons e outros aparelhos
+    const channel = supabase
+      .channel(`admin-reservations-${r.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'reservations',
+          filter: `restaurant_id=eq.${r.id}`,
+        },
+        () => {
+          void load();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      disposed = true;
+      void supabase.removeChannel(channel);
+    };
+  }, [r.id, r.timezone]);
 
   // Fecha menu de 3 pontos ao clicar fora
   useEffect(() => {
@@ -650,9 +726,8 @@ export function TablesPage() {
     try {
       const { data, error } = await supabase
         .from("table_tab_items")
-        .select("id, product_name, quantity, unit_price_in_cents, line_total_in_cents")
-        .eq("table_visit_id", table.visitId)
-        .eq("status", "active");
+        .select("id, product_name, quantity, unit_price_in_cents, line_total_in_cents, status, cancelled_at, cancellation_reason")
+        .eq("table_visit_id", table.visitId);
 
       if (error) throw error;
       setConsultItems(data || []);
@@ -667,9 +742,10 @@ export function TablesPage() {
     const table = displayTables.find((t) => t.id === selectedConsultTableId);
     if (!table) return;
 
+    const activeItems = consultItems.filter((i) => i.status !== "cancelled");
     const items: ThermalBillItem[] =
-      consultItems.length > 0
-        ? consultItems.map((i) => ({
+      activeItems.length > 0
+        ? activeItems.map((i) => ({
             name: i.product_name,
             quantity: i.quantity,
             unitPriceInCents: i.unit_price_in_cents,
@@ -754,57 +830,182 @@ export function TablesPage() {
   }
 
   // 4. RESERVA
-  function handleAddReservation(e: FormEvent) {
+  async function handleAddReservation(e: FormEvent) {
     e.preventDefault();
+    if (isSubmittingReservation) return;
+
     if (!reserveTableNumber || !reserveCustomerName.trim()) {
       setError("Preencha o número da mesa e o nome do cliente para a reserva.");
       return;
     }
 
-    const todayLocal = new Date().toLocaleDateString('sv-SE');
+    const opDate = getOperationalDate(r.timezone);
+    setIsSubmittingReservation(true);
+    setError("");
 
-    const newRes: ReservationItem = {
-      id: crypto.randomUUID(),
-      tableNumber: reserveTableNumber,
-      customerName: reserveCustomerName.trim(),
-      phone: reservePhone.trim(),
-      date: todayLocal,
-      time: reserveTime,
-      status: "confirmed",
-      guestsCount: reserveGuestsCount,
-      notes: reserveNotes.trim(),
-      createdAt: new Date().toISOString(),
-    };
+    try {
+      const created = await createReservation({
+        restaurantId: r.id,
+        tableNumber: reserveTableNumber,
+        customerName: reserveCustomerName.trim(),
+        phone: reservePhone.trim(),
+        date: opDate,
+        time: reserveTime,
+        guestsCount: reserveGuestsCount,
+        notes: reserveNotes.trim(),
+      });
 
-    setReservations((prev) => [newRes, ...prev]);
-    setNotice(`Reserva confirmada para ${newRes.customerName} na Mesa ${String(newRes.tableNumber).padStart(2, "0")} às ${newRes.time}!`);
-    setReserveCustomerName("");
-    setReservePhone("");
-    setReserveNotes("");
-    setReserveTableNumber(null);
+      const newItem = toReservationItem(created);
+      setReservations((prev) => {
+        const next = [newItem, ...prev.filter((item) => item.id !== newItem.id)];
+        return next.sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.time.localeCompare(b.time));
+      });
+      setNotice(`Reserva confirmada para ${newItem.customerName} na Mesa ${String(newItem.tableNumber).padStart(2, "0")} às ${newItem.time}!`);
+      setReserveCustomerName("");
+      setReservePhone("");
+      setReserveNotes("");
+      setReserveTableNumber(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao cadastrar reserva.");
+    } finally {
+      setIsSubmittingReservation(false);
+    }
   }
 
-  function handleCancelReservation(resId: string) {
-    setReservations((prev) => prev.filter((r) => r.id !== resId));
-    setNotice("Reserva cancelada.");
+  async function handleCancelReservation(resId: string) {
+    if (isSubmittingReservation) return;
+    setIsSubmittingReservation(true);
+    setError("");
+
+    try {
+      await cancelReservation(resId);
+      setReservations((prev) => prev.filter((item) => item.id !== resId));
+      setNotice("Reserva cancelada com sucesso.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao cancelar reserva.");
+    } finally {
+      setIsSubmittingReservation(false);
+    }
   }
 
   async function handleSeatReservation(res: ReservationItem) {
+    if (isSubmittingReservation) return;
+    setIsSubmittingReservation(true);
+    setError("");
+
+    let visitOpened = false;
     try {
+      // 1. Abertura do atendimento da mesa
       await openTableVisit(r.slug, res.tableNumber);
-      // Atualiza o status da reserva para 'seated'
-      setReservations((prev) =>
-        prev.map((item) =>
-          item.id === res.id || item.tableNumber === res.tableNumber
-            ? { ...item, status: "seated" }
-            : item
-        )
-      );
-      setNotice(`Cliente acomodado na Mesa ${String(res.tableNumber).padStart(2, "0")}! Atendimento iniciado.`);
+      visitOpened = true;
+
+      // 2. Confirmação segura da reserva via RPC com ID explícito
+      const seatResult = await seatReservationArrival(r.id, res.tableNumber, res.id);
+
+      if (seatResult.success && seatResult.reservation?.id) {
+        const seatedId = seatResult.reservation.id;
+        // Atualiza EXCLUSIVAMENTE a reserva confirmada pelo servidor
+        setReservations((prev) =>
+          prev.map((item) =>
+            item.id === seatedId ? { ...item, status: "seated" } : item
+          )
+        );
+        setNotice(`Cliente ${seatResult.reservation.customer_name || res.customerName} acomodado na Mesa ${String(res.tableNumber).padStart(2, "0")}! Atendimento iniciado.`);
+      } else if (seatResult.code === 'ALREADY_SEATED') {
+        const seatedId = seatResult.reservation?.id ?? res.id;
+        setReservations((prev) =>
+          prev.map((item) =>
+            item.id === seatedId ? { ...item, status: "seated" } : item
+          )
+        );
+        setNotice(`Atendimento iniciado na Mesa ${String(res.tableNumber).padStart(2, "0")}. A reserva já constava como atendida no sistema.`);
+      } else {
+        setNotice(`Atendimento iniciado na Mesa ${String(res.tableNumber).padStart(2, "0")}, mas a confirmação da reserva falhou: ${seatResult.message}`);
+      }
+
       setIsReservationModalOpen(false);
       setRevision((v) => v + 1);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao iniciar atendimento da reserva.");
+      if (visitOpened) {
+        setError(
+          err instanceof Error
+            ? `Atendimento aberto na Mesa ${res.tableNumber}, mas ocorreu um erro: ${err.message}`
+            : "Atendimento aberto, mas ocorreu um erro ao atualizar dados da reserva."
+        );
+      } else {
+        setError(err instanceof Error ? err.message : "Falha ao iniciar atendimento da reserva.");
+      }
+    } finally {
+      setIsSubmittingReservation(false);
+    }
+  }
+
+  function handleOpenImportPreview() {
+    const tablesReady = !loading && displayTables.length > 0;
+    if (!tablesReady) {
+      setError("Aguarde o carregamento das mesas do restaurante antes de analisar as reservas locais.");
+      return;
+    }
+    const raw = localStorage.getItem(`elozi_reservas_${r.id}`);
+    const activeTableNumbers = new Set(displayTables.map((t) => t.tableNumber));
+    const analysis = analyzeLocalReservations(raw, activeTableNumbers, tablesReady, r.id);
+    setLocalAnalysis(analysis);
+    setImportResult(null);
+    setIsImportModalOpen(true);
+  }
+
+  async function handleExecuteImport() {
+    const tablesReady = !loading && displayTables.length > 0;
+    if (!r.id || !tablesReady || isImporting) {
+      if (!tablesReady) {
+        setError("Não é possível importar reservas enquanto a lista de mesas não estiver carregada e validada.");
+      }
+      return;
+    }
+
+    if (!isWebLocksAvailable()) {
+      setError("A API Web Locks não está disponível neste navegador para coordenar com segurança a importação entre abas.");
+      return;
+    }
+
+    setIsImporting(true);
+    setError("");
+
+    let preparedItems: readonly LocalReservationPreviewItem[] = [];
+
+    // FASE 1: Preparação atômica e persistência do manifesto estritamente sob Web Lock
+    try {
+      preparedItems = await withManifestLock(r.id, async () => {
+        const raw = localStorage.getItem(`elozi_reservas_${r.id}`);
+        const activeTableNumbers = new Set(displayTables.map((t) => t.tableNumber));
+        return await prepareLocalReservationsForImport(r.id, raw, activeTableNumbers, tablesReady);
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha na preparação do manifesto local.");
+      setIsImporting(false);
+      return;
+    }
+
+    // FASE 2: Operações de rede no Supabase executadas estritamente FORA do Web Lock
+    try {
+      const activeTableNumbers = new Set(displayTables.map((t) => t.tableNumber));
+      const result = await executeLocalReservationsImport(r.id, preparedItems, tablesReady);
+      setImportResult(result);
+
+      if (result.importedCount > 0) {
+        setNotice(`${result.importedCount} reserva(s) importada(s) para o banco de dados com sucesso!`);
+        const opDate = getOperationalDate(r.timezone);
+        const reloaded = await listReservations(r.id, { startDate: opDate, endDate: opDate });
+        setReservations(reloaded.map(toReservationItem));
+      }
+
+      // Re-análise final da UI (somente leitura) mantendo o localStorage original intacto
+      const postRaw = localStorage.getItem(`elozi_reservas_${r.id}`);
+      setLocalAnalysis(analyzeLocalReservations(postRaw, activeTableNumbers, tablesReady, r.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha durante a importação para o banco de dados.");
+    } finally {
+      setIsImporting(false);
     }
   }
 
@@ -2236,28 +2437,73 @@ export function TablesPage() {
                     </p>
                     {loadingConsultItems ? (
                       <p className="text-xs text-zinc-400 py-3 text-center">Consultando itens…</p>
-                    ) : consultItems.length === 0 ? (
+                    ) : consultItems.filter((i) => i.status !== "cancelled").length === 0 ? (
                       <div className="p-3 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 text-center">
                         Nenhum item discriminado ou comanda em aberto sem pedidos.
                       </div>
                     ) : (
                       <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                        {consultItems.map((item) => (
-                          <div
-                            key={item.id}
-                            className="flex items-center justify-between text-xs py-1 border-b border-zinc-100 dark:border-zinc-800 last:border-0"
-                          >
-                            <span className="text-zinc-800 dark:text-zinc-200">
-                              <strong>{item.quantity}x</strong> {item.product_name}
-                            </span>
-                            <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                              {money.format(item.line_total_in_cents / 100)}
-                            </span>
-                          </div>
-                        ))}
+                        {consultItems
+                          .filter((i) => i.status !== "cancelled")
+                          .map((item) => (
+                            <div
+                              key={item.id}
+                              className="flex items-center justify-between text-xs py-1 border-b border-zinc-100 dark:border-zinc-800 last:border-0"
+                            >
+                              <span className="text-zinc-800 dark:text-zinc-200">
+                                <strong>{item.quantity}x</strong> {item.product_name}
+                              </span>
+                              <span className="font-mono text-zinc-700 dark:text-zinc-300">
+                                {money.format(item.line_total_in_cents / 100)}
+                              </span>
+                            </div>
+                          ))}
                       </div>
                     )}
                   </div>
+
+                  {/* Auditoria de Itens Cancelados */}
+                  {consultItems.filter((i) => i.status === "cancelled").length > 0 && (
+                    <div className="pt-2 border-t border-zinc-200/80 dark:border-zinc-700/80">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                        <p className="text-xs font-bold text-rose-700 dark:text-rose-400">
+                          Itens cancelados (Auditoria):
+                        </p>
+                      </div>
+                      <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                        {consultItems
+                          .filter((i) => i.status === "cancelled")
+                          .map((item) => {
+                            const formattedTime = item.cancelled_at
+                              ? new Date(item.cancelled_at).toLocaleTimeString("pt-BR", {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })
+                              : "Horário indisponível";
+                            return (
+                              <div
+                                key={item.id}
+                                className="p-2.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200/60 dark:border-rose-900/40 text-xs space-y-1"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="font-semibold text-zinc-800 dark:text-zinc-200 line-through opacity-80">
+                                    <strong>{item.quantity}x</strong> {item.product_name}
+                                  </span>
+                                  <span className="text-[10px] text-zinc-500 font-medium">
+                                    {formattedTime}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-rose-700 dark:text-rose-300 flex items-start gap-1">
+                                  <span className="font-bold shrink-0">Motivo:</span>
+                                  <span className="italic">{item.cancellation_reason || "Motivo não informado"}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Resumo Financeiro */}
                   <div className="p-3 rounded-xl bg-zinc-100/70 dark:bg-zinc-800/70 space-y-1 text-xs">
@@ -2495,6 +2741,28 @@ export function TablesPage() {
               </button>
             </div>
 
+            {/* Banner de Migração Explícita das Reservas Locais */}
+            {localAnalysis && localAnalysis.total > 0 && (
+              <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 space-y-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-bold">Reservas em armazenamento local ({localAnalysis.total})</p>
+                    <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
+                      {localAnalysis.validCount} registro(s) prontos para importação.
+                      {localAnalysis.invalidCount > 0 && ` (${localAnalysis.invalidCount} com inconsistências)`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleOpenImportPreview}
+                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shrink-0 transition-colors cursor-pointer"
+                  >
+                    Ver Prévia de Importação
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Formulário de Nova Reserva */}
             <form onSubmit={handleAddReservation} className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200/80 dark:border-zinc-700/80 space-y-3">
               <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
@@ -2569,15 +2837,32 @@ export function TablesPage() {
               <div className="flex justify-end pt-1">
                 <button
                   type="submit"
-                  className="px-4 py-1.5 rounded-xl bg-[#610000] hover:bg-[#4d0000] text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                  disabled={isSubmittingReservation}
+                  className="px-4 py-1.5 rounded-xl bg-[#610000] hover:bg-[#4d0000] disabled:opacity-50 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
                 >
-                  Registrar Reserva
+                  {isSubmittingReservation ? "Gravando..." : "Registrar Reserva"}
                 </button>
               </div>
             </form>
 
             {/* Lista de Reservas Ativas */}
             {(() => {
+              if (reservationsLoading) {
+                return (
+                  <div className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 text-center animate-pulse">
+                    Carregando reservas do servidor...
+                  </div>
+                );
+              }
+
+              if (reservationsError) {
+                return (
+                  <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-400">
+                    {reservationsError}
+                  </div>
+                );
+              }
+
               const activeList = reservations.filter((res) => isConfirmedReservation(res));
               return (
                 <div>
@@ -2607,16 +2892,18 @@ export function TablesPage() {
                           <div className="flex items-center gap-1.5">
                             <button
                               type="button"
+                              disabled={isSubmittingReservation}
                               onClick={() => void handleSeatReservation(res)}
-                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer"
+                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-[11px] transition-colors cursor-pointer"
                               title="Acomodar cliente e abrir atendimento"
                             >
                               Acomodar
                             </button>
                             <button
                               type="button"
+                              disabled={isSubmittingReservation}
                               onClick={() => handleCancelReservation(res.id)}
-                              className="p-1 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs cursor-pointer"
+                              className="p-1 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-50 text-xs cursor-pointer"
                               title="Cancelar reserva"
                             >
                               ✕
@@ -2637,6 +2924,174 @@ export function TablesPage() {
                 className="px-4 py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 cursor-pointer"
               >
                 Concluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. MODAL: PRÉVIA E IMPORTAÇÃO EXPLÍCITA DE RESERVAS LOCAIS */}
+      {isImportModalOpen && localAnalysis && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in"
+        >
+          <div className="w-full max-w-xl rounded-2xl bg-white dark:bg-zinc-900 p-6 shadow-2xl border border-zinc-200 dark:border-zinc-800 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-2 border-b border-zinc-100 dark:border-zinc-800">
+              <div>
+                <h3 className="font-bold text-base text-zinc-900 dark:text-white">
+                  Prévia de Importação das Reservas Locais
+                </h3>
+                <p className="text-xs text-zinc-500">
+                  Os dados locais são preservados. Registros duplicados são evitados de forma segura.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsImportModalOpen(false)}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-lg cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Alerta de Manifesto ou Reconciliação se houver */}
+            {localAnalysis.manifestError && (
+              <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs">
+                <strong>Atenção:</strong> {localAnalysis.manifestError}
+              </div>
+            )}
+
+            {/* Resumo de Validação */}
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="p-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800">
+                <span className="block font-bold text-zinc-900 dark:text-white text-sm">
+                  {localAnalysis.total}
+                </span>
+                <span className="text-zinc-500 text-[11px]">Total no Storage</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300">
+                <span className="block font-bold text-sm">
+                  {localAnalysis.validCount}
+                </span>
+                <span className="text-[11px]">Prontas para Importar</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300">
+                <span className="block font-bold text-sm">
+                  {localAnalysis.invalidCount}
+                </span>
+                <span className="text-[11px]">Incompletas / Inválidas</span>
+              </div>
+            </div>
+
+            {/* Resultado da Execução, se já executado */}
+            {importResult && (
+              <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 text-xs space-y-2">
+                <p className="font-bold text-zinc-900 dark:text-white">
+                  Resultado do Processamento:
+                </p>
+                <div className="flex flex-wrap gap-2 text-[11px] font-semibold">
+                  <span className="px-2 py-1 rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300">
+                    ✓ {importResult.importedCount} importada(s)
+                  </span>
+                  <span className="px-2 py-1 rounded-md bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300">
+                    ⟳ {importResult.alreadyExistsCount} já existente(s)
+                  </span>
+                  <span className="px-2 py-1 rounded-md bg-zinc-200 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-300">
+                    ⊘ {importResult.invalidCount} rejeitada(s)
+                  </span>
+                  {importResult.errorCount > 0 && (
+                    <span className="px-2 py-1 rounded-md bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-300">
+                      ✕ {importResult.errorCount} com erro
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Lista dos Registros Analisados */}
+            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+              {localAnalysis.items.map((item, idx) => {
+                const outcomeDetail = importResult?.details.find(
+                  (d) => d.customerName === item.customerName && d.tableNumber === item.tableNumber && d.date === item.date && d.time === item.time
+                );
+                return (
+                  <div
+                    key={`${item.id}-${idx}`}
+                    className={`p-3 rounded-xl border text-xs shadow-2xs ${
+                      item.isValid
+                        ? "border-emerald-200/80 bg-emerald-50/20 dark:border-emerald-900/40 dark:bg-emerald-950/10"
+                        : "border-rose-200/80 bg-rose-50/20 dark:border-rose-900/40 dark:bg-rose-950/10"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-bold text-zinc-900 dark:text-white">
+                          Mesa {String(item.tableNumber).padStart(2, "0")} — {item.customerName}
+                        </p>
+                        <p className="text-[11px] text-zinc-500 mt-0.5">
+                          Data: <strong>{item.date || "(Ausente)"}</strong> às <strong>{item.time || "(Ausente)"}</strong> • {item.guestsCount} pessoas • Status original: <em>{item.status}</em>
+                        </p>
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                          outcomeDetail
+                            ? outcomeDetail.outcome === 'imported'
+                              ? "bg-emerald-600 text-white"
+                              : outcomeDetail.outcome === 'already_exists'
+                              ? "bg-amber-600 text-white"
+                              : "bg-rose-600 text-white"
+                            : item.isValid
+                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                            : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                        }`}
+                      >
+                        {outcomeDetail
+                          ? outcomeDetail.outcome === 'imported'
+                            ? "Importada"
+                            : outcomeDetail.outcome === 'already_exists'
+                            ? "Já no banco"
+                            : outcomeDetail.outcome === 'invalid'
+                            ? "Rejeitada"
+                            : "Erro"
+                          : item.isValid
+                          ? "Válida"
+                          : "Incompleta"}
+                      </span>
+                    </div>
+
+                    {!item.isValid && (
+                      <p className="text-[11px] text-rose-600 dark:text-rose-400 mt-1.5 font-medium">
+                        Motivo: {item.validationErrors.join(" • ")}
+                      </p>
+                    )}
+                    {outcomeDetail && (
+                      <p className="text-[11px] text-zinc-600 dark:text-zinc-400 mt-1">
+                        Mensagem: {outcomeDetail.message}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Ações */}
+            <div className="flex justify-between items-center pt-2 border-t border-zinc-100 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setIsImportModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 cursor-pointer"
+              >
+                Fechar
+              </button>
+              <button
+                type="button"
+                disabled={isImporting || localAnalysis.validCount === 0}
+                onClick={() => void handleExecuteImport()}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold shadow-xs transition-colors cursor-pointer"
+              >
+                {isImporting ? "Importando para Nuvem..." : `Confirmar Importação (${localAnalysis.validCount} válidas)`}
               </button>
             </div>
           </div>

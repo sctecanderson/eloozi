@@ -23,27 +23,21 @@ import {
   type RestaurantAlert,
 } from '../alerts/alertService';
 import {
-  playWaiterCallSound,
-  playDishReadySound,
   playLowStockSound,
 } from '../../lib/soundAlerts';
 import { SoundSettingsControl } from '../alerts/SoundSettingsControl';
 import { useScreenWakeLock } from '../../lib/useScreenWakeLock';
 import { ThemeToggleButton } from '../theme/ThemeToggleButton';
 import { useRestaurant } from '../restaurants/RestaurantProvider';
-
-export interface ReservationItem {
-  id: string;
-  tableNumber: number;
-  customerName: string;
-  phone: string;
-  date?: string;
-  time: string;
-  status?: string;
-  guestsCount: number;
-  notes?: string;
-  createdAt: string;
-}
+import {
+  listReservations,
+  seatReservationArrival,
+  toReservationItem,
+  isConfirmedReservation,
+  getOperationalDate,
+  isValidUuid,
+  type ReservationItem,
+} from '../reservations/reservationService';
 
 export type TableStatus = 'free' | 'occupied' | 'waiting' | 'reserved' | 'cleaning';
 
@@ -181,70 +175,15 @@ function getStaffAlertMeta(alert: RestaurantAlert, restaurantSlug: string) {
   return { color, badgeLabel, actionLabel, targetLink };
 }
 
-// No schema padrão original do Supabase, não há tabela física de reservas no banco;
-// o sistema utiliza armazenamento sincronizado via storage/eventos locais ('elozi_reservas_${restaurantId}' e 'elozi:reservations-updated').
-// A flag abaixo evita disparar requisições GET 404 em loop para /rest/v1/reservations no Supabase.
-let reservationsTableExists = false;
-
-// Busca reservas unificando persistência local resiliente e banco de dados (se a tabela existir)
-async function fetchSalonReservations(restaurantId: string): Promise<ReservationItem[]> {
-  const todayLocal = new Date().toLocaleDateString('sv-SE');
-
-  const localList: ReservationItem[] = (() => {
-    try {
-      const raw = localStorage.getItem(`elozi_reservas_${restaurantId}`);
-      const parsed: ReservationItem[] = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed.filter((r) => !r.date || r.date === todayLocal) : [];
-    } catch {
-      return [];
-    }
-  })();
-
-  // Se a tabela não existe no projeto Supabase, retorna imediatamente a lista local sem gerar 404
-  if (!reservationsTableExists) {
-    return localList;
-  }
-
-  try {
-    const { data: dbRes, error } = await supabase
-      .from('reservations')
-      .select('*')
-      .eq('restaurant_id', restaurantId)
-      .eq('date', todayLocal)
-      .in('status', ['confirmed', 'confirmada', 'agendada', 'reservada']);
-
-    if (error) {
-      if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('schema cache')) {
-        reservationsTableExists = false;
-      }
-      return localList;
-    }
-
-    if (Array.isArray(dbRes)) {
-      const dbList: ReservationItem[] = dbRes.map((r: any) => ({
-        id: String(r.id),
-        tableNumber: Number(r.table_number ?? r.tableNumber ?? 0),
-        customerName: String(r.customer_name ?? r.customerName ?? 'Cliente'),
-        phone: String(r.phone ?? ''),
-        time: String(r.reservation_time ?? r.time ?? 'Hoje'),
-        guestsCount: Number(r.guests_count ?? r.guestsCount ?? 2),
-        notes: String(r.notes ?? ''),
-        createdAt: String(r.created_at ?? new Date().toISOString()),
-      }));
-
-      const combined = [...dbList];
-      for (const loc of localList) {
-        if (!combined.some((c) => c.id === loc.id || c.tableNumber === loc.tableNumber)) {
-          combined.push(loc);
-        }
-      }
-      return combined;
-    }
-  } catch {
-    reservationsTableExists = false;
-  }
-
-  return localList;
+// Busca reservas ativas do salão diretamente no Supabase com data operacional no fuso do restaurante
+async function fetchSalonReservations(restaurantId: string, timezone?: string | null): Promise<ReservationItem[]> {
+  const opDate = getOperationalDate(timezone);
+  const dbRes = await listReservations(restaurantId, {
+    startDate: opDate,
+    endDate: opDate,
+    status: ['confirmed', 'confirmada', 'agendada', 'reservada'],
+  });
+  return dbRes.map(toReservationItem);
 }
 
 export function StaffServicePage() {
@@ -336,14 +275,8 @@ function StaffSalonManager({
     const isMyVisit = !!currentTableVisit && currentTableVisit.assigned_member_id === memberId;
     const isOtherStaffVisit = !!currentTableVisit && currentTableVisit.assigned_member_id !== memberId;
     const isTableFree = !currentTableVisit;
-    const [reservations, setReservations] = useState<ReservationItem[]>(() => {
-        try {
-            const raw = localStorage.getItem(`elozi_reservas_${restaurantId}`);
-            return raw ? JSON.parse(raw) : [];
-        } catch {
-            return [];
-        }
-    });
+    const [reservations, setReservations] = useState<ReservationItem[]>([]);
+    const [reservationsError, setReservationsError] = useState<string | null>(null);
     const [activeRequestsMap, setActiveRequestsMap] = useState<Map<number, number>>(new Map());
 
     // Filtros e ordenação
@@ -400,39 +333,22 @@ function StaffSalonManager({
         setToasts((prev) => prev.filter((t) => t.id !== id));
     };
 
-    // Sincroniza reservas instantaneamente via storage e custom event
-    useEffect(() => {
-        async function syncReservations() {
-            const list = await fetchSalonReservations(restaurantId);
-            setReservations(list);
-        }
 
-        function handleStorage(e: StorageEvent) {
-            if (e.key === `elozi_reservas_${restaurantId}`) {
-                void syncReservations();
-            }
-        }
 
-        function handleCustomEvent() {
-            void syncReservations();
-        }
-
-        window.addEventListener('storage', handleStorage);
-        window.addEventListener('elozi:reservations-updated', handleCustomEvent);
-        return () => {
-            window.removeEventListener('storage', handleStorage);
-            window.removeEventListener('elozi:reservations-updated', handleCustomEvent);
-        };
-    }, [restaurantId]);
-
-    // Timer de 30s para atualizar tempos decorridos
+    // Timer de 30s para atualizar tempos decorridos e checar virada de data operacional (meia-noite)
     const [, setTick] = useState(0);
+    const lastOpDateRef = useRef<string>(getOperationalDate(restaurant?.timezone));
     useEffect(() => {
         const interval = window.setInterval(() => {
             setTick((t) => t + 1);
+            const currentOpDate = getOperationalDate(restaurant?.timezone);
+            if (currentOpDate !== lastOpDateRef.current) {
+                lastOpDateRef.current = currentOpDate;
+                setRefresh((c) => c + 1);
+            }
         }, 30000);
         return () => window.clearInterval(interval);
-    }, []);
+    }, [restaurant?.timezone]);
 
     // Subscrição a alertas sonoros e notificações
     useEffect(() => {
@@ -444,14 +360,18 @@ function StaffSalonManager({
                 setRefresh((c) => c + 1);
             },
             (newAlert) => {
-                if (newAlert.type === 'call_waiter' || newAlert.type === 'close_table_request') {
-                    playWaiterCallSound();
-                } else if (newAlert.type === 'dish_ready') {
-                    playDishReadySound();
-                } else {
-                    playLowStockSound();
+                // Centralização: avisos de garçom, conta e pedido pronto são gerenciados
+                // exclusivamente pelo StaffChamadosProvider (evita duplicidade de som e toast de 6000ms).
+                if (
+                    newAlert.type === 'call_waiter' ||
+                    newAlert.type === 'close_table_request' ||
+                    newAlert.type === 'dish_ready'
+                ) {
+                    return;
                 }
 
+                // Alertas de outros tipos (ex: estoque crítico) continuam no salão
+                playLowStockSound();
                 setToasts((prev) => [newAlert, ...prev.filter((t) => t.id !== newAlert.id)].slice(0, 4));
                 setTimeout(() => {
                     setToasts((prev) => prev.filter((t) => t.id !== newAlert.id));
@@ -504,7 +424,7 @@ function StaffSalonManager({
             setError('');
 
             try {
-                const [loadedTables, openVisits, requestsRes, loadedReservations] = await Promise.all([
+                const [loadedTables, openVisits, requestsRes] = await Promise.all([
                     listRestaurantTables(restaurantId),
                     listSalonOpenTableVisits(restaurantId),
                     supabase
@@ -512,13 +432,22 @@ function StaffSalonManager({
                         .select('id, status, table:restaurant_tables!inner(table_number)')
                         .eq('restaurant_id', restaurantId)
                         .in('status', ['pending', 'attended']),
-                    fetchSalonReservations(restaurantId),
                 ]);
+
+                let loadedReservations: ReservationItem[] = [];
+                let resError: string | null = null;
+                try {
+                    loadedReservations = await fetchSalonReservations(restaurantId, restaurant?.timezone);
+                } catch (rErr) {
+                    resError = rErr instanceof Error ? rErr.message : 'Falha ao consultar reservas';
+                    console.error('Erro na consulta de reservas do salão:', rErr);
+                }
 
                 if (!disposed) {
                     setAllTables(loadedTables);
                     setSalonVisits(openVisits);
                     setReservations(loadedReservations);
+                    setReservationsError(resError);
 
                     const reqMap = new Map<number, number>();
                     if (requestsRes.data && Array.isArray(requestsRes.data)) {
@@ -600,7 +529,6 @@ function StaffSalonManager({
                 scheduleRefresh,
             );
 
-        if (reservationsTableExists) {
             baseChannel.on(
                 'postgres_changes',
                 {
@@ -611,7 +539,6 @@ function StaffSalonManager({
                 },
                 scheduleRefresh,
             );
-        }
 
         const channel = baseChannel.subscribe();
 
@@ -763,6 +690,14 @@ function StaffSalonManager({
             (!r.status || ['confirmed', 'confirmada', 'agendada', 'reservada'].includes(r.status)),
     );
 
+    // Lista de todas as reservas ativas da mesa selecionada
+    const tableActiveReservations = useMemo(() => {
+        if (selectedTableNumber === null) return [];
+        return reservations.filter(
+            (r) => r.tableNumber === selectedTableNumber && isConfirmedReservation(r),
+        );
+    }, [reservations, selectedTableNumber]);
+
     // Validação de Sessão Ativa no Carregamento: nunca forçar tela de código se a mesa já tiver comandas ou sessões ativas
     useEffect(() => {
         if (selectedTableNumber === null) return;
@@ -836,49 +771,68 @@ function StaffSalonManager({
     }
 
     // Ação: Assumir atendimento da mesa
-    async function handleAssumeTable(tableNum: number) {
+    // Abertura de visita e confirmação de reserva são passos separados e explícitos.
+    async function handleAssumeTable(tableNum: number, reservationId?: string) {
         if (submitting.current || busyAction) return;
 
         submitting.current = true;
         setBusyAction(true);
         setActionError('');
 
+        let visitOpened = false;
+
         try {
+            // 1. Abertura do atendimento da mesa
             await openTableVisit(restaurantSlug, tableNum);
+            visitOpened = true;
 
-            // Atualiza status da reserva para 'seated'
-            setReservations((prev) => {
-                const updated = prev.map((r) =>
-                    r.tableNumber === tableNum && (!r.status || ['confirmed', 'confirmada', 'agendada', 'reservada'].includes(r.status))
-                        ? { ...r, status: 'seated' }
-                        : r,
+            // 2. Confirmação segura da reserva via RPC com ID explícito (se informado)
+            if (reservationId && isValidUuid(reservationId)) {
+                const seatResult = await seatReservationArrival(
+                    restaurantId,
+                    tableNum,
+                    reservationId,
                 );
-                try {
-                    localStorage.setItem(`elozi_reservas_${restaurantId}`, JSON.stringify(updated));
-                    window.dispatchEvent(new CustomEvent('elozi:reservations-updated', { detail: { restaurantId } }));
-                } catch {
-                    // ignore
-                }
-                return updated;
-            });
 
-            if (reservationsTableExists) {
-                void supabase
-                    .from('reservations')
-                    .update({ status: 'seated' })
-                    .eq('restaurant_id', restaurantId)
-                    .eq('table_number', tableNum)
-                    .in('status', ['confirmed', 'confirmada', 'agendada', 'reservada']);
+                if (seatResult.success && seatResult.reservation?.id) {
+                    const seatedId = seatResult.reservation.id;
+                    // Atualiza EXCLUSIVAMENTE a reserva confirmada e validada pelo servidor
+                    setReservations((prev) =>
+                        prev.map((r) =>
+                            r.id === seatedId ? { ...r, status: 'seated' } : r,
+                        ),
+                    );
+                } else if (seatResult.code === 'ALREADY_SEATED') {
+                    const seatedId = seatResult.reservation?.id ?? reservationId;
+                    setReservations((prev) =>
+                        prev.map((r) =>
+                            r.id === seatedId ? { ...r, status: 'seated' } : r,
+                        ),
+                    );
+                } else {
+                    console.warn('Aviso ao confirmar reserva via RPC:', seatResult.code, seatResult.message);
+                    setActionError(
+                        `Atendimento aberto na Mesa ${tableNum}, mas a confirmação da reserva falhou: ${seatResult.message}`,
+                    );
+                }
             }
 
             setTableActiveTab('access');
             setRefresh((c) => c + 1);
         } catch (cause) {
-            setActionError(
-                cause instanceof Error
-                    ? cause.message
-                    : 'Não foi possível assumir a mesa.',
-            );
+            if (visitOpened) {
+                setActionError(
+                    cause instanceof Error
+                        ? `Atendimento aberto na Mesa ${tableNum}, mas ocorreu um erro posterior: ${cause.message}`
+                        : `Atendimento aberto na Mesa ${tableNum}, mas ocorreu um erro posterior.`,
+                );
+            } else {
+                setActionError(
+                    cause instanceof Error
+                        ? cause.message
+                        : 'Não foi possível assumir a mesa.',
+                );
+            }
         } finally {
             submitting.current = false;
             setBusyAction(false);
@@ -991,49 +945,20 @@ function StaffSalonManager({
                 PARTE 1: VISÃO GERAL DO SALÃO
                ========================================================= */}
             {viewMode === 'salon' && (
-                <div className="space-y-3 pb-24">
-                    {/* Barra de Navegação Superior (Início, Histórico, Perfil) */}
-                    <div className="flex items-center gap-2 mt-3 mb-4">
-                        {/* Botão Início (Ativo) */}
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setStatusFilter('all');
-                                setSelectedSector('Todas');
-                                setSearchQuery('');
-                                setSearchParams({});
-                            }}
-                            className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-[#4A1505] text-white font-bold text-xs shadow-sm cursor-pointer"
-                        >
-                            <HomeIcon className="w-4 h-4 text-white" />
-                            <span>Início</span>
-                        </button>
-
-                        {/* Botão Comandas */}
-                        <button
-                            type="button"
-                            onClick={() => navigate(`/${restaurantSlug}/equipe/comandas`)}
-                            className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-transparent hover:bg-amber-100/40 text-zinc-600 dark:text-zinc-300 font-semibold text-xs transition cursor-pointer"
-                        >
-                            <svg className="w-4 h-4 text-zinc-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                <polyline points="14 2 14 8 20 8" />
-                                <line x1="16" y1="13" x2="8" y2="13" />
-                                <line x1="16" y1="17" x2="8" y2="17" />
-                            </svg>
-                            <span>Comandas</span>
-                        </button>
-
-                        {/* Botão Perfil */}
-                        <button
-                            type="button"
-                            onClick={() => navigate(`/${restaurantSlug}/equipe/perfil`)}
-                            className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-transparent hover:bg-amber-100/40 text-zinc-600 dark:text-zinc-300 font-semibold text-xs transition cursor-pointer"
-                        >
-                            <UserIcon className="w-4 h-4 text-zinc-500" />
-                            <span>Perfil</span>
-                        </button>
-                    </div>
+                <div className="space-y-3 pb-28">
+                    {/* Aviso de indisponibilidade pontual do módulo de reservas sem afetar o salão */}
+                    {reservationsError && (
+                        <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300 flex items-center justify-between gap-2 mt-2">
+                            <span>⚠️ Reservas do salão indisponíveis: {reservationsError}. Mesas e pedidos continuam ativos.</span>
+                            <button
+                                type="button"
+                                onClick={() => setRefresh((c) => c + 1)}
+                                className="underline font-bold cursor-pointer shrink-0"
+                            >
+                                Recarregar
+                            </button>
+                        </div>
+                    )}
 
                     {/* A. 4 Cards de Métricas Superiores em 1 Linha com 4 Colunas */}
                     <div className="grid grid-cols-4 gap-2 mt-2">
@@ -1187,7 +1112,13 @@ function StaffSalonManager({
                                 <button
                                     key={t.id}
                                     type="button"
-                                    onClick={() => setSearchParams({ mesa: String(t.table_number) })}
+                                    onClick={() => {
+                                        if (isOccupied || salonVisits.some((v) => v.table.table_number === t.table_number)) {
+                                            navigate(`/${restaurantSlug}/equipe/comandas?mesa=${t.table_number}`);
+                                        } else {
+                                            setSearchParams({ mesa: String(t.table_number) });
+                                        }
+                                    }}
                                     className="h-[92px] min-h-[92px] w-full text-left rounded-2xl p-3.5 bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-xs relative flex items-center justify-between gap-2.5 transition-all hover:border-zinc-400 dark:hover:border-zinc-700 active:scale-[0.98]"
                                 >
                                     {/* Canto Esquerdo: Avatar Circular Suave */}
@@ -1381,15 +1312,42 @@ function StaffSalonManager({
                             </div>
 
                             {/* Card de Reserva se houver */}
-                            {selectedTableInfo?.status === 'reserved' && selectedReservation && (
-                                <div className="rounded-2xl border border-purple-200 dark:border-purple-800 bg-purple-50/70 dark:bg-purple-950/30 p-4 text-xs">
+                            {selectedTableInfo?.status === 'reserved' && tableActiveReservations.length > 0 && (
+                                <div className="rounded-2xl border border-purple-200 dark:border-purple-800 bg-purple-50/70 dark:bg-purple-950/30 p-4 text-xs space-y-2">
                                     <div className="flex items-center gap-2 text-purple-800 dark:text-purple-300 font-bold mb-1">
                                         <CalendarIcon className="w-4 h-4 text-purple-700 dark:text-purple-400" />
-                                        Mesa com Reserva Confirmada
+                                        {tableActiveReservations.length === 1
+                                            ? 'Mesa com Reserva Confirmada'
+                                            : `Mesa com ${tableActiveReservations.length} Reservas Agendadas`}
                                     </div>
-                                    <p className="text-purple-700 dark:text-purple-200 leading-relaxed">
-                                        Reserva para <strong>{selectedReservation.customerName}</strong> às <strong>{selectedReservation.time}</strong> ({selectedReservation.guestsCount} pessoas).
-                                    </p>
+
+                                    {tableActiveReservations.length === 1 ? (
+                                        <p className="text-purple-700 dark:text-purple-200 leading-relaxed">
+                                            Reserva para <strong>{tableActiveReservations[0].customerName}</strong> às <strong>{tableActiveReservations[0].time}</strong> ({tableActiveReservations[0].guestsCount} pessoas).
+                                        </p>
+                                    ) : (
+                                        <div className="space-y-1.5 pt-1">
+                                            <p className="text-purple-600 dark:text-purple-300 font-medium">
+                                                Selecione qual cliente está chegando para acomodá-lo:
+                                            </p>
+                                            {tableActiveReservations.map((res) => (
+                                                <div key={res.id} className="flex items-center justify-between p-2 rounded-xl bg-white/70 dark:bg-zinc-800/70 border border-purple-100 dark:border-purple-900/50">
+                                                    <div>
+                                                        <span className="font-bold text-zinc-900 dark:text-zinc-100">{res.customerName}</span>
+                                                        <span className="text-zinc-500 text-[11px] ml-2">({res.time} • {res.guestsCount}p)</span>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        disabled={busyAction}
+                                                        onClick={() => void handleAssumeTable(selectedTableNumber, res.id)}
+                                                        className="px-3 py-1 rounded-lg bg-purple-700 hover:bg-purple-800 text-white font-bold text-[11px] shadow-xs cursor-pointer transition disabled:opacity-50"
+                                                    >
+                                                        Acomodar este
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -1408,24 +1366,62 @@ function StaffSalonManager({
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <h3 className="text-lg font-bold text-zinc-900 dark:text-white leading-tight">
-                                            Mesa disponível
+                                            {tableActiveReservations.length > 0 ? 'Iniciar Atendimento' : 'Mesa disponível'}
                                         </h3>
                                         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 leading-relaxed">
-                                            Esta mesa está livre e pronta para atendimento.
+                                            {tableActiveReservations.length > 0
+                                                ? 'Abra o atendimento da mesa e vincule a reserva confirmada.'
+                                                : 'Esta mesa está livre e pronta para atendimento.'}
                                         </p>
                                     </div>
                                 </div>
-                                <button
-                                    type="button"
-                                    disabled={busyAction}
-                                    onClick={() => void handleAssumeTable(selectedTableNumber)}
-                                    className="w-full py-3.5 mt-4 rounded-2xl bg-[#610000] hover:bg-[#4a0000] active:bg-[#320e03] text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
-                                >
-                                    <svg className="w-4 h-4 fill-white shrink-0" viewBox="0 0 24 24">
-                                        <polygon points="5 3 19 12 5 21 5 3" />
-                                    </svg>
-                                    {busyAction ? 'Iniciando atendimento…' : 'Assumir atendimento desta mesa'}
-                                </button>
+
+                                {tableActiveReservations.length === 1 ? (
+                                    <div className="mt-4 space-y-2">
+                                        <button
+                                            type="button"
+                                            disabled={busyAction}
+                                            onClick={() => void handleAssumeTable(selectedTableNumber, tableActiveReservations[0].id)}
+                                            className="w-full py-3.5 rounded-2xl bg-[#610000] hover:bg-[#4a0000] active:bg-[#320e03] text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
+                                        >
+                                            <svg className="w-4 h-4 fill-white shrink-0" viewBox="0 0 24 24">
+                                                <polygon points="5 3 19 12 5 21 5 3" />
+                                            </svg>
+                                            {busyAction ? 'Iniciando atendimento…' : `Assumir mesa (Confirmando ${tableActiveReservations[0].customerName})`}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            disabled={busyAction}
+                                            onClick={() => void handleAssumeTable(selectedTableNumber)}
+                                            className="w-full py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 font-semibold text-xs transition disabled:opacity-50 cursor-pointer"
+                                        >
+                                            Assumir mesa sem vincular reserva (cliente avulso)
+                                        </button>
+                                    </div>
+                                ) : tableActiveReservations.length > 1 ? (
+                                    <div className="mt-4">
+                                        <button
+                                            type="button"
+                                            disabled={busyAction}
+                                            onClick={() => void handleAssumeTable(selectedTableNumber)}
+                                            className="w-full py-3 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 font-semibold text-xs transition disabled:opacity-50 cursor-pointer"
+                                        >
+                                            Assumir mesa sem vincular reserva (cliente avulso)
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        disabled={busyAction}
+                                        onClick={() => void handleAssumeTable(selectedTableNumber)}
+                                        className="w-full py-3.5 mt-4 rounded-2xl bg-[#610000] hover:bg-[#4a0000] active:bg-[#320e03] text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
+                                    >
+                                        <svg className="w-4 h-4 fill-white shrink-0" viewBox="0 0 24 24">
+                                            <polygon points="5 3 19 12 5 21 5 3" />
+                                        </svg>
+                                        {busyAction ? 'Iniciando atendimento…' : 'Assumir atendimento desta mesa'}
+                                    </button>
+                                )}
                             </div>
 
                             {/* Card "Informações da mesa" (3 Mini-Cards Lado a Lado) */}
@@ -1732,6 +1728,7 @@ function StaffSalonManager({
                                                 restaurantId={restaurantId}
                                                 tableVisitId={currentTableVisit.id}
                                                 tableNumber={selectedTableNumber}
+                                                role={role}
                                                 onOpenTabsCountChange={handleOpenTabsCountChange}
                                                 showSuccessToast={showConfirmedToast}
                                                 onCloseSuccessToast={() => setShowConfirmedToast(false)}

@@ -98,9 +98,16 @@ export function AdminLayout() {
     diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
   }
 
+  const isTrial = r.subscriptionIsTrial === true;
   const isExpiringSoon = diffDays !== null && diffDays > 0 && diffDays <= 5;
-  const isGracePeriod = (diffDays !== null && diffDays <= 0 && diffDays >= -3) || r.billingStatus === 'grace_period';
-  const isSevereOverdue = !isPlatformAdmin && ((diffDays !== null && diffDays < -3) || (r.billingStatus === 'expired' && (diffDays === null || diffDays <= -3)));
+  // Trial não tem período de tolerância (grace period)
+  const isGracePeriod = !isTrial && ((diffDays !== null && diffDays <= 0 && diffDays >= -3) || r.billingStatus === 'grace_period');
+  // Se for trial e expirou (diffDays <= 0 ou status expired), bloqueia imediatamente sem carência
+  const isSevereOverdue = !isPlatformAdmin && (
+    isTrial
+      ? (diffDays !== null && diffDays <= 0) || r.billingStatus === 'expired'
+      : (diffDays !== null && diffDays < -3) || (r.billingStatus === 'expired' && (diffDays === null || diffDays <= -3))
+  );
   const isBillingTab = location.pathname.endsWith('/assinatura');
 
   // Mantém os itens originais do menu lateral (removidos: Atendimento, Minha conta e Sair)
@@ -443,7 +450,7 @@ export function AdminLayout() {
                 <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
               <span>
-                <strong>Renovação de Assinatura:</strong> Restam apenas {diffDays} {diffDays === 1 ? 'dia' : 'dias'} para o término do seu plano.
+                <strong>{isTrial ? 'Período de Teste Gratuito:' : 'Renovação de Assinatura:'}</strong> Restam apenas {diffDays} {diffDays === 1 ? 'dia' : 'dias'} para o término do seu {isTrial ? 'teste gratuito de 7 dias' : 'plano'}.
               </span>
             </div>
             <Link
@@ -529,11 +536,12 @@ export function AdminLayout() {
                 </svg>
               </div>
               <h2 className="text-xl font-bold mb-2 text-zinc-900 dark:text-white">
-                Acesso Administrativo Suspenso
+                {isTrial ? 'Período de Teste Gratuito Expirado' : 'Acesso Administrativo Suspenso'}
               </h2>
               <p className="text-sm mb-6 leading-relaxed text-zinc-600 dark:text-zinc-400">
-                O período de tolerância de 3 dias expirou e a assinatura deste restaurante está suspensa.
-                Para restabelecer imediatamente as operações de salão, comandas e visualização da cozinha, efetue o pagamento da fatura em aberto.
+                {isTrial
+                  ? 'Seu período de teste gratuito de 7 dias chegou ao fim. Para continuar utilizando o sistema, gerenciar seus pedidos e atender seus clientes, escolha um plano de assinatura.'
+                  : 'O período de tolerância de 3 dias expirou e a assinatura deste restaurante está suspensa. Para restabelecer imediatamente as operações de salão, comandas e visualização da cozinha, efetue o pagamento da fatura em aberto.'}
               </p>
               <Link
                 to={`/${r.slug}/admin/assinatura`}

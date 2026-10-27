@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase';
+import { clearOperationalContext } from '../service/staffOperationalContext';
 
 export interface StaffAccess {
   memberId: string;
@@ -116,6 +117,7 @@ export async function signInStaff(
 }
 
 export async function signOutStaff(): Promise<void> {
+  clearOperationalContext();
   const { error } = await supabase.auth.signOut({
     scope: 'local',
   });

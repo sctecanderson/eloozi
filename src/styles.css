@@ -1990,6 +1990,9 @@ footer a {
 }
 
 .restaurant .tabs a {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     position: relative;
     flex: 0 0 auto;
     min-height: 40px;
@@ -1997,9 +2000,15 @@ footer a {
     border-radius: 0;
     color: color-mix(in srgb, var(--ink) 68%, transparent);
     font-size: 15px;
-    font-weight: 400;
+    font-weight: 500;
     line-height: 1.4;
-    text-align: left
+    text-align: left;
+    text-decoration: none;
+    transition: color 0.15s ease;
+}
+
+.restaurant .tabs a svg {
+    flex-shrink: 0;
 }
 
 .restaurant .tabs a.active {
@@ -3302,9 +3311,20 @@ footer a {
     height: 21px;
 }
 
-.home-bottom-nav a.active {
-    color: var(--brand, #b9472b);
+.home-bottom-nav a.active,
+.home-bottom-nav button.active {
+    background: #4A1505;
+    color: #ffffff !important;
     font-weight: 700;
+    border-radius: 999px;
+    padding: 7px 12px;
+    box-shadow: 0 2px 10px rgba(74, 21, 5, 0.28);
+}
+
+.home-bottom-nav a.active svg,
+.home-bottom-nav button.active svg {
+    color: #ffffff !important;
+    stroke: currentColor;
 }
 
 .home-bottom-nav a:hover,
@@ -4354,6 +4374,346 @@ footer a {
 
 .tab-renew-code-btn:hover {
     color: var(--brand, #b9472b);
+}
+
+/* Card de Confirmação de Código Fiel à Referência Visual */
+.tab-hero-card.tab-code-card-ref {
+    background: #ffffff;
+    border: 1px solid #ebd9cb;
+    border-radius: 28px;
+    padding: 32px 20px 24px;
+    text-align: center;
+    box-shadow: 0 4px 20px rgba(50, 30, 20, 0.04);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    margin: 8px 0 24px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.tab-card-grid-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: #FAF3ED;
+    color: #8A3A1B;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 2px;
+}
+
+.tab-card-title {
+    font-size: 21px;
+    font-weight: 800;
+    color: #23150E;
+    margin: 0;
+    line-height: 1.25;
+}
+
+.tab-card-description {
+    font-size: 13.5px;
+    color: #6B7280;
+    line-height: 1.5;
+    margin: 0;
+    max-width: 360px;
+}
+
+.tab-dashed-code-box {
+    width: 100%;
+    max-width: 360px;
+    background: #FFF9F5;
+    border: 1.5px dashed #F6C1A6;
+    border-radius: 20px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    box-sizing: border-box;
+}
+
+.tab-dashed-digits {
+    font-size: clamp(30px, 8vw, 38px);
+    font-weight: 800;
+    letter-spacing: clamp(3px, 1.2vw, 6px);
+    color: #2E1408;
+    font-family: inherit;
+    line-height: 1;
+}
+
+.tab-copy-code-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: #FDF2E9;
+    color: #8A3A1B;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.tab-copy-code-btn:hover {
+    background: #FBE5D6;
+}
+
+.tab-copy-code-btn:active {
+    transform: scale(0.95);
+}
+
+.tab-copy-feedback-success {
+    font-size: 12px;
+    font-weight: 700;
+    color: #059669;
+    margin-top: -6px;
+}
+
+.tab-copy-feedback-error {
+    font-size: 12px;
+    font-weight: 700;
+    color: #dc2626;
+    margin-top: -6px;
+}
+
+.tab-code-timer-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 16px;
+    border-radius: 999px;
+    background: #FEF5E7;
+    color: #9A4B1A;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid #FBEADA;
+}
+
+.tab-code-timer-badge strong {
+    font-weight: 800;
+}
+
+.tab-flow-steps {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    width: 100%;
+    margin-top: 6px;
+    padding: 0 4px;
+    box-sizing: border-box;
+}
+
+.tab-flow-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.tab-flow-step-num {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #EFEAE4;
+    color: #8E8278;
+    font-size: 12px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.tab-flow-step-num.active {
+    background: #F28C4A;
+    color: #ffffff;
+}
+
+.tab-flow-step-label {
+    font-size: 11px;
+    color: #8C7C6E;
+    line-height: 1.3;
+    text-align: center;
+    padding: 4px 6px;
+    border-radius: 12px;
+}
+
+.tab-flow-step-label.active-pill {
+    background: #FDF2E9;
+    color: #A0431A;
+    font-weight: 700;
+}
+
+.tab-flow-divider {
+    height: 1.5px;
+    background: #E5E0DB;
+    flex: 1;
+    margin-top: 13px;
+    margin-left: 2px;
+    margin-right: 2px;
+}
+
+.tab-lamp-info-box {
+    width: 100%;
+    background: #FDF7F2;
+    border: 1px solid #FBEADA;
+    border-radius: 18px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-align: left;
+    box-sizing: border-box;
+    margin-top: 4px;
+}
+
+.tab-lamp-icon-circle {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #FAF0E6;
+    color: #C06A2E;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.tab-lamp-text {
+    font-size: 12.5px;
+    color: #4A3B32;
+    margin: 0;
+    line-height: 1.45;
+}
+
+.tab-card-divider {
+    width: 100%;
+    border: 0;
+    border-top: 1px solid #F0EAE4;
+    margin: 4px 0 2px;
+}
+
+.tab-card-renew-btn {
+    background: none;
+    border: none;
+    color: #7A3E26;
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    transition: color 0.15s ease;
+}
+
+.tab-card-renew-btn:hover {
+    color: #562512;
+}
+
+.tab-card-renew-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Dark mode overrides */
+[data-theme="dark"] .tab-hero-card.tab-code-card-ref {
+    background: #1c1815;
+    border-color: #3b2c22;
+}
+
+[data-theme="dark"] .tab-card-grid-icon {
+    background: #2f1d13;
+    color: #f6ad7b;
+}
+
+[data-theme="dark"] .tab-card-title {
+    color: #f7f3ee;
+}
+
+[data-theme="dark"] .tab-card-description {
+    color: #a39589;
+}
+
+[data-theme="dark"] .tab-dashed-code-box {
+    background: #241a14;
+    border-color: #633b25;
+}
+
+[data-theme="dark"] .tab-dashed-digits {
+    color: #fed7aa;
+}
+
+[data-theme="dark"] .tab-copy-code-btn {
+    background: #362217;
+    color: #fed7aa;
+}
+
+[data-theme="dark"] .tab-copy-code-btn:hover {
+    background: #472b1d;
+}
+
+[data-theme="dark"] .tab-code-timer-badge {
+    background: #332014;
+    color: #fdba74;
+    border-color: #52311f;
+}
+
+[data-theme="dark"] .tab-flow-step-num {
+    background: #2a2420;
+    color: #8c7c6e;
+}
+
+[data-theme="dark"] .tab-flow-step-num.active {
+    background: #ea580c;
+    color: #ffffff;
+}
+
+[data-theme="dark"] .tab-flow-step-label {
+    color: #8c7c6e;
+}
+
+[data-theme="dark"] .tab-flow-step-label.active-pill {
+    background: #332014;
+    color: #fdba74;
+}
+
+[data-theme="dark"] .tab-flow-divider {
+    background: #3a322c;
+}
+
+[data-theme="dark"] .tab-lamp-info-box {
+    background: #241c16;
+    border-color: #422f22;
+}
+
+[data-theme="dark"] .tab-lamp-icon-circle {
+    background: #332217;
+    color: #fdba74;
+}
+
+[data-theme="dark"] .tab-lamp-text {
+    color: #d1c7bc;
+}
+
+[data-theme="dark"] .tab-card-divider {
+    border-top-color: #352a22;
+}
+
+[data-theme="dark"] .tab-card-renew-btn {
+    color: #fdba74;
+}
+
+[data-theme="dark"] .tab-card-renew-btn:hover {
+    color: #fed7aa;
 }
 
 /* Card Vazio quando a Comanda está Aberta mas sem itens lançados */
@@ -6509,8 +6869,15 @@ footer a {
     color: #a8988a;
 }
 
-[data-theme="dark"] .home-bottom-nav a.active {
-    color: var(--brand, #b9472b);
+[data-theme="dark"] .home-bottom-nav a.active,
+[data-theme="dark"] .home-bottom-nav button.active {
+    background: #68230B;
+    color: #ffffff !important;
+}
+
+[data-theme="dark"] .home-bottom-nav a.active svg,
+[data-theme="dark"] .home-bottom-nav button.active svg {
+    color: #ffffff !important;
 }
 
 [data-theme="dark"] .home-bottom-nav a:hover,

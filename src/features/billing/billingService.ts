@@ -4,34 +4,7 @@ export type SubscriptionPlanId = 'basic' | 'pro' | 'premium';
 export type BillingCycle = 'monthly' | 'yearly';
 export type PaymentMethodType = 'pix' | 'credit_card' | 'debit_card';
 export type InvoiceStatus = 'pending' | 'paid' | 'failed' | 'expired' | 'refunded';
-export type GatewayProvider = 'elozi_sandbox' | 'asaas' | 'mercadopago';
-
-export interface SubscriptionInvoice {
-  id: string;
-  plan_id: SubscriptionPlanId;
-  billing_cycle: BillingCycle;
-  payment_method: PaymentMethodType;
-  amount_cents: number;
-  status: InvoiceStatus;
-  card_brand?: string | null;
-  card_last4?: string | null;
-  pix_qr_code_payload?: string | null;
-  pix_expires_at?: string | null;
-  paid_at?: string | null;
-  created_at: string;
-}
-
-export interface SavedPaymentMethod {
-  id: string;
-  method_type: PaymentMethodType;
-  holder_name?: string | null;
-  card_brand?: string | null;
-  card_last4?: string | null;
-  exp_month?: number | null;
-  exp_year?: number | null;
-  is_default: boolean;
-  created_at: string;
-}
+export type RestaurantBillingStatus = 'active' | 'grace_period' | 'expired';
 
 export interface PlanCatalogItem {
   plan_id: SubscriptionPlanId;
@@ -42,7 +15,35 @@ export interface PlanCatalogItem {
   features: string[];
 }
 
-export interface BillingSummaryResponse {
+export interface SubscriptionInvoiceItem {
+  id: string;
+  plan_id: SubscriptionPlanId;
+  billing_cycle: BillingCycle;
+  amount_cents: number;
+  payment_method: PaymentMethodType;
+  status: InvoiceStatus;
+  pix_qr_code_payload: string | null;
+  pix_expires_at: string | null;
+  card_brand: string | null;
+  card_last4: string | null;
+  external_reference: string | null;
+  paid_at: string | null;
+  created_at: string;
+}
+
+export interface SavedPaymentMethod {
+  id: string;
+  method_type: 'credit_card' | 'debit_card';
+  holder_name: string | null;
+  card_brand: string | null;
+  card_last4: string | null;
+  exp_month: number | null;
+  exp_year: number | null;
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface RestaurantBillingSummary {
   restaurant: {
     id: string;
     name: string;
@@ -54,181 +55,215 @@ export interface BillingSummaryResponse {
     max_tables: number;
     monthly_price_cents: number;
     active: boolean;
-    billing_status: 'active' | 'grace_period' | 'expired';
+    billing_status: RestaurantBillingStatus;
     days_remaining: number;
   };
   usage: {
     tables_count: number;
     products_count: number;
   };
-  catalog: Record<SubscriptionPlanId, PlanCatalogItem>;
-  invoices: SubscriptionInvoice[];
+  catalog: {
+    basic: PlanCatalogItem;
+    pro: PlanCatalogItem;
+    premium: PlanCatalogItem;
+  };
+  invoices: SubscriptionInvoiceItem[];
   payment_methods: SavedPaymentMethod[];
 }
 
-export interface CardFormData {
-  holder_name?: string;
-  card_number?: string;
-  card_brand?: string;
-  card_last4?: string;
-  exp_month?: number;
-  exp_year?: number;
-  cvv?: string;
-  save_card?: boolean;
-}
-
-export interface PayerInfo {
-  cpfCnpj: string;
-  name?: string;
-  email?: string;
-  phone?: string;
-  postalCode?: string;
-  addressNumber?: string;
-}
-
-export interface CreateCheckoutParams {
-  restaurantId: string;
-  targetPlan: SubscriptionPlanId;
-  billingCycle: BillingCycle;
-  paymentMethod: PaymentMethodType;
-  cardData?: CardFormData | null;
-  payerInfo?: PayerInfo;
-  gatewayProvider?: GatewayProvider;
-}
-
-export interface CheckoutResponse {
-  success: boolean;
+export interface CheckoutResult {
   invoice_id: string;
-  status: InvoiceStatus;
-  paid_at?: string;
-  amount_cents: number;
   plan_id: SubscriptionPlanId;
   billing_cycle: BillingCycle;
+  amount_cents: number;
   payment_method: PaymentMethodType;
-  subscription_expires_at?: string;
-  max_tables?: number;
+  status: InvoiceStatus;
+  reused_pending_invoice?: boolean;
+  already_paid?: boolean;
   pix_qr_code_payload?: string;
   pix_qr_code_image?: string;
   pix_expires_at?: string;
-  already_paid?: boolean;
+  subscription_expires_at?: string;
+  max_tables?: number;
 }
 
-/**
- * Busca o resumo completo de faturamento do restaurante:
- * plano ativo, validade, quotas, planos disponíveis, faturas e cartões salvos.
- */
-export async function fetchBillingSummary(restaurantId: string): Promise<BillingSummaryResponse> {
+async function extractFunctionErrorMessage(
+  err: unknown,
+  fallbackMessage: string,
+): Promise<string> {
+  if (!err || typeof err !== 'object') {
+    return fallbackMessage;
+  }
+
+  const maybeContext = (err as { context?: { json?: () => Promise<{ error?: string }> } }).context;
+  if (maybeContext && typeof maybeContext.json === 'function') {
+    try {
+      const errBody = await maybeContext.json();
+      if (errBody && typeof errBody.error === 'string' && errBody.error.trim().length > 0) {
+        return errBody.error.trim();
+      }
+    } catch {
+      // Ignora erro de parse do body
+    }
+  }
+
+  const maybeMessage = (err as { message?: string }).message;
+  if (typeof maybeMessage === 'string' && maybeMessage.trim().length > 0) {
+    return maybeMessage.trim();
+  }
+
+  return fallbackMessage;
+}
+
+export type SubscriptionInvoice = SubscriptionInvoiceItem;
+export type BillingSummaryResponse = RestaurantBillingSummary;
+
+export async function fetchRestaurantBillingSummary(
+  restaurantId: string,
+): Promise<RestaurantBillingSummary> {
   const { data, error } = await supabase.rpc('get_restaurant_billing_summary', {
     p_restaurant_id: restaurantId,
   });
 
   if (error) {
-    throw new Error(error.message || 'Erro ao carregar dados de faturamento do restaurante.');
+    throw new Error(error.message || 'Falha ao carregar informações financeiras do restaurante.');
   }
 
-  return data as BillingSummaryResponse;
+  return data as RestaurantBillingSummary;
 }
 
-/**
- * Cria ou processa o checkout de assinatura (PIX, Cartão de Crédito ou Débito).
- * Encaminha para a Edge Function segura do Asaas em produção ou executa RPC direto em sandbox.
- */
-export async function createSubscriptionCheckout(params: CreateCheckoutParams): Promise<CheckoutResponse> {
-  const {
-    restaurantId,
-    targetPlan,
-    billingCycle,
-    paymentMethod,
-    cardData,
-    payerInfo,
-    gatewayProvider = 'asaas',
-  } = params;
+export const fetchBillingSummary = fetchRestaurantBillingSummary;
 
-  // 1. Fluxo de Produção Oficial: Asaas Edge Function
-  if (gatewayProvider === 'asaas') {
-    const { data: edgeData, error: edgeErr } = await supabase.functions.invoke('asaas-checkout', {
-      body: {
-        restaurantId,
-        targetPlan,
-        billingCycle,
-        paymentMethod,
-        cardData,
-        payerInfo,
-      },
-    });
+export async function createSubscriptionCheckout(params: {
+  restaurantId: string;
+  targetPlan: SubscriptionPlanId;
+  billingCycle: BillingCycle;
+  paymentMethod: PaymentMethodType;
+  cardData?: {
+    holder_name?: string;
+    card_number?: string;
+    card_brand?: string;
+    card_last4?: string;
+    exp_month?: number;
+    exp_year?: number;
+    cvv?: string;
+    save_card?: boolean;
+  } | null;
+  payerInfo?: {
+    cpfCnpj?: string;
+    name?: string;
+    postalCode?: string;
+    addressNumber?: string;
+    phone?: string;
+  } | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabaseClient?: any;
+}): Promise<CheckoutResult> {
+  const client = params.supabaseClient ?? supabase;
 
-    if (edgeErr) {
-      let errorMsg = edgeErr.message || 'Erro na comunicação com o Asaas.';
-      if (edgeData && typeof edgeData === 'object' && 'error' in edgeData) {
-        errorMsg = String((edgeData as { error: string }).error);
-      }
-      throw new Error(errorMsg);
-    }
-
-    if (edgeData && typeof edgeData === 'object' && 'error' in edgeData) {
-      throw new Error(String((edgeData as { error: string }).error));
-    }
-
-    return edgeData as CheckoutResponse;
-  }
-
-  // 2. Fluxo Sandbox / Homologação local via RPC
-  let safeCardPayload: Record<string, unknown> | null = null;
-  if (cardData && (paymentMethod === 'credit_card' || paymentMethod === 'debit_card')) {
-    const rawDigits = (cardData.card_number || '').replace(/\D/g, '');
-    const cleanLast4 = cardData.card_last4 || (rawDigits.length >= 4 ? rawDigits.slice(-4) : '4242');
-
-    safeCardPayload = {
-      holder_name: cardData.holder_name?.trim() || 'Titular do Cartão',
-      card_brand: cardData.card_brand || detectCardBrand(rawDigits),
-      card_last4: cleanLast4,
-      exp_month: cardData.exp_month || 12,
-      exp_year: cardData.exp_year || 2030,
-      save_card: Boolean(cardData.save_card),
-    };
-  }
-
-  const { data, error } = await supabase.rpc('create_subscription_checkout', {
-    p_restaurant_id: restaurantId,
-    p_target_plan: targetPlan,
-    p_billing_cycle: billingCycle,
-    p_payment_method: paymentMethod,
-    p_card_data: safeCardPayload,
+  // Checkout exclusivamente via endpoint de servidor (asaas-checkout).
+  // Nenhum fallback local ou modo de simulação enviado pelo navegador é permitido.
+  const { data: fnData, error: fnError } = await client.functions.invoke('asaas-checkout', {
+    body: {
+      action: 'checkout',
+      restaurantId: params.restaurantId,
+      targetPlan: params.targetPlan,
+      billingCycle: params.billingCycle,
+      paymentMethod: params.paymentMethod,
+      cardData: params.cardData || null,
+      payerInfo: params.payerInfo || null,
+    },
   });
 
-  if (error) {
-    throw new Error(error.message || 'Erro ao processar checkout de assinatura.');
+  if (fnError) {
+    const message = await extractFunctionErrorMessage(
+      fnError,
+      'Falha ao comunicar com o gateway de pagamentos Asaas.',
+    );
+    throw new Error(message);
   }
 
-  return data as CheckoutResponse;
+  if (fnData?.error) {
+    throw new Error(String(fnData.error));
+  }
+
+  if (!fnData?.invoice_id) {
+    throw new Error('Resposta inválida do servidor de pagamentos Asaas.');
+  }
+
+  return {
+    invoice_id: fnData.invoice_id,
+    plan_id: fnData.plan_id,
+    billing_cycle: fnData.billing_cycle,
+    amount_cents: fnData.amount_cents,
+    payment_method: fnData.payment_method,
+    status: fnData.status,
+    reused_pending_invoice: Boolean(fnData.reused_pending_invoice),
+    pix_qr_code_payload: fnData.pix_qr_code_payload,
+    pix_qr_code_image: fnData.pix_qr_code_image,
+    pix_expires_at: fnData.pix_expires_at,
+    subscription_expires_at: fnData.subscription_expires_at,
+    max_tables: fnData.max_tables,
+  };
 }
 
-/**
- * Confirma o pagamento de uma fatura de assinatura (idempotente).
- * Utilizado para webhook de gateway ou verificação do botão PIX na homologação.
- */
 export async function confirmSubscriptionInvoice(
   invoiceId: string,
-  externalReference?: string
-): Promise<CheckoutResponse> {
-  const { data, error } = await supabase.rpc('confirm_subscription_invoice_payment', {
-    p_invoice_id: invoiceId,
-    p_external_reference: externalReference || null,
-  });
-
-  if (error) {
-    throw new Error(error.message || 'Erro ao confirmar pagamento da fatura.');
+  options?: {
+    restaurantId?: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    supabaseClient?: any;
+  },
+): Promise<CheckoutResult> {
+  const trimmedInvoiceId = (invoiceId || '').trim();
+  if (!trimmedInvoiceId) {
+    throw new Error('ID da fatura é obrigatório para validar o pagamento.');
   }
 
-  return data as CheckoutResponse;
+  const client = options?.supabaseClient ?? supabase;
+
+  // Validação de pagamento consulta exclusivamente o endpoint de servidor,
+  // que verifica o status real diretamente na API do Asaas antes de confirmar.
+  const { data: fnData, error: fnError } = await client.functions.invoke('asaas-checkout', {
+    body: {
+      action: 'verify_payment',
+      invoiceId: trimmedInvoiceId,
+      restaurantId: options?.restaurantId,
+    },
+  });
+
+  if (fnError) {
+    const message = await extractFunctionErrorMessage(
+      fnError,
+      'Não foi possível validar o pagamento no servidor.',
+    );
+    throw new Error(message);
+  }
+
+  if (fnData?.error) {
+    throw new Error(String(fnData.error));
+  }
+
+  if (!fnData?.invoice_id || !fnData?.status) {
+    throw new Error('Resposta inválida ao verificar status do pagamento.');
+  }
+
+  return {
+    invoice_id: fnData.invoice_id,
+    plan_id: fnData.plan_id,
+    billing_cycle: fnData.billing_cycle,
+    amount_cents: fnData.amount_cents,
+    payment_method: fnData.payment_method,
+    status: fnData.status,
+    already_paid: Boolean(fnData.already_paid),
+    subscription_expires_at: fnData.subscription_expires_at,
+    max_tables: fnData.max_tables,
+  };
 }
 
-/**
- * Remove um meio de pagamento salvo pelo restaurante.
- */
 export async function deleteSavedPaymentMethod(
   restaurantId: string,
-  methodId: string
+  methodId: string,
 ): Promise<boolean> {
   const { data, error } = await supabase.rpc('delete_restaurant_payment_method', {
     p_restaurant_id: restaurantId,
@@ -236,37 +271,27 @@ export async function deleteSavedPaymentMethod(
   });
 
   if (error) {
-    throw new Error(error.message || 'Erro ao remover meio de pagamento.');
+    throw new Error(error.message || 'Não foi possível remover o cartão salvo.');
   }
 
   return Boolean(data);
 }
 
-/**
- * Utilitário para detecção de bandeira de cartão por prefixo (BIN).
- */
-export function detectCardBrand(digits: string): string {
-  const clean = digits.replace(/\D/g, '');
-  if (!clean) return 'visa';
-
-  if (/^4/.test(clean)) return 'visa';
-  if (/^(5[1-5]|222[1-9]|22[3-9]|2[3-6]|27[01]|2720)/.test(clean)) return 'mastercard';
-  if (/^(34|37)/.test(clean)) return 'amex';
-  if (/^(4011|438935|451416|4576|504175|5067|5090|627780|636297|636368)/.test(clean)) return 'elo';
-  if (/^(6011|622|64|65)/.test(clean)) return 'discover';
-  if (/^(30[0-5]|36|38)/.test(clean)) return 'diners';
-  if (/^(35)/.test(clean)) return 'jcb';
-  if (/^(606282)/.test(clean)) return 'hipercard';
-
-  return 'visa';
-}
-
-/**
- * Formata centavos em moeda brasileira BRL.
- */
 export function formatCurrencyBRL(cents: number): string {
-  return (cents / 100).toLocaleString('pt-BR', {
+  return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: 'BRL',
-  });
+  }).format((cents || 0) / 100);
+}
+
+export function detectCardBrand(cardNumber: string): string {
+  const clean = cardNumber.replace(/\D/g, '');
+  if (/^4/.test(clean)) return 'visa';
+  if (/^(5[1-5]|2[2-7])/.test(clean)) return 'mastercard';
+  if (/^(4011|4312|4389|4514|4576|5041|5066|5090|6277|6362|6363|650|651|655)/.test(clean)) {
+    return 'elo';
+  }
+  if (/^3[47]/.test(clean)) return 'amex';
+  if (/^(606282|3841)/.test(clean)) return 'hipercard';
+  return 'card';
 }
