@@ -5,6 +5,7 @@ import {
   clearMigratedLegacyProfiles,
   createInvite,
   getTeam,
+  removeMember,
   revokeInvite,
   staffProfileApi,
   transferVisits,
@@ -18,6 +19,7 @@ import {
   describeLegacyFailures,
   displayName,
   indexProfilesByEmail,
+  isStaffMemberRemoved,
   normalizeEmail,
   readLegacyProfiles,
   resolveProfile,
@@ -102,6 +104,8 @@ interface UnifiedStaffMember {
   openVisits: number;
   permissions: string[];
   isInvitePending?: boolean;
+  hasProfile?: boolean;
+  isRemoved?: boolean;
 }
 
 function TeamContent({ slug }: { slug: string }) {
@@ -159,8 +163,14 @@ function TeamContent({ slug }: { slug: string }) {
   ]);
 
   // Filtro da lista
-  const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [filter, setFilter] = useState<'all' | 'active' | 'inactive' | 'removed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Modal de confirmação explícita de remoção / cancelamento de convite
+  const [confirmRemovalModal, setConfirmRemovalModal] = useState<{
+    member: UnifiedStaffMember;
+    isPendingInvite: boolean;
+  } | null>(null);
 
   // Transferência de atendimentos
   const [transferModal, setTransferModal] = useState<{
@@ -232,6 +242,8 @@ function TeamContent({ slug }: { slug: string }) {
       if (emailLower) seenEmails.add(emailLower);
 
       const profile = resolveProfile(profiles, { id: m.id, email: m.email });
+      const hasProfile = Boolean(profile);
+      const isRemoved = isStaffMemberRemoved({ active: m.active, hasProfile, isInvitePending: false });
 
       list.push({
         id: m.id,
@@ -251,6 +263,8 @@ function TeamContent({ slug }: { slug: string }) {
           (m.role === 'admin'
             ? PERMISSION_OPTIONS.map((p) => p.id)
             : ['cardapio', 'mesas', 'comentarios']),
+        hasProfile,
+        isRemoved,
       });
     }
 
@@ -262,6 +276,7 @@ function TeamContent({ slug }: { slug: string }) {
       seenEmails.add(emailLower);
 
       const profile = resolveProfile(profiles, { id: inv.id, email: inv.email });
+      const hasProfile = Boolean(profile);
 
       list.push({
         id: inv.id,
@@ -282,6 +297,8 @@ function TeamContent({ slug }: { slug: string }) {
             ? PERMISSION_OPTIONS.map((p) => p.id)
             : ['cardapio', 'mesas', 'comentarios']),
         isInvitePending: true,
+        hasProfile,
+        isRemoved: false,
       });
     }
 
@@ -304,6 +321,8 @@ function TeamContent({ slug }: { slug: string }) {
         active: p.active,
         openVisits: 0,
         permissions: p.permissions || ['cardapio', 'mesas'],
+        hasProfile: true,
+        isRemoved: false,
       });
     }
 
@@ -311,15 +330,25 @@ function TeamContent({ slug }: { slug: string }) {
   }, [team.members, team.invitations, profiles]);
 
   // Contadores reais baseados estritamente nos dados do restaurante
-  const totalCount = unifiedMembers.length;
-  const activeCount = unifiedMembers.filter((m) => staffAccessState(m) === 'access_active').length;
-  const inactiveCount = unifiedMembers.filter((m) => !m.active).length;
+  const activeTeamMembers = useMemo(() => unifiedMembers.filter((m) => !m.isRemoved), [unifiedMembers]);
+  const removedTeamMembers = useMemo(() => unifiedMembers.filter((m) => m.isRemoved), [unifiedMembers]);
+
+  const totalCount = activeTeamMembers.length;
+  const activeCount = activeTeamMembers.filter((m) => staffAccessState(m) === 'access_active').length;
+  const inactiveCount = activeTeamMembers.filter((m) => !m.active).length;
+  const removedCount = removedTeamMembers.length;
 
   // Filtragem da lista
   const filteredMembers = useMemo(() => {
     return unifiedMembers.filter((m) => {
-      if (filter === 'active' && staffAccessState(m) !== 'access_active') return false;
-      if (filter === 'inactive' && m.active) return false;
+      if (filter === 'removed') {
+        if (!m.isRemoved) return false;
+      } else {
+        // Na lista normal ('all', 'active', 'inactive'), colaboradores com vínculo removido ficam ocultos
+        if (m.isRemoved) return false;
+        if (filter === 'active' && staffAccessState(m) !== 'access_active') return false;
+        if (filter === 'inactive' && m.active) return false;
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchesName = m.name.toLowerCase().includes(q);
@@ -652,16 +681,33 @@ function TeamContent({ slug }: { slug: string }) {
     }
   }
 
-  // Excluir funcionário ou revogar convite
-  async function handleDeleteMember(m: UnifiedStaffMember) {
+  // Solicitar remoção de funcionário ou cancelamento de convite
+  function handleRequestDeleteMember(m: UnifiedStaffMember) {
+    if (m.openVisits > 0) {
+      setError(`Transfira os ${m.openVisits} atendimento(s) aberto(s) deste funcionário antes de removê-lo da equipe.`);
+      setTransferModal({
+        fromMemberId: m.memberId || m.id,
+        fromName: m.name,
+        openVisits: m.openVisits,
+      });
+      return;
+    }
     const isPendingInvite = !m.memberId && Boolean(m.inviteId);
-    const confirmMessage = isPendingInvite
-      ? `Deseja cancelar e invalidar o convite de ${m.name || m.email}?`
-      : `Tem certeza que deseja revogar o acesso de ${m.name} da equipe? O histórico de comandas e atendimentos será preservado.`;
-    if (!window.confirm(confirmMessage)) return;
+    setConfirmRemovalModal({ member: m, isPendingInvite });
+  }
+
+  // Executar remoção da equipe ou cancelamento de convite após confirmação
+  async function handleConfirmRemoval(m: UnifiedStaffMember) {
+    if (acting.current || busy) return;
 
     if (m.openVisits > 0) {
-      setError('Transfira os atendimentos abertos antes de revogar o acesso do funcionário.');
+      setConfirmRemovalModal(null);
+      setError(`Transfira os ${m.openVisits} atendimento(s) aberto(s) deste funcionário antes de removê-lo da equipe.`);
+      setTransferModal({
+        fromMemberId: m.memberId || m.id,
+        fromName: m.name,
+        openVisits: m.openVisits,
+      });
       return;
     }
 
@@ -671,37 +717,47 @@ function TeamContent({ slug }: { slug: string }) {
     setNotice('');
 
     try {
-      // 1. Membro com vínculo em restaurant_members: desativa o acesso sem apagar a conta global nem histórico
-      if (m.memberId) {
-        const rawMember = team.members.find((item) => item.id === m.memberId);
-        if (rawMember && rawMember.active) {
-          await updateMember(slug, rawMember, rawMember.role, false);
+      const isPendingInvite = !m.memberId && Boolean(m.inviteId);
+
+      if (isPendingInvite) {
+        // Convite pendente: cancela e invalida o token
+        if (m.inviteId) {
+          await revokeInvite(slug, m.inviteId);
         }
-      }
-
-      // 2. Convite pendente associado: revoga e invalida o token
-      if (m.inviteId) {
-        await revokeInvite(slug, m.inviteId);
-      }
-
-      // 3. Remove dados complementares do perfil
-      if (m.email) {
-        try {
-          await staffProfileApi.remove(slug, m.email);
-        } catch {
-          // Erro ao remover perfil complementar não impede o desfecho principal de revogação de acesso
+        if (m.email) {
+          try {
+            await staffProfileApi.remove(slug, m.email);
+          } catch {
+            // tolerância caso o perfil não exista
+          }
         }
-      }
 
-      const reloaded = await reloadFromServer();
-      if (alive.current) {
-        if (isPendingInvite) {
+        const reloaded = await reloadFromServer();
+        if (alive.current) {
+          setConfirmRemovalModal(null);
           setNotice(`Convite de ${m.name || m.email} cancelado e invalidado com sucesso.`);
-        } else {
-          setNotice(`Acesso de ${m.name} revogado com sucesso. O histórico da equipe e comandas foi mantido.`);
+          if (editingId === m.id) handleResetForm();
+          if (!reloaded) setError('Convite cancelado, mas não foi possível recarregar a lista do servidor. Atualize a página.');
         }
-        if (editingId === m.id) handleResetForm();
-        if (!reloaded) setError('Acesso atualizado, mas não foi possível recarregar a lista do servidor. Atualize a página.');
+      } else {
+        // Colaborador da equipe: remove o vínculo daquele restaurante e preserva histórico
+        if (m.memberId) {
+          const rawMember = team.members.find((item) => item.id === m.memberId);
+          if (rawMember) {
+            await removeMember(slug, rawMember, m.email);
+          }
+        } else if (m.email) {
+          // Perfil cadastrado sem vínculo ativo
+          await staffProfileApi.remove(slug, m.email);
+        }
+
+        const reloaded = await reloadFromServer();
+        if (alive.current) {
+          setConfirmRemovalModal(null);
+          setNotice(`Colaborador ${m.name} removido da equipe com sucesso. O histórico de atendimentos e comandas foi preservado.`);
+          if (editingId === m.id) handleResetForm();
+          if (!reloaded) setError('Colaborador removido, mas não foi possível recarregar a lista do servidor. Atualize a página.');
+        }
       }
     } catch (cause) {
       if (alive.current) {
@@ -1491,11 +1547,27 @@ function TeamContent({ slug }: { slug: string }) {
                 </div>
                 <div>
                   <h2 className="font-bold text-base text-zinc-900 dark:text-white flex items-center gap-2">
-                    <span>Membros cadastrados na equipe</span>
+                    <span>
+                      {filter === 'removed'
+                        ? 'Colaboradores com vínculo removido'
+                        : 'Membros cadastrados na equipe'}
+                    </span>
                     <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 font-semibold">
                       {filteredMembers.length}
                     </span>
                   </h2>
+                  {filter === 'removed' && (
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                      Estes colaboradores foram removidos da equipe. O histórico de atendimentos e comandas está preservado.{' '}
+                      <button
+                        type="button"
+                        onClick={() => setFilter('all')}
+                        className="text-[#610000] dark:text-rose-400 font-semibold underline cursor-pointer"
+                      >
+                        Voltar para a equipe ativa
+                      </button>
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -1544,11 +1616,18 @@ function TeamContent({ slug }: { slug: string }) {
                   </svg>
                 </div>
                 <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
-                  Nenhum funcionário cadastrado ainda
+                  {filter === 'removed'
+                    ? 'Nenhum colaborador removido da equipe'
+                    : searchQuery
+                      ? 'Nenhum funcionário encontrado para esta busca'
+                      : 'Nenhum funcionário cadastrado ainda'}
                 </p>
                 <p className="text-xs text-zinc-400 mt-1 max-w-sm mx-auto">
-                  Preencha o formulário acima para adicionar o primeiro membro à equipe do seu
-                  restaurante.
+                  {filter === 'removed'
+                    ? 'Colaboradores removidos que possuam histórico de comandas aparecerão aqui.'
+                    : searchQuery
+                      ? 'Tente buscar por outro termo, nome, e-mail ou cargo.'
+                      : 'Preencha o formulário acima para adicionar o primeiro membro à equipe do seu restaurante.'}
                 </p>
               </div>
             ) : (
@@ -1624,73 +1703,89 @@ function TeamContent({ slug }: { slug: string }) {
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
                             staffAccessState(m) === 'access_active'
                               ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60'
-                              : staffAccessState(m) !== 'access_inactive'
-                                ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200/60'
-                                : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200/60'
+                              : staffAccessState(m) === 'access_inactive'
+                                ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200/60'
+                                : staffAccessState(m) === 'removed'
+                                  ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700'
+                                  : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200/60'
                           }`}
                         >
                           <span
                             className={`w-1.5 h-1.5 rounded-full ${
-                              staffAccessState(m) === 'access_active' ? 'bg-emerald-500' : staffAccessState(m) === 'access_inactive' ? 'bg-rose-500' : 'bg-amber-500'
+                              staffAccessState(m) === 'access_active'
+                                ? 'bg-emerald-500'
+                                : staffAccessState(m) === 'access_inactive'
+                                  ? 'bg-rose-500'
+                                  : staffAccessState(m) === 'removed'
+                                    ? 'bg-zinc-400'
+                                    : 'bg-amber-500'
                             }`}
                           />
                           <span>{STAFF_ACCESS_LABEL[staffAccessState(m)]}</span>
                         </div>
 
-                        {/* Botão Editar */}
-                        <button
-                          type="button"
-                          onClick={() => handleEditMember(m)}
-                          className="px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-                        >
-                          Editar
-                        </button>
+                        {m.isRemoved ? (
+                          <span className="text-[11px] text-zinc-400 italic px-2 py-1">
+                            Histórico preservado
+                          </span>
+                        ) : (
+                          <>
+                            {/* Botão Editar */}
+                            <button
+                              type="button"
+                              onClick={() => handleEditMember(m)}
+                              className="px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                            >
+                              Editar
+                            </button>
 
-                        {/* Botão Ativar / Desativar (para membros vinculados) */}
-                        {m.memberId && (
-                          <button
-                            type="button"
-                            onClick={() => void handleToggleActive(m)}
-                            disabled={busy}
-                            className="px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer disabled:opacity-50"
-                          >
-                            {m.active ? 'Desativar' : 'Ativar'}
-                          </button>
+                            {/* Botão Ativar / Desativar (para membros vinculados) */}
+                            {m.memberId && (
+                              <button
+                                type="button"
+                                onClick={() => void handleToggleActive(m)}
+                                disabled={busy}
+                                className="px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                {m.active ? 'Desativar' : 'Ativar'}
+                              </button>
+                            )}
+
+                            {/* Botão Gerar Novo Link (para convites pendentes) */}
+                            {m.isInvitePending && m.email && (
+                              <button
+                                type="button"
+                                onClick={() => void handleResendInvite(m)}
+                                disabled={busy}
+                                title="Gerar um novo link seguro para este convite"
+                                className="px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-xs font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                Novo link
+                              </button>
+                            )}
+
+                            {/* Botão Remover da Equipe / Cancelar Convite */}
+                            <button
+                              type="button"
+                              onClick={() => handleRequestDeleteMember(m)}
+                              disabled={busy}
+                              title={m.isInvitePending ? 'Cancelar convite' : 'Remover da equipe'}
+                              aria-label={m.isInvitePending ? 'Cancelar convite' : 'Remover da equipe'}
+                              className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              <svg
+                                className="w-4 h-4"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              >
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                              </svg>
+                            </button>
+                          </>
                         )}
-
-                        {/* Botão Gerar Novo Link (para convites pendentes) */}
-                        {m.isInvitePending && m.email && (
-                          <button
-                            type="button"
-                            onClick={() => void handleResendInvite(m)}
-                            disabled={busy}
-                            title="Gerar um novo link seguro para este convite"
-                            className="px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-xs font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 transition-colors cursor-pointer disabled:opacity-50"
-                          >
-                            Novo link
-                          </button>
-                        )}
-
-                        {/* Botão Excluir / Cancelar */}
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteMember(m)}
-                          disabled={busy}
-                          title={m.isInvitePending ? 'Cancelar convite' : 'Revogar acesso da equipe'}
-                          aria-label={m.isInvitePending ? 'Cancelar convite' : 'Revogar acesso da equipe'}
-                          className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer disabled:opacity-50"
-                        >
-                          <svg
-                            className="w-4 h-4"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                          >
-                            <polyline points="3 6 5 6 21 6" />
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                          </svg>
-                        </button>
                       </div>
                     </div>
                   );
@@ -1838,6 +1933,40 @@ function TeamContent({ slug }: { slug: string }) {
                   <polyline points="9 18 15 12 9 6" />
                 </svg>
               </div>
+
+              {/* Mini-Card 4: Removidos (histórico preservado) */}
+              {removedCount > 0 && (
+                <div
+                  onClick={() => setFilter(filter === 'removed' ? 'all' : 'removed')}
+                  className={`bg-white dark:bg-zinc-800/80 rounded-xl p-3.5 border transition-all flex items-center justify-between cursor-pointer ${
+                    filter === 'removed'
+                      ? 'border-zinc-500 ring-1 ring-zinc-500/20'
+                      : 'border-zinc-200/70 dark:border-zinc-700/80 hover:border-zinc-400'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 flex items-center justify-center shrink-0">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="8.5" cy="7" r="4" />
+                        <line x1="18" y1="8" x2="23" y2="13" />
+                        <line x1="23" y1="8" x2="18" y2="13" />
+                      </svg>
+                    </div>
+                    <div>
+                      <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                        Removidos (histórico)
+                      </span>
+                      <strong className="block text-lg font-extrabold text-zinc-900 dark:text-white leading-tight">
+                        {removedCount}
+                      </strong>
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-medium text-zinc-500">
+                    {filter === 'removed' ? 'Exibindo' : 'Ver'}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1998,6 +2127,66 @@ function TeamContent({ slug }: { slug: string }) {
           </div>
         </div>
       </div>
+
+      {/* MODAL DE CONFIRMAÇÃO DE REMOÇÃO / CANCELAMENTO DE CONVITE */}
+      {confirmRemovalModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-removal-title"
+        >
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-zinc-200 dark:border-zinc-800 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 flex items-center justify-center shrink-0">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 id="confirm-removal-title" className="text-base font-bold text-zinc-900 dark:text-white">
+                  {confirmRemovalModal.isPendingInvite
+                    ? 'Cancelar convite da equipe'
+                    : 'Remover colaborador da equipe'}
+                </h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 truncate">
+                  {confirmRemovalModal.member.name} ({confirmRemovalModal.member.email})
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-600 dark:text-zinc-300 leading-relaxed">
+              {confirmRemovalModal.isPendingInvite
+                ? 'Esta ação cancela e invalida o link de convite gerado. O destinatário não poderá mais aceitar o convite para este restaurante.'
+                : 'Esta ação remove o vínculo do colaborador com este restaurante e o oculta da lista da equipe. A conta de acesso global e todo o histórico anterior de comandas, pedidos e atendimentos serão preservados.'}
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setConfirmRemovalModal(null)}
+                disabled={busy}
+                className="px-4 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 cursor-pointer disabled:opacity-50"
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmRemoval(confirmRemovalModal.member)}
+                disabled={busy}
+                className="bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {busy
+                  ? 'Removendo...'
+                  : confirmRemovalModal.isPendingInvite
+                    ? 'Cancelar convite'
+                    : 'Remover da equipe'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL DE TRANSFERÊNCIA DE ATENDIMENTOS (AO DESATIVAR MEMBRO COM ATENDIMENTOS) */}
       {transferModal && (

@@ -95,3 +95,26 @@ export const acceptInvite = (token: string) =>
     slug: string;
     role: StaffRole;
   }>('accept_staff_invitation', { p_token: token });
+
+export async function removeMember(slug: string, member: TeamMember, email: string | null): Promise<void> {
+  try {
+    await teamRpc('remove_staff_member', { p_slug: slug, p_id: member.id });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('42883') || msg.includes('does not exist') || msg.includes('não encontrada')) {
+      if (member.active) {
+        await updateMember(slug, member, member.role, false);
+      }
+      if (email) {
+        try {
+          await staffProfileApi.remove(slug, email);
+        } catch {
+          // perfil já removido ou inexistente
+        }
+      }
+      return;
+    }
+    throw err;
+  }
+}
+

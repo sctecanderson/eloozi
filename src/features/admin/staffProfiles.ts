@@ -187,14 +187,34 @@ export function summarizeOutcome(steps: OutcomeStep[], reloaded: boolean): Outco
     parts.push(`Estas etapas são chamadas separadas e não atômicas, por isso o resultado pode ser parcial. ${tail}`);
     return { kind: ok.length > 0 ? 'partial' : 'failure', message: parts.join(' ') };
 }
-export type StaffAccessState = 'access_active' | 'access_inactive' | 'invite_pending' | 'profile_saved';
+export type StaffAccessState = 'access_active' | 'access_inactive' | 'invite_pending' | 'profile_saved' | 'removed';
+
+/**
+ * Determina se um registro de membro representa um vínculo removido da equipe.
+ * Quando o vínculo em restaurant_members está desativado (active = false) e não há
+ * mais perfil cadastrado em staff_profiles para este restaurante, o colaborador
+ * foi removido da equipe. O registro de vínculo é mantido exclusivamente para
+ * garantir a integridade referencial do histórico de comandas e atendimentos.
+ */
+export function isStaffMemberRemoved(m: { active: boolean; hasProfile?: boolean; isInvitePending?: boolean }): boolean {
+    if (m.isInvitePending) return false;
+    return !m.active && !m.hasProfile;
+}
 
 /**
  * Estado real exibido ao administrador. "Acesso" só existe com vínculo em
  * restaurant_members (convite aceito); o perfil complementar sozinho não dá acesso.
  */
-export function staffAccessState(m: { memberId?: string; inviteId?: string; active: boolean }): StaffAccessState {
-    if (m.memberId) return m.active ? 'access_active' : 'access_inactive';
+export function staffAccessState(m: {
+    memberId?: string;
+    inviteId?: string;
+    active: boolean;
+    hasProfile?: boolean;
+}): StaffAccessState {
+    if (m.memberId) {
+        if (!m.active && m.hasProfile === false) return 'removed';
+        return m.active ? 'access_active' : 'access_inactive';
+    }
     if (m.inviteId) return 'invite_pending';
     return 'profile_saved';
 }
@@ -204,4 +224,5 @@ export const STAFF_ACCESS_LABEL: Record<StaffAccessState, string> = {
     access_inactive: 'Acesso inativo',
     invite_pending: 'Convite pendente',
     profile_saved: 'Perfil salvo (sem convite nem acesso)',
+    removed: 'Vínculo removido (histórico preservado)',
 };

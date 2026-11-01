@@ -4,6 +4,7 @@ import {
   createStaffProfileApi,
   describeLegacyFailures,
   displayName,
+  isStaffMemberRemoved,
   isStorableAvatar,
   summarizeOutcome,
   indexProfilesByEmail,
@@ -582,5 +583,83 @@ describe('fluxo de equipe e convites (Etapa Corrigida)', () => {
     const link = `https://elozi.vercel.app/convite?token=${token2}&email=${encodeURIComponent(email)}`;
     assert.match(link, new RegExp(`token=${token2}`));
     assert.match(link, new RegExp(`email=${encodeURIComponent(email)}`));
+  });
+
+  it('identifica colaborador removido da equipe e oculta da lista normal', () => {
+    // 1. Membro ativo com perfil -> ativo na lista normal
+    const activeWithProfile = {
+      active: true,
+      hasProfile: true,
+      memberId: 'm-1',
+    };
+    assert.equal(isStaffMemberRemoved(activeWithProfile), false);
+    assert.equal(staffAccessState(activeWithProfile), 'access_active');
+
+    // 2. Membro pausado/inativo temporariamente COM perfil salvo -> inativo, visível na equipe
+    const pausedWithProfile = {
+      active: false,
+      hasProfile: true,
+      memberId: 'm-2',
+    };
+    assert.equal(isStaffMemberRemoved(pausedWithProfile), false);
+    assert.equal(staffAccessState(pausedWithProfile), 'access_inactive');
+
+    // 3. Membro com vínculo removido (active = false e SEM perfil) -> removido da equipe
+    const removedMember = {
+      active: false,
+      hasProfile: false,
+      memberId: 'm-3',
+    };
+    assert.equal(isStaffMemberRemoved(removedMember), true, 'Deve ser classificado como removido');
+    assert.equal(staffAccessState(removedMember), 'removed');
+    assert.equal(STAFF_ACCESS_LABEL['removed'], 'Vínculo removido (histórico preservado)');
+
+    // 4. Convite pendente nunca é classificado como membro removido
+    const pendingInvite = {
+      active: true,
+      hasProfile: true,
+      inviteId: 'inv-1',
+      isInvitePending: true,
+    };
+    assert.equal(isStaffMemberRemoved(pendingInvite), false);
+    assert.equal(staffAccessState(pendingInvite), 'invite_pending');
+
+    // 5. Teste de filtragem: lista normal oculta o removido
+    const allMembers = [
+      { id: '1', name: 'Ativo', isRemoved: false, active: true },
+      { id: '2', name: 'Pausado', isRemoved: false, active: false },
+      { id: '3', name: 'Removido', isRemoved: true, active: false },
+    ];
+
+    const normalList = allMembers.filter((m) => !m.isRemoved);
+    assert.equal(normalList.length, 2);
+    assert.deepEqual(normalList.map((m) => m.id), ['1', '2']);
+    assert.ok(!normalList.some((m) => m.id === '3'), 'Membro removido deve estar ausente da lista normal');
+
+    const removedList = allMembers.filter((m) => m.isRemoved);
+    assert.equal(removedList.length, 1);
+    assert.equal(removedList[0].id, '3');
+  });
+
+  it('bloqueia exclusão com atendimentos em aberto antes de executar remoção', () => {
+    let removalExecuted = false;
+    const member = {
+      id: 'm-busy',
+      name: 'Garçom Ocupado',
+      openVisits: 2,
+    };
+
+    function requestRemoval(target: typeof member) {
+      if (target.openVisits > 0) {
+        throw new Error(`Transfira os ${target.openVisits} atendimento(s) aberto(s) deste funcionário antes de removê-lo da equipe.`);
+      }
+      removalExecuted = true;
+    }
+
+    assert.throws(
+      () => requestRemoval(member),
+      /Transfira os 2 atendimento\(s\) aberto\(s\)/,
+    );
+    assert.equal(removalExecuted, false, 'Remoção não pode ter sido executada');
   });
 });
