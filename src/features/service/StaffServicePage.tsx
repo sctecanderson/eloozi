@@ -1334,7 +1334,7 @@ function StaffSalonManager({
                                                 <div key={res.id} className="flex items-center justify-between p-2 rounded-xl bg-white/70 dark:bg-zinc-800/70 border border-purple-100 dark:border-purple-900/50">
                                                     <div>
                                                         <span className="font-bold text-zinc-900 dark:text-zinc-100">{res.customerName}</span>
-                                                        <span className="text-zinc-500 text-[11px] ml-2">({res.time} • {res.guestsCount}p)</span>
+                                                        <span className="text-zinc-500 text-[11px] ml-2 dark:text-zinc-300">({res.time} • {res.guestsCount}p)</span>
                                                     </div>
                                                     <button
                                                         type="button"
@@ -1496,7 +1496,7 @@ function StaffSalonManager({
                                         <h4 className="font-extrabold text-sm text-zinc-900 dark:text-white leading-snug">
                                             Como o cliente encontra o código?
                                         </h4>
-                                        <p className="text-xs text-zinc-500 mt-1.5 leading-relaxed">
+                                        <p className="text-xs text-zinc-500 mt-1.5 leading-relaxed dark:text-zinc-300">
                                             O cliente escaneia o QR Code da mesa e um código de 6 dígitos é gerado automaticamente.
                                         </p>
                                     </div>
@@ -1517,7 +1517,7 @@ function StaffSalonManager({
                                     onClick={() => setSearchParams({})}
                                     className="inline-flex items-center gap-1.5 text-xs font-bold text-zinc-700 dark:text-zinc-200 hover:text-zinc-900 transition-colors py-1 cursor-pointer"
                                 >
-                                    <svg className="w-4 h-4 text-zinc-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                    <svg className="w-4 h-4 text-zinc-500 dark:text-zinc-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                                         <polyline points="15 18 9 12 15 6" />
                                     </svg>
                                     Voltar

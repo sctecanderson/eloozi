@@ -9,6 +9,8 @@ import {
   getStaffAccess,
   type StaffAccess,
 } from './staffAuth';
+import { getAccessCheckFailureMessage } from './staffAuthErrors';
+import { createRefreshCoalescer } from '../../lib/refreshCoalescer';
 
 type AccessState =
   | { status: 'loading' }
@@ -60,9 +62,10 @@ function StaffGate({
           await supabase.auth.getSession();
 
         if (error) {
-          throw new Error(
+          throw new Error(getAccessCheckFailureMessage(
+            error,
             'Não foi possível verificar sua sessão.',
-          );
+          ));
         }
 
         const access = data.session
@@ -99,11 +102,17 @@ function StaffGate({
       }
     }
 
+    const refreshQueue = createRefreshCoalescer(verifyAccess, 150);
+
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
         if (disposed) return;
+
+        // Renovação do token mantém a mesma identidade; a validação periódica
+        // confirma o vínculo sem repetir consultas a cada refresh de sessão.
+        if (event === 'TOKEN_REFRESHED') return;
 
         // Invalidar verificações anteriores.
         generation++;
@@ -118,14 +127,13 @@ function StaffGate({
 
         // Consultar fora do callback de autenticação.
         timer = setTimeout(() => {
-          void verifyAccess();
+          void refreshQueue.request();
         }, 0);
       },
     );
 
-    void verifyAccess();
     function refreshAccess() {
-      if (!document.hidden) void verifyAccess();
+      if (!document.hidden) void refreshQueue.request();
     }
     const interval = window.setInterval(refreshAccess, 30_000);
     document.addEventListener('visibilitychange', refreshAccess);
@@ -134,6 +142,7 @@ function StaffGate({
     return () => {
       disposed = true;
       generation++;
+      refreshQueue.dispose();
       clearTimeout(timer);
       subscription.unsubscribe();
       window.clearInterval(interval);

@@ -1,5 +1,22 @@
 import { supabase } from '../../lib/supabase';
 import { clearOperationalContext } from '../service/staffOperationalContext';
+import {
+  executePasswordUpdateWithClient,
+  getAccessCheckFailureMessage,
+  inspectUserPasswordCapabilities,
+  type AuthPasswordCapabilities,
+  type PasswordAuthClient,
+  type UpdatePasswordOptions,
+  type UpdatePasswordResult,
+} from './staffAuthErrors';
+
+export {
+  inspectUserPasswordCapabilities,
+  type AuthPasswordCapabilities,
+  type PasswordAuthClient,
+  type UpdatePasswordOptions,
+  type UpdatePasswordResult,
+};
 
 export interface StaffAccess {
   memberId: string;
@@ -18,9 +35,10 @@ export async function getStaffAccess(
   } = await supabase.auth.getUser();
 
   if (userError) {
-    throw new Error(
+    throw new Error(getAccessCheckFailureMessage(
+      userError,
       'Não foi possível verificar sua sessão. Entre novamente.',
-    );
+    ));
   }
 
   if (!user || user.is_anonymous) {
@@ -38,9 +56,10 @@ export async function getStaffAccess(
     .maybeSingle();
 
   if (restaurantError) {
-    throw new Error(
+    throw new Error(getAccessCheckFailureMessage(
+      restaurantError,
       'Não foi possível consultar o restaurante. Tente novamente.',
-    );
+    ));
   }
 
   if (!restaurant) {
@@ -59,9 +78,10 @@ export async function getStaffAccess(
     .maybeSingle();
 
   if (memberError) {
-    throw new Error(
+    throw new Error(getAccessCheckFailureMessage(
+      memberError,
       'Não foi possível verificar seu acesso. Tente novamente.',
-    );
+    ));
   }
 
   if (
@@ -108,9 +128,8 @@ export async function signInStaff(
   });
 
   if (error) {
-    throw new Error(
-      'Não foi possível entrar. Confira e-mail e senha e tente novamente.',
-    );
+    // Repassa o erro original (código/status) para a tradução em staffAuthErrors.
+    throw error;
   }
 
   return getStaffAccess(restaurantSlug);
@@ -128,3 +147,17 @@ export async function signOutStaff(): Promise<void> {
     );
   }
 }
+
+/**
+ * Define ou altera a senha da conta autenticada usando exclusivamente os métodos oficiais
+ * do Supabase Auth (`getSession`, `signInWithPassword` quando reautenticação for necessária, e `updateUser`).
+ * Só confirma `updated: true` quando o servidor confirma a atualização do usuário.
+ */
+export async function updateAuthenticatedUserPassword(
+  options: UpdatePasswordOptions,
+  authClient: PasswordAuthClient = supabase.auth,
+): Promise<UpdatePasswordResult> {
+  return executePasswordUpdateWithClient(options, authClient);
+}
+
+

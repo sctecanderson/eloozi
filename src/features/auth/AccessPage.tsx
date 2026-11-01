@@ -8,6 +8,10 @@ import {
   signOutStaff,
   type StaffAccess,
 } from "./staffAuth";
+import {
+  getStaffLoginErrorMessage,
+  getStaffRecoverySuccessMessage,
+} from "./staffAuthErrors";
 
 export function AccessPage() {
   const { restaurantSlug = "" } = useParams();
@@ -87,9 +91,9 @@ function StaffLogin({ restaurantSlug }: { restaurantSlug: string }) {
       });
       if (resetErr) throw resetErr;
       setRecoverySent(true);
-      setRecoveryNotice(`Enviamos um link de recuperação para ${email.trim()}. Verifique sua caixa de entrada e a pasta de spam.`);
+      setRecoveryNotice(getStaffRecoverySuccessMessage(email));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Não foi possível enviar o e-mail de recuperação.');
+      setError(getStaffLoginErrorMessage(cause));
     } finally {
       setBusy(false);
     }
@@ -116,11 +120,7 @@ function StaffLogin({ restaurantSlug }: { restaurantSlug: string }) {
       setAccess(staffAccess);
     } catch (cause) {
       setPassword("");
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Não foi possível entrar. Tente novamente.",
-      );
+      setError(getStaffLoginErrorMessage(cause));
     } finally {
       setBusy(false);
     }

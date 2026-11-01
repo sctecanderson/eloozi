@@ -1,7 +1,17 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router';
-import type { StaffAccess } from '../auth/staffAuth';
-import { signOutStaff, updateStaffDisplayName } from '../auth/staffAuth';
+import type { StaffAccess, AuthPasswordCapabilities } from '../auth/staffAuth';
+import {
+  inspectUserPasswordCapabilities,
+  signOutStaff,
+  updateAuthenticatedUserPassword,
+  updateStaffDisplayName,
+} from '../auth/staffAuth';
+import {
+  getStaffInvitationErrorMessage,
+  MIN_NEW_PASSWORD_LENGTH,
+  validateNewPassword,
+} from '../auth/staffAuthErrors';
 import { useTheme } from '../theme/ThemeContext';
 import { isSoundEnabled, toggleSoundEnabled } from '../../lib/soundAlerts';
 import { supabase } from '../../lib/supabase';
@@ -40,6 +50,35 @@ export function StaffMaisPage() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Estados da seção Segurança -> Alterar senha
+  const [capabilities, setCapabilities] = useState<AuthPasswordCapabilities>({
+    hasEmailIdentity: false,
+    hasGoogleIdentity: false,
+  });
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [needsCurrentPassword, setNeedsCurrentPassword] = useState(false);
+  const [updatingPassword, setUpdatingPassword] = useState(false);
+  const [passwordFeedback, setPasswordFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const actingPassword = useRef(false);
+
+  const clearPasswordFields = useCallback(() => {
+    setNewPassword('');
+    setConfirmPassword('');
+    setCurrentPassword('');
+  }, []);
+
+  const closePasswordForm = useCallback(() => {
+    setShowPasswordForm(false);
+    setNeedsCurrentPassword(false);
+    clearPasswordFields();
+  }, [clearPasswordFields]);
+
   // Carregar dados de autenticação e restaurante
   useEffect(() => {
     let active = true;
@@ -51,6 +90,7 @@ export function StaffMaisPage() {
           if (data.user.email) setEmail(data.user.email);
           const metaName = (data.user.user_metadata?.full_name as string) || (data.user.user_metadata?.name as string) || '';
           if (metaName) setFullName(metaName);
+          setCapabilities(inspectUserPasswordCapabilities(data.user));
         }
 
         if (active && access?.memberId) {
@@ -149,6 +189,73 @@ export function StaffMaisPage() {
       setLoggingOut(false);
       setShowLogoutModal(false);
       setToastMessage('Falha ao encerrar a sessão. Tente novamente.');
+    }
+  }
+
+  // Alterar senha da conta autenticada
+  async function handleUpdatePassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (actingPassword.current || updatingPassword) return;
+
+    const check = validateNewPassword(newPassword, confirmPassword);
+    if (!check.valid) {
+      setPasswordFeedback({
+        type: 'error',
+        message: check.error || 'Confira a nova senha e a confirmação.',
+      });
+      return;
+    }
+
+    if (needsCurrentPassword && capabilities.hasEmailIdentity && !currentPassword) {
+      setPasswordFeedback({
+        type: 'error',
+        message: 'Informe sua senha atual para confirmar a alteração.',
+      });
+      return;
+    }
+
+    actingPassword.current = true;
+    setUpdatingPassword(true);
+    setPasswordFeedback(null);
+
+    try {
+      const res = await updateAuthenticatedUserPassword({
+        newPassword,
+        confirmPassword,
+        currentPassword: currentPassword || undefined,
+      });
+
+      if (res.requiresCurrentPassword) {
+        setNeedsCurrentPassword(true);
+        clearPasswordFields();
+        if (capabilities.hasGoogleIdentity && !capabilities.hasEmailIdentity) {
+          setPasswordFeedback({
+            type: 'error',
+            message: 'Sua sessão precisa ser renovada antes de definir uma senha. Saia e entre novamente.',
+          });
+        } else {
+          setPasswordFeedback({
+            type: 'error',
+            message: 'Por segurança, informe sua senha atual para concluir a alteração.',
+          });
+        }
+        return;
+      }
+
+      closePasswordForm();
+      setPasswordFeedback({
+        type: 'success',
+        message: 'Senha atualizada com sucesso!',
+      });
+    } catch (err) {
+      clearPasswordFields();
+      setPasswordFeedback({
+        type: 'error',
+        message: getStaffInvitationErrorMessage(err),
+      });
+    } finally {
+      actingPassword.current = false;
+      setUpdatingPassword(false);
     }
   }
 
@@ -441,6 +548,155 @@ export function StaffMaisPage() {
             </button>
           </div>
         </div>
+      </div>
+
+      {/* 4b. Card Segurança */}
+      <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-stone-200/80 dark:border-zinc-800 p-4 shadow-sm space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-full bg-[#FAF3ED] dark:bg-zinc-800 text-[#8A3A1B] dark:text-amber-400 flex items-center justify-center shrink-0">
+              {/* Ícone Cadeado */}
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                Segurança
+              </h3>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                {capabilities.hasGoogleIdentity && !capabilities.hasEmailIdentity
+                  ? 'Conta vinculada ao Google. Você pode definir uma senha para entrar também com e-mail.'
+                  : 'Gerencie a senha de acesso da sua conta.'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            disabled={updatingPassword}
+            onClick={() => {
+              setPasswordFeedback(null);
+              if (showPasswordForm) {
+                closePasswordForm();
+              } else {
+                setShowPasswordForm(true);
+              }
+            }}
+            className="px-3.5 py-2 rounded-xl border border-stone-300 dark:border-zinc-700 text-xs font-bold text-zinc-800 dark:text-zinc-200 hover:bg-stone-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer shrink-0"
+          >
+            {showPasswordForm ? 'Cancelar' : 'Alterar senha'}
+          </button>
+        </div>
+
+        {passwordFeedback && (
+          <p
+            role={passwordFeedback.type === 'error' ? 'alert' : 'status'}
+            className={`text-xs font-semibold px-3 py-2 rounded-lg border animate-in fade-in duration-200 ${
+              passwordFeedback.type === 'success'
+                ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800'
+            }`}
+          >
+            {passwordFeedback.message}
+          </p>
+        )}
+
+        {showPasswordForm && (
+          <form onSubmit={handleUpdatePassword} className="space-y-3 pt-2 border-t border-stone-100 dark:border-zinc-800/80">
+            <fieldset disabled={updatingPassword} className="space-y-3">
+              {needsCurrentPassword && capabilities.hasEmailIdentity && (
+                <div>
+                  <label
+                    htmlFor="staff-mais-current-password"
+                    className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1"
+                  >
+                    Senha atual
+                  </label>
+                  <input
+                    id="staff-mais-current-password"
+                    type="password"
+                    required
+                    autoComplete="current-password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Digite sua senha atual"
+                    className="w-full rounded-xl border border-stone-300 dark:border-zinc-700 bg-stone-50/50 dark:bg-zinc-800/50 px-3.5 py-2.5 text-sm font-medium text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#8A3A1B]/30 focus:border-[#8A3A1B]"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="staff-mais-new-password"
+                    className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1"
+                  >
+                    Nova senha
+                  </label>
+                  <input
+                    id="staff-mais-new-password"
+                    type="password"
+                    required
+                    minLength={MIN_NEW_PASSWORD_LENGTH}
+                    autoComplete="new-password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder={`Mínimo de ${MIN_NEW_PASSWORD_LENGTH} caracteres`}
+                    className="w-full rounded-xl border border-stone-300 dark:border-zinc-700 bg-stone-50/50 dark:bg-zinc-800/50 px-3.5 py-2.5 text-sm font-medium text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#8A3A1B]/30 focus:border-[#8A3A1B]"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="staff-mais-confirm-password"
+                    className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1"
+                  >
+                    Confirmar nova senha
+                  </label>
+                  <input
+                    id="staff-mais-confirm-password"
+                    type="password"
+                    required
+                    minLength={MIN_NEW_PASSWORD_LENGTH}
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Repita a nova senha"
+                    className="w-full rounded-xl border border-stone-300 dark:border-zinc-700 bg-stone-50/50 dark:bg-zinc-800/50 px-3.5 py-2.5 text-sm font-medium text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#8A3A1B]/30 focus:border-[#8A3A1B]"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={closePasswordForm}
+                  disabled={updatingPassword}
+                  className="px-4 py-2 rounded-xl border border-stone-300 dark:border-zinc-700 text-xs font-bold text-zinc-700 dark:text-zinc-300 hover:bg-stone-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                >
+                  Fechar
+                </button>
+                <button
+                  type="submit"
+                  disabled={updatingPassword}
+                  className="px-4 py-2 rounded-xl bg-[#7C2D12] hover:bg-[#6A260F] text-white text-xs font-bold transition-all disabled:opacity-40 cursor-pointer shadow-xs"
+                >
+                  {updatingPassword ? 'Salvando senha...' : 'Salvar nova senha'}
+                </button>
+              </div>
+            </fieldset>
+          </form>
+        )}
       </div>
 
       {/* 5. Card Ações da Conta */}

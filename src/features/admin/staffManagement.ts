@@ -24,53 +24,34 @@ export interface TeamState {
     invitations: TeamInvite[];
 }
 
-export interface StaffExtendedProfile {
-    id: string;
-    name: string;
-    email: string;
-    phone: string;
-    cpf: string;
-    birthDate: string;
-    avatarUrl?: string;
-    cargo: string;
-    active: boolean;
-    permissions: string[];
-    createdAt: string;
-}
+import {
+    createStaffProfileApi,
+    LEGACY_PROFILES_STORAGE_KEY,
+    normalizeEmail,
+    type StaffExtendedProfile,
+} from './staffProfiles';
 
-const PROFILES_STORAGE_KEY = 'elozi_staff_profiles_';
+export type { StaffExtendedProfile };
 
-export function getStoredStaffProfiles(slug: string): Record<string, StaffExtendedProfile> {
+/**
+ * Remove do localStorage antigo apenas os perfis j� confirmados no servidor.
+ * Nunca registra dados pessoais em log.
+ */
+export function clearMigratedLegacyProfiles(slug: string, migratedEmails: string[]): void {
     try {
-        const raw = localStorage.getItem(`${PROFILES_STORAGE_KEY}${slug}`);
-        if (!raw) return {};
-        return JSON.parse(raw);
-    } catch {
-        return {};
-    }
-}
-
-export function saveStoredStaffProfile(slug: string, profile: StaffExtendedProfile): void {
-    try {
-        const map = getStoredStaffProfiles(slug);
-        map[profile.id] = profile;
-        if (profile.email) {
-            map[profile.email.toLowerCase()] = profile;
+        const key = `${LEGACY_PROFILES_STORAGE_KEY}${slug}`;
+        const raw = localStorage.getItem(key);
+        if (!raw) return;
+        const done = new Set(migratedEmails.map(normalizeEmail));
+        const map = JSON.parse(raw) as Record<string, StaffExtendedProfile>;
+        const kept: Record<string, StaffExtendedProfile> = {};
+        for (const [k, p] of Object.entries(map)) {
+            if (!done.has(normalizeEmail(p?.email))) kept[k] = p;
         }
-        localStorage.setItem(`${PROFILES_STORAGE_KEY}${slug}`, JSON.stringify(map));
-    } catch (e) {
-        console.error('Falha ao salvar perfil local do funcionário:', e);
-    }
-}
-
-export function deleteStoredStaffProfile(slug: string, idOrEmail: string): void {
-    try {
-        const map = getStoredStaffProfiles(slug);
-        delete map[idOrEmail];
-        delete map[idOrEmail.toLowerCase()];
-        localStorage.setItem(`${PROFILES_STORAGE_KEY}${slug}`, JSON.stringify(map));
-    } catch (e) {
-        console.error('Falha ao remover perfil local do funcionário:', e);
+        if (Object.keys(kept).length === 0) localStorage.removeItem(key);
+        else localStorage.setItem(key, JSON.stringify(kept));
+    } catch {
+        // falha ao limpar o cache antigo n�o afeta os dados do servidor
     }
 }
 
@@ -80,6 +61,8 @@ export async function teamRpc<T>(name: string, values: Record<string, unknown>):
         throw new Error(['42501', '22023', '55000'].includes(error.code) ? error.message : 'Não foi possível atualizar a equipe. Confira a conexão e a migration.');
     return data as T;
 }
+
+export const staffProfileApi = createStaffProfileApi(teamRpc);
 
 export const getTeam = (slug: string) => teamRpc<TeamState>('get_staff_management', { p_slug: slug });
 

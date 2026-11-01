@@ -38,7 +38,7 @@ function operationError(error: { code?: string; message: string }, fallback: str
   );
 }
 
-interface TabConsumptionState {
+export interface TabConsumptionState {
   products: ConsumptionProduct[];
   items: TabConsumptionItem[];
   totalInCents: number;
@@ -144,6 +144,34 @@ export async function getTabConsumption(
 
   // A RPC retorna JSON. Validamos o conteúdo antes de atribuir o tipo.
   return parseTabConsumption(data, restaurantId, tableTabId);
+}
+
+/** Loads every RLS-visible open tab in one visit snapshot without repeating the product catalog. */
+export async function getVisitTabConsumptions(
+  restaurantId: string,
+  tableVisitId: string,
+): Promise<Record<string, TabConsumptionState>> {
+  const { data, error } = await supabase.rpc('get_visit_tab_consumptions', {
+    p_restaurant_id: restaurantId,
+    p_table_visit_id: tableVisitId,
+  });
+
+  if (error) throw new Error('Não foi possível carregar os consumos da mesa. Tente novamente.');
+  if (!Array.isArray(data)) throw new Error('O servidor retornou os consumos da mesa em formato inválido.');
+
+  const result: Record<string, TabConsumptionState> = {};
+  for (const entry of data) {
+    if (!isRecord(entry) || typeof entry.tableTabId !== 'string' || Object.hasOwn(result, entry.tableTabId)) {
+      throw new Error('O servidor retornou uma lista de comandas inválida.');
+    }
+    const parsed = parseTabConsumption({
+      products: [],
+      items: entry.items,
+      totalInCents: entry.totalInCents,
+    }, restaurantId, entry.tableTabId);
+    result[entry.tableTabId] = parsed;
+  }
+  return result;
 }
 
 export async function addTabConsumption(

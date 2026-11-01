@@ -1,3 +1,4 @@
+import { ModuleGate } from "../features/restaurants/ModuleAccess";
 import { useEffect, lazy, Suspense, type CSSProperties } from "react";
 import {
   Link,
@@ -269,11 +270,12 @@ function RestaurantLayout() {
 function StaffBottomNav({ restaurantSlug }: { restaurantSlug: string }) {
   const { totalPendingCount } = useStaffChamados();
   const location = useLocation();
+  const { restaurant } = useRestaurant();
 
   const getNavLinkClass = (isActive: boolean) =>
-    `flex flex-col items-center justify-center gap-1 py-1.5 px-2 sm:px-3 rounded-2xl transition-all cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#4A1505] dark:focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#FCF9F5] dark:focus-visible:ring-offset-zinc-900 active:scale-[0.96] aria-disabled:opacity-40 aria-disabled:cursor-not-allowed ${
+    `flex flex-col items-center justify-center gap-1 py-1.5 px-2 sm:px-3 rounded-full transition-all cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#4A1505] dark:focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#FCF9F5] dark:focus-visible:ring-offset-zinc-900 active:scale-[0.96] aria-disabled:opacity-40 aria-disabled:cursor-not-allowed ${
       isActive
-        ? 'bg-[#FAF4EE] dark:bg-zinc-800 text-[#4A1505] dark:text-white font-bold shadow-xs dark:ring-1 dark:ring-white/20 active:bg-[#F3EBE1] dark:active:bg-zinc-700/80'
+        ? 'font-bold shadow-xs'
         : 'text-zinc-600 dark:text-zinc-100 font-medium hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60 active:bg-zinc-200/50 dark:active:bg-zinc-800/80 dark:active:text-white'
     }`;
 
@@ -281,25 +283,25 @@ function StaffBottomNav({ restaurantSlug }: { restaurantSlug: string }) {
     location.pathname === `/${restaurantSlug}/equipe` &&
     !location.search.includes('mesa');
 
-  const isComandasActive =
-    location.pathname.includes('/comandas') ||
-    (location.pathname === `/${restaurantSlug}/equipe` && location.search.includes('mesa'));
-
-  const isChamadosActive = location.pathname.includes('/chamados');
-
   const isMaisActive =
     location.pathname.includes('/mais') ||
     location.pathname.includes('/perfil') ||
     location.pathname.includes('/historico');
 
+  const isComandasActive = !isMaisActive && (
+    location.pathname.includes('/comandas') ||
+    (location.pathname === `/${restaurantSlug}/equipe` && location.search.includes('mesa')));
+
+  const isChamadosActive = !isMaisActive && location.pathname.includes('/chamados');
+  // Link keeps aria-current tied to these existing rules, including ?mesa.
+
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 flex justify-center pointer-events-none" aria-label="Navegação da equipe">
+    <nav style={{ "--staff-active-bg": "#501600", "--staff-active-fg": "#ffffff" } as CSSProperties} className="staff-bottom-nav fixed bottom-0 left-0 right-0 z-40 flex justify-center pointer-events-none" aria-label="Navegação da equipe">
       <div className="w-full max-w-md md:max-w-lg px-2 sm:px-4 pb-3 pointer-events-auto">
         <div className="bg-[#FCF9F5]/95 dark:bg-zinc-900/95 backdrop-blur-md rounded-3xl border border-amber-900/10 dark:border-zinc-800 shadow-lg dark:shadow-2xl dark:shadow-black/60 py-2 sm:py-2.5 px-1.5 sm:px-3 flex items-center justify-around">
           {/* 1. Atendimento */}
-          <NavLink
+          <Link
             to={`/${restaurantSlug}/equipe`}
-            end
             className={getNavLinkClass(isAtendimentoActive)}
             aria-current={isAtendimentoActive ? 'page' : undefined}
           >
@@ -309,10 +311,10 @@ function StaffBottomNav({ restaurantSlug }: { restaurantSlug: string }) {
               <path d="M2 20h20" />
             </svg>
             <span className="text-[11px] leading-tight">Atendimento</span>
-          </NavLink>
+          </Link>
 
           {/* 2. Comandas */}
-          <NavLink
+          <Link
             to={`/${restaurantSlug}/equipe/comandas`}
             className={getNavLinkClass(isComandasActive)}
             aria-current={isComandasActive ? 'page' : undefined}
@@ -324,10 +326,10 @@ function StaffBottomNav({ restaurantSlug }: { restaurantSlug: string }) {
               <line x1="16" y1="17" x2="8" y2="17" />
             </svg>
             <span className="text-[11px] leading-tight">Comandas</span>
-          </NavLink>
+          </Link>
 
           {/* 3. Chamados com Badge Vermelho */}
-          <NavLink
+          <Link
             to={`/${restaurantSlug}/equipe/chamados`}
             className={getNavLinkClass(isChamadosActive)}
             aria-current={isChamadosActive ? 'page' : undefined}
@@ -347,10 +349,10 @@ function StaffBottomNav({ restaurantSlug }: { restaurantSlug: string }) {
               )}
             </div>
             <span className="text-[11px] leading-tight">Chamados</span>
-          </NavLink>
+          </Link>
 
           {/* 4. Mais */}
-          <NavLink
+          <Link
             to={`/${restaurantSlug}/equipe/mais`}
             className={getNavLinkClass(isMaisActive)}
             aria-current={isMaisActive ? 'page' : undefined}
@@ -361,7 +363,7 @@ function StaffBottomNav({ restaurantSlug }: { restaurantSlug: string }) {
               <circle cx="5" cy="12" r="1.5" />
             </svg>
             <span className="text-[11px] leading-tight">Mais</span>
-          </NavLink>
+          </Link>
         </div>
       </div>
     </nav>
@@ -372,7 +374,7 @@ function StaffBottomNav({ restaurantSlug }: { restaurantSlug: string }) {
     return (
       <StaffCommissionProvider>
         <StaffChamadosProvider restaurantSlug={restaurant.slug} restaurantId={restaurant.id}>
-          <div className="min-h-screen bg-[#FAF6F2] dark:bg-zinc-950 flex justify-center" data-theme={themeMode} style={theme}>
+          <div className="staff-workspace min-h-screen bg-[#FAF6F2] dark:bg-zinc-950 flex justify-center" data-theme={themeMode} style={theme}>
             <a
               href="#content"
               className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 z-50 bg-white p-2 rounded shadow text-xs text-zinc-900"
@@ -657,11 +659,11 @@ export function App() {
             <Route path="admin" element={<AdminLayout />}>
               <Route index element={<AdminOverview />} />
               <Route path="catalogo" element={<AdminCatalogPage />} />
-              <Route path="estoque" element={<InventoryPage />} />
+              <Route path="estoque" element={<ModuleGate module="inventory"><InventoryPage /></ModuleGate>} />
               <Route path="comentarios" element={<AdminCommentsPage />} />
               <Route path="assinatura" element={<SubscriptionBillingPage />} />
-              <Route path="financeiro" element={<FinancialReportPage />} />
-              <Route path="fechamento-caixa" element={<FinancialReportPage />} />
+              <Route path="financeiro" element={<ModuleGate module="finance"><FinancialReportPage /></ModuleGate>} />
+              <Route path="fechamento-caixa" element={<ModuleGate module="finance"><FinancialReportPage /></ModuleGate>} />
               <Route path="identidade" element={<IdentityPage />} />
               <Route path="mesas" element={<TablesPage />} />
               <Route path="midias" element={<MediaMaintenancePage />} />

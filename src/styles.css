@@ -14,6 +14,8 @@
     --color-bg-panel: #ffffff;
     --color-bg-subtle: #f9f6f0;
     --color-border: #ded7cd;
+    --color-control-border: #85786d;
+    --color-focus: #610000;
 }
 
 [data-theme="light"] {
@@ -24,9 +26,12 @@
     --color-bg-panel: #ffffff;
     --color-bg-subtle: #f9f6f0;
     --color-border: #ded7cd;
+    --color-control-border: #85786d;
+    --color-focus: #610000;
 }
 
 [data-theme="dark"] {
+    color: var(--color-text-main);
     color-scheme: dark;
     --color-surface: #1c1815;
     --color-text-main: #f7f3ee;
@@ -35,6 +40,8 @@
     --color-bg-subtle: #2b221d;
     --color-border: rgba(255, 255, 255, 0.15);
     --color-border-subtle: rgba(255, 255, 255, 0.1);
+    --color-control-border: #8c8178;
+    --color-focus: #f4b86a;
 }
 
 * {
@@ -45,8 +52,10 @@ body {
     margin: 0
 }
 
-a {
-    color: inherit
+/* Resets belong below utilities in the cascade; otherwise every colored NavLink
+   inherits the light root color even when dark:text-* is present. */
+@layer base {
+    a { color: inherit; }
 }
 
 button,
@@ -7940,6 +7949,67 @@ footer a {
     color: #ded6cc !important;
 }
 
+/* Shared staff/admin readability. Use existing warm surfaces and foregrounds;
+   primary red actions retain their own backgrounds and foregrounds. */
+.staff-workspace { color: var(--color-text-main); }
+/* Native keyboard/checkbox behavior, with the existing rounded switch pattern. */
+.contact-channel-switch {
+    appearance: none;
+    position: relative;
+    flex-shrink: 0;
+    width: 2.75rem;
+    height: 1.5rem;
+    margin: 0;
+    border: 2px solid var(--color-control-border);
+    border-radius: 999px;
+    background: var(--color-bg-subtle);
+    cursor: pointer;
+}
+.contact-channel-switch::before {
+    content: '';
+    display: block;
+    width: 1rem;
+    height: 1rem;
+    margin: 2px;
+    border-radius: 50%;
+    background: var(--color-text-main);
+    transition: transform 150ms;
+}
+.contact-channel-switch:checked { background: var(--brand, #610000); }
+.contact-channel-switch:checked::before { background: #fff; transform: translateX(1.25rem); }
+.contact-channel-switch:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
+.contact-channel-switch:disabled { opacity: .55; cursor: not-allowed; }
+.staff-bottom-nav a[aria-current="page"] {
+    background-color: var(--staff-active-bg, var(--brand));
+    color: var(--staff-active-fg, #fff);
+}
+.staff-bottom-nav a[aria-current="page"]:hover {
+    background-color: var(--staff-active-bg, var(--brand));
+    color: var(--staff-active-fg, #fff);
+}
+.staff-bottom-nav a[aria-current="page"] > span { text-decoration: none; }
+:is([data-theme="light"], [data-theme="dark"]) :is(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
+    select, textarea, .admin-input
+) { border-color: var(--color-control-border); }
+input::placeholder, textarea::placeholder {
+    color: var(--color-text-muted);
+    opacity: 1;
+}
+:is(.staff-workspace, .admin-app) :is(input, select, textarea, button, a):focus-visible {
+    outline: 3px solid var(--color-focus);
+    outline-offset: 3px;
+}
+[data-theme="dark"] :is(.staff-workspace, .admin-app) :is(button:disabled, input:disabled, select:disabled, textarea:disabled),
+[data-theme="dark"].staff-workspace :is(button:disabled, input:disabled, select:disabled, textarea:disabled) {
+    opacity: 1;
+    color: var(--color-text-muted);
+    background-color: var(--color-bg-subtle);
+    border: 1px dashed var(--color-control-border);
+    cursor: not-allowed;
+}
+[data-theme="dark"] .btn-secondary { border-color: var(--color-control-border); }
+
 /* ==========================================================================
    Microanimação: ConfettiBurst (Discreta, 1.2s, acessível)
    ========================================================================== */
@@ -8028,4 +8098,5 @@ footer a {
         break-inside: avoid !important;
         page-break-inside: avoid !important;
     }
-}
+}
+.staff-bottom-nav a[aria-current=page] { min-width: 7rem; border-radius: 999px; box-shadow: 0 3px 9px rgb(80 22 0 / .18); }

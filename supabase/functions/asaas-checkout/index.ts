@@ -8,7 +8,8 @@ serve(async (req: Request) => {
     supabaseAnonKey: Deno.env.get("SUPABASE_ANON_KEY") ?? "",
     supabaseServiceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     asaasApiKey: Deno.env.get("ASAAS_API_KEY") ?? "",
-    asaasBaseUrl: Deno.env.get("ASAAS_BASE_URL") ?? "https://api.asaas.com/v3",
+    asaasBaseUrl: Deno.env.get("ASAAS_BASE_URL") ?? Deno.env.get("ASAAS_API_BASE_URL") ?? "",
+    billingIssuancePaused: Deno.env.get("BILLING_ISSUANCE_PAUSED") === "true",
     createSupabaseClient: (url, key, options) => createClient(url, key, options),
     fetchFn: fetch,
   });

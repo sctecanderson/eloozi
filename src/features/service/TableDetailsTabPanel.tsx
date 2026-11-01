@@ -346,7 +346,7 @@ export function TableDetailsTabPanel({
           <button
             type="button"
             onClick={() => setTransferNotice('')}
-            className="text-amber-700 font-bold ml-2 cursor-pointer"
+            className="text-amber-700 font-bold ml-2 cursor-pointer dark:text-amber-200"
           >
             ✕
           </button>

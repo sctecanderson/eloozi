@@ -1,5 +1,13 @@
+import {readScheduledChange,changeScheduledDowngrade,isLowerPlan,type ScheduledChangeState} from '../billing/scheduledDowngrade';
+import {ScheduledDowngradePanel} from '../billing/ScheduledDowngradePanel';
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import {PlanBanner,SubscriptionPlanCards,CheckoutShell,BillingIcon,ContractTitle,ContractResourceIcon} from '../billing/SubscriptionDesign';
+import {visibleContractPlan,checkoutPeriodLabel,contractDetailResources} from '../billing/subscriptionPresentation';
+import '../billing/current-contract-card.css';
+import {PremiumTrialNote} from '../billing/TrialBanner';
+import {CheckoutFinancialSummary} from '../billing/CheckoutFinancialSummary';
+
 import { supabase } from '../../lib/supabase';
 import { TermsOfUseModal } from '../../components/TermsOfUseModal';
 import { useRestaurant } from '../restaurants/RestaurantProvider';
@@ -10,6 +18,7 @@ import {
   deleteSavedPaymentMethod,
   formatCurrencyBRL,
   detectCardBrand,
+  resolveSubscriptionCatalogView,
   type BillingSummaryResponse,
   type SubscriptionPlanId,
   type BillingCycle,
@@ -41,12 +50,18 @@ function formatCep(val: string): string {
 const PLAN_TITLES: Record<SubscriptionPlanId, string> = {
   basic: 'Plano Básico',
   pro: 'Plano Profissional',
-  premium: 'Plano Premium Enterprise',
+  premium: 'Plano Premium',
 };
 
 export function SubscriptionBillingPage() {
-  const { restaurant: r } = useRestaurant();
+  const { restaurant: r, reload } = useRestaurant();
+  const currentDetails = useRef<HTMLDetailsElement>(null);
+  const [currentDetailsOpen,setCurrentDetailsOpen]=useState(false);
   const [data, setData] = useState<BillingSummaryResponse | null>(null);
+  const [planChange,setPlanChange]=useState<ScheduledChangeState|null>(null);
+  const [downgradeDraft,setDowngradeDraft]=useState<SubscriptionPlanId|null>(null);
+  const [changeBusy,setChangeBusy]=useState(false);
+  const [changeError,setChangeError]=useState<string|null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -75,7 +90,8 @@ export function SubscriptionBillingPage() {
     invoiceId: string;
     planId: SubscriptionPlanId;
     expiresAt: string;
-    maxTables: number;
+    maxTables: number | null;
+    unlimitedTables: boolean;
   } | null>(null);
 
   // Modal de Comprovante / Recibo
@@ -108,8 +124,9 @@ export function SubscriptionBillingPage() {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetchBillingSummary(r.id);
-      setData(res);
+      const [res,scheduled] = await Promise.all([fetchBillingSummary(r.id),readScheduledChange(r.id)]);
+      setData(res);setPlanChange(scheduled);
+      void reload().catch(() => { /* Provider retries its read refresh. */ });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Erro ao buscar dados de faturamento.';
       setError(msg);
@@ -122,6 +139,8 @@ export function SubscriptionBillingPage() {
     void loadData();
   }, [r.id]);
 
+  useEffect(()=>{if(downgradeDraft){const panel=document.getElementById('scheduled-downgrade');panel?.scrollIntoView({behavior:'smooth',block:'center'});panel?.querySelector<HTMLButtonElement>('button')?.focus({preventScroll:true});}},[downgradeDraft]);
+
   // Fechar menu de cartão ao clicar fora
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -133,7 +152,33 @@ export function SubscriptionBillingPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleOpenCheckout = (planId: SubscriptionPlanId, selectedCycle: BillingCycle) => {
+  const [scheduledRenewalToken,setScheduledRenewalToken]=useState<string|undefined>(undefined);
+  const [transitionQuote, setTransitionQuote] = useState<{quote_token:string;full_amount_cents:number;credit_cents:number;amount_to_charge_cents:number;effective_at:string;expires_at:string}|null>(null);
+  const saveDowngrade = async (target:SubscriptionPlanId|null) => {
+    setChangeBusy(true);setChangeError(null);try{const saved=await changeScheduledDowngrade(r.id,target);setPlanChange(saved);setDowngradeDraft(null);await loadData();}catch(err){setChangeError(err instanceof Error?err.message:'Falha ao salvar agendamento.');try{setPlanChange(await readScheduledChange(r.id));}catch{/* Preserve last confirmed state; error stays visible. */}}finally{setChangeBusy(false);}
+  };
+  const handleOpenCheckout = async (planId: SubscriptionPlanId, selectedCycle: BillingCycle, scheduledRenewal=false) => {
+    if(!scheduledRenewal&&isLowerPlan(planId,planChange?.current_plan)){setDowngradeDraft(planId);setChangeError(null);return;}
+    if(scheduledRenewal&&!planChange?.can_renew){setChangeError('A renovação estará disponível a partir da data agendada.');return;}
+    const checkCatalog = resolveSubscriptionCatalogView(data?.catalog, selectedCycle);
+    const planCheck = checkCatalog.plans[planId];
+    if (!planCheck.canCheckout) {
+      setFeedback({
+        type: 'error',
+        message:
+          planCheck.validationMessage ||
+          'Os dados deste plano no catálogo estão incompletos. Não é possível iniciar o checkout.',
+      });
+      return;
+    }
+
+    setScheduledRenewalToken(scheduledRenewal&&planChange?.scheduled_change?'scheduled-downgrade:'+planChange.scheduled_change.id:undefined);
+    setTransitionQuote(null);
+    if (!scheduledRenewal && r.effectiveSubscription?.known_trial && r.effectiveSubscription.contracted_plan && r.effectiveSubscription.trial_active) {
+      const {data: quote,error: quoteError}=await supabase.rpc('quote_subscription_transition',{p_restaurant_id:r.id,p_target_plan:planId,p_billing_cycle:selectedCycle});
+      if(quoteError || !quote?.available){setFeedback({type:'error',message:quoteError?.message || quote?.reason || 'Não foi possível cotar a transição.'});return;}
+      setTransitionQuote(quote);
+    }
     setPixPending(null);
     setCheckoutSuccess(null);
     setCardNumber('');
@@ -175,19 +220,39 @@ export function SubscriptionBillingPage() {
           table: 'subscription_invoices',
           filter: `id=eq.${pixPending.invoiceId}`,
         },
-        (payload) => {
-          const updated = payload.new as { status?: string; plan_id?: SubscriptionPlanId; max_tables?: number };
+        async (payload) => {
+          const updated = payload.new as {
+            status?: string;
+            plan_id?: SubscriptionPlanId;
+            max_tables?: number | null;
+            unlimited_tables?: boolean;
+          };
           if (updated?.status === 'paid') {
+            const confirmed = await confirmSubscriptionInvoice(pixPending.invoiceId,{restaurantId:r.id}).catch((err:unknown)=>{
+              setFeedback({type:'error',message:err instanceof Error?err.message:'Não foi possível confirmar a aplicação do pagamento.'});
+              void loadData();return null;
+            });
+            if(!confirmed || confirmed.status!=='paid')return;
+            const targetPlanId = updated.plan_id || pixPending.planId;
+            const resolvedUnlimited =
+              updated.unlimited_tables === true ||
+              data?.catalog?.[targetPlanId]?.unlimited_tables === true;
+            const resolvedPlanMaxTables = resolvedUnlimited
+              ? null
+              : typeof updated.max_tables === 'number' && updated.max_tables > 0
+                ? updated.max_tables
+                : data?.catalog?.[targetPlanId]?.max_tables ?? data?.restaurant?.max_tables ?? null;
             setCheckoutSuccess({
               invoiceId: pixPending.invoiceId,
-              planId: updated.plan_id || pixPending.planId,
+              planId: targetPlanId,
               expiresAt: '',
-              maxTables: updated.max_tables || 10,
+              maxTables: resolvedPlanMaxTables,
+              unlimitedTables: resolvedUnlimited,
             });
             setPixPending(null);
             setFeedback({
               type: 'success',
-              message: 'Pagamento PIX confirmado com sucesso via Asaas! Seu plano foi ativado.',
+              message: 'Pagamento PIX confirmado com sucesso via Asaas! Sua contratação foi confirmada.',
             });
             void loadData();
           }
@@ -214,6 +279,7 @@ export function SubscriptionBillingPage() {
       const res = await createSubscriptionCheckout({
         restaurantId: r.id,
         targetPlan: checkoutModal.planId,
+        quoteToken: transitionQuote?.quote_token??scheduledRenewalToken,
         billingCycle: checkoutModal.cycle,
         paymentMethod: 'pix',
         payerInfo: {
@@ -246,11 +312,21 @@ export function SubscriptionBillingPage() {
       setCheckingPayment(true);
       const res = await confirmSubscriptionInvoice(invoiceId, { restaurantId: r.id });
       if (res.status === 'paid') {
+        setFeedback(null);
+        const resolvedUnlimited =
+          res.unlimited_tables === true ||
+          data?.catalog?.[res.plan_id]?.unlimited_tables === true;
         setCheckoutSuccess({
           invoiceId: res.invoice_id,
           planId: res.plan_id,
           expiresAt: res.subscription_expires_at || '',
-          maxTables: res.max_tables || 10,
+          maxTables: resolvedUnlimited
+            ? null
+            : res.max_tables ??
+              data?.catalog?.[res.plan_id]?.max_tables ??
+              data?.restaurant?.max_tables ??
+              null,
+          unlimitedTables: resolvedUnlimited,
         });
         setPixPending(null);
         void loadData();
@@ -337,6 +413,7 @@ export function SubscriptionBillingPage() {
       const res = await createSubscriptionCheckout({
         restaurantId: r.id,
         targetPlan: checkoutModal.planId,
+        quoteToken: transitionQuote?.quote_token??scheduledRenewalToken,
         billingCycle: checkoutModal.cycle,
         paymentMethod: methodType,
         cardData: cardDataPayload,
@@ -350,11 +427,20 @@ export function SubscriptionBillingPage() {
       });
 
       if (res.status === 'paid') {
+        const resolvedUnlimited =
+          res.unlimited_tables === true ||
+          data?.catalog?.[res.plan_id]?.unlimited_tables === true;
         setCheckoutSuccess({
           invoiceId: res.invoice_id,
           planId: res.plan_id,
           expiresAt: res.subscription_expires_at || '',
-          maxTables: res.max_tables || 10,
+          maxTables: resolvedUnlimited
+            ? null
+            : res.max_tables ??
+              data?.catalog?.[res.plan_id]?.max_tables ??
+              data?.restaurant?.max_tables ??
+              null,
+          unlimitedTables: resolvedUnlimited,
         });
         void loadData();
       }
@@ -437,7 +523,7 @@ export function SubscriptionBillingPage() {
 
       if (insertErr) throw new Error(insertErr.message);
 
-      setFeedback({ type: 'success', message: 'Cartão cadastrado com sucesso para cobranças automáticas.' });
+      setFeedback({ type: 'success', message: 'Cartão cadastrado com sucesso. Disponível no checkout.' });
       setAddCardModalOpen(false);
       setCardNumber('');
       setCardHolder('');
@@ -457,7 +543,7 @@ export function SubscriptionBillingPage() {
       await navigator.clipboard.writeText(text);
       setCopiedPix(true);
       setTimeout(() => setCopiedPix(false), 2500);
-    } catch {}
+    } catch { setFeedback({type:'error',message:'Não foi possível copiar. Selecione o código PIX e copie manualmente.'}); }
   };
 
   const formatCardInput = (val: string) => {
@@ -493,9 +579,18 @@ export function SubscriptionBillingPage() {
   }
 
   const { restaurant: currentRest, usage, catalog, invoices, payment_methods: savedCards } = data;
-  const currentPlan = catalog[currentRest.subscription_plan] || catalog.basic;
-  const tablesUsagePercent = Math.min(100, Math.round((usage.tables_count / (currentRest.max_tables || 1)) * 100));
-
+  const currentPlan = catalog?.[currentRest.subscription_plan] || catalog?.basic;
+  const catalogView = resolveSubscriptionCatalogView(catalog, cycle);
+  const currentRestCycle: BillingCycle = currentRest.billing_cycle_days > 100 ? 'yearly' : 'monthly';
+  const currentRestPlanView = resolveSubscriptionCatalogView(catalog, currentRestCycle).plans[currentRest.subscription_plan];
+  const checkoutPlanView = checkoutModal
+    ? resolveSubscriptionCatalogView(catalog, checkoutModal.cycle).plans[checkoutModal.planId]
+    : null;
+  const contractId=visibleContractPlan(currentRest.subscription_plan,r.effectiveSubscription);
+  const contractCatalog=catalog?.[contractId??currentRest.subscription_plan];
+  const contractView=resolveSubscriptionCatalogView(catalog,currentRestCycle).plans[contractId??currentRest.subscription_plan];
+  const contractBenefits=contractDetailResources(contractView.tablesBenefitLabel,contractId??currentRest.subscription_plan,catalog);
+  const isCurrentRestUnlimitedTables = r.effectiveSubscription?.trial_active === true || Boolean(currentRest.unlimited_tables);
   const expDate = new Date(currentRest.subscription_expires_at);
   const formattedExpDate = Number.isNaN(expDate.getTime())
     ? '-- de -- de ----'
@@ -512,24 +607,16 @@ export function SubscriptionBillingPage() {
     expired: { label: 'Assinatura Vencida', bg: 'bg-rose-50 text-rose-700 border-rose-200/60' },
   }[currentRest.billing_status] || { label: 'Assinatura Ativa', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200/60' };
 
-  const hasAutoPayCard = savedCards.some((c) => c.is_default) || savedCards.length > 0;
 
   return (
-    <div className="max-w-[1360px] mx-auto space-y-6 text-zinc-900 dark:text-zinc-100 antialiased pb-20 pt-[10px] px-2 sm:px-4">
+    <div className="subscription-page mx-auto text-zinc-900 dark:text-zinc-100 antialiased pb-20">
       {/* =========================================================================
           CABEÇALHO DA PÁGINA
           ========================================================================= */}
-      <div>
-        <h1 className="text-2xl lg:text-3xl font-extrabold text-zinc-900 dark:text-white tracking-tight">
-          Assinatura & Planos
-        </h1>
-        <p className="text-xs lg:text-sm text-zinc-500 dark:text-zinc-400 mt-1">
-          Gerencie seu plano atual, faça upgrades e acompanhe seu histórico de pagamentos.
-        </p>
-      </div>
+      <h1 className="sr-only">Assinatura &amp; Planos</h1>
 
       {/* Banner de Feedback Global */}
-      {feedback && (
+      {feedback && !checkoutModal?.open && (
         <div
           role="alert"
           className={`p-3.5 sm:p-4 rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-between border ${
@@ -549,43 +636,53 @@ export function SubscriptionBillingPage() {
         </div>
       )}
 
-      {/* =========================================================================
-          A. CARD SUPERIOR — RESUMO DO PLANO ATUAL & QUOTAS
-          ========================================================================= */}
-      <section className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 sm:p-6 shadow-xs">
-        {/* Linha Superior */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-zinc-100 dark:border-zinc-800">
-          <div className="flex items-start sm:items-center gap-3.5">
-            <div className="w-12 h-12 rounded-xl bg-amber-500/10 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.735H5.81a1 1 0 0 1-.957-.735L2.019 6.02a.5.5 0 0 1 .798-.52l4.277 3.665a1 1 0 0 0 1.516-.294z" />
-                <path d="M5 21h14" />
-              </svg>
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2 mb-1">
-                <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${statusBadgeConfig.bg}`}>
-                  {statusBadgeConfig.label}
-                </span>
-                <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800 px-2.5 py-0.5 rounded-full">
-                  Ciclo de {currentRest.billing_cycle_days || 30} dias
-                </span>
-              </div>
-              <h2 className="text-xl sm:text-2xl font-extrabold text-zinc-900 dark:text-white leading-tight">
-                {PLAN_TITLES[currentRest.subscription_plan] || currentPlan.name}
-              </h2>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                Aproveite todos os recursos da plataforma para impulsionar o seu restaurante.
-              </p>
-            </div>
-          </div>
+      {/* Aviso de Catálogo Incompleto / Inválido */}
+      {catalogView.globalWarningMessage && (
+        <div
+          role="alert"
+          className="p-3.5 sm:p-4 rounded-xl text-xs sm:text-sm font-semibold border bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800/60"
+        >
+          {catalogView.globalWarningMessage}
+        </div>
+      )}
 
-          {/* Botões de Ação */}
-          <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
-            <button
+      <PlanBanner/>
+      <div className="subscription-overview-region"><div className="subscription-overview" aria-label="Resumo da assinatura">
+        <div className="overview-cell"><BillingIcon kind="date"/><div className="overview-copy"><small>Próximo vencimento</small><strong>{formattedExpDate}</strong><span>{daysRemainingText}</span></div></div>
+        <div className="overview-cell"><BillingIcon kind="tables"/><div className="overview-copy"><small>Mesas em uso</small><strong>{usage.tables_count}{isCurrentRestUnlimitedTables?' em uso':` de ${currentRest.max_tables}`}</strong><span>{isCurrentRestUnlimitedTables?'Sem limite de mesas':'Capacidade efetiva atual'}</span></div></div>
+        <div className="overview-cell"><BillingIcon kind="products"/><div className="overview-copy"><small>Produtos no cardápio</small><strong>{usage.products_count} itens</strong><span>Catálogo do restaurante</span></div></div>
+        <div className="overview-cell"><BillingIcon kind="payment"/><div className="overview-copy"><small>Pagamento</small><strong>{invoices[0]?.payment_method==='pix'?'PIX':invoices[0]?.payment_method==='credit_card'?'Cartão de crédito':invoices[0]?.payment_method==='debit_card'?'Cartão de débito':'A escolher'}</strong><span>{r.effectiveSubscription?.known_trial&&r.effectiveSubscription.trial_active&&!r.effectiveSubscription.contracted_plan?'Experiência Premium':PLAN_TITLES[currentRest.subscription_plan]}</span></div></div>
+        <button type="button" className="overview-details" aria-controls="subscription-current-details" aria-expanded={currentDetailsOpen} onClick={()=>setCurrentDetailsOpen(value=>!value)}>Detalhes do plano atual</button>
+      </div>
+      </div>
+      <details ref={currentDetails} open={currentDetailsOpen} onToggle={event=>setCurrentDetailsOpen(event.currentTarget.open)} id="subscription-current-details" className="subscription-current-details">
+        <summary>Detalhes e ações do contrato atual</summary>
+        <section className="current-contract" aria-label="Contrato atual">
+          <div className="contract-card-art" aria-hidden="true"/>
+          <header className="contract-identity"><div className="contract-identification"><span className={`contract-status ${currentRest.billing_status==='active'?'contract-status-active':statusBadgeConfig.bg}`}>{currentRest.billing_status==='active'&&<span className="contract-status-dot" aria-hidden="true"/>}{statusBadgeConfig.label}</span><p className="contract-restaurant">{currentRest.name}</p></div>
+            <div className="contract-name"><ContractTitle plan={contractId} name={contractId?`Plano ${(contractCatalog?.name??PLAN_TITLES[contractId]).replace(/^(?:Plano\s+)+/i,'')}`:'Experiência Premium de teste'}/></div>
+            <p className="contract-cycle">{contractId?(currentRestCycle==='yearly'?'Ciclo anual':'Ciclo mensal'):'Período de teste'}</p><p className="contract-description">Seu restaurante com mais controle, produtividade e resultados em um só lugar.</p>
+          </header>
+          <div className="contract-information">
+            {(r.effectiveSubscription?.paid_start||r.effectiveSubscription?.paid_end)&&<dl className="contract-period">
+              {r.effectiveSubscription?.paid_start&&<div><BillingIcon kind="date"/><div><dt>Início do período pago</dt><dd>{new Date(r.effectiveSubscription.paid_start).toLocaleString('pt-BR')}</dd></div></div>}
+              {r.effectiveSubscription?.paid_end&&<div><BillingIcon kind="date"/><div><dt>Fim do período pago</dt><dd>{new Date(r.effectiveSubscription.paid_end).toLocaleString('pt-BR')}</dd></div></div>}
+            </dl>}
+            <div className="contract-trial-note"><PremiumTrialNote/>
+              {r.effectiveSubscription?.known_trial&&r.effectiveSubscription.trial_active&&r.effectiveSubscription.contracted_plan&&r.effectiveSubscription.contracted_plan!=='premium'&&<p>Os dias gratuitos foram preservados. O plano contratado começa após o fim original do teste.</p>}
+            </div>
+            <h3><img src="/landing/planos/icons/card-icon.svg" alt="" aria-hidden="true" width="22" height="22"/>{contractId?'Recursos do plano contratado':'Recursos durante o teste'}</h3>
+            <ul className="contract-benefits">{contractBenefits.map(feature=><li key={feature}><ContractResourceIcon label={feature}/><span>{feature}</span></li>)}</ul>
+          </div>
+          <div className="contract-actions"><button
               type="button"
-              onClick={() => handleOpenCheckout(currentRest.subscription_plan, currentRest.billing_cycle_days > 100 ? 'yearly' : 'monthly')}
-              className="bg-[#2A0800] hover:bg-[#610000] text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer shadow-xs transition-all"
+              disabled={!currentRestPlanView?.canCheckout||!!planChange?.scheduled_change&&!planChange.can_renew}
+              onClick={() => {setFeedback(null);const scheduled=planChange?.scheduled_change;void handleOpenCheckout(scheduled?.target_plan??currentRest.subscription_plan,scheduled?.billing_cycle??currentRestCycle,!!scheduled);}}
+              className={`text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 shadow-xs transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#610000] focus-visible:ring-offset-2 ${
+                currentRestPlanView?.canCheckout
+                  ? 'bg-[#610000] hover:bg-[#4a0000] active:bg-[#3a0000] cursor-pointer'
+                  : 'bg-zinc-300 dark:bg-zinc-700 text-zinc-500 cursor-not-allowed'
+              }`}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
@@ -595,495 +692,22 @@ export function SubscriptionBillingPage() {
               </svg>
               <span>Renovar Ciclo Agora</span>
             </button>
-            <button
+<button
               type="button"
               onClick={() => {
                 document.getElementById('escolha-de-planos')?.scrollIntoView({ behavior: 'smooth' });
               }}
               className="border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer shadow-xs transition-all"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
-                <polyline points="16 7 22 7 22 13" />
-              </svg>
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
               <span>Fazer Upgrade de Plano</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Grid de 4 Mini-Cards de Métricas Reais */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-5">
-          {/* Card 1: Vencimento */}
-          <div className="bg-zinc-50/70 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/60 dark:border-zinc-800/70 p-4 flex flex-col justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="p-1.5 rounded-lg bg-white dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 shadow-2xs">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect width="18" height="18" x="3" y="4" rx="2" />
-                    <line x1="16" x2="16" y1="2" y2="6" />
-                    <line x1="8" x2="8" y1="2" y2="6" />
-                    <line x1="3" x2="21" y1="10" y2="10" />
-                  </svg>
-                </span>
-                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
-                  Próximo vencimento
-                </span>
-              </div>
-              <p className="text-base font-extrabold text-zinc-900 dark:text-white mt-2 leading-tight">
-                {formattedExpDate}
-              </p>
-            </div>
-            <p className={`text-xs font-semibold mt-2.5 ${diffDays <= 5 ? 'text-rose-600 font-bold' : 'text-zinc-500'}`}>
-              {daysRemainingText}
-            </p>
-          </div>
-
-          {/* Card 2: Mesas */}
-          <div className="bg-zinc-50/70 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/60 dark:border-zinc-800/70 p-4 flex flex-col justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="p-1.5 rounded-lg bg-white dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 shadow-2xs">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 18v3" />
-                    <path d="M20 18v3" />
-                    <path d="M4 10h16" />
-                    <path d="M2 14h20" />
-                  </svg>
-                </span>
-                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
-                  Capacidade de mesas
-                </span>
-              </div>
-              <p className="text-base font-extrabold text-zinc-900 dark:text-white mt-2 leading-tight">
-                {usage.tables_count} / {currentRest.max_tables}
-              </p>
-            </div>
-            <div>
-              <div className="w-full h-1.5 bg-zinc-200 dark:bg-zinc-700 rounded-full mt-2.5 mb-1 overflow-hidden">
-                <div
-                  className="bg-[#610000] h-full rounded-full transition-all duration-300"
-                  style={{ width: `${tablesUsagePercent}%` }}
-                />
-              </div>
-              <p className="text-[11px] font-medium text-zinc-500">
-                {tablesUsagePercent}% do limite contratado utilizado
-              </p>
-            </div>
-          </div>
-
-          {/* Card 3: Produtos */}
-          <div className="bg-zinc-50/70 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/60 dark:border-zinc-800/70 p-4 flex flex-col justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="p-1.5 rounded-lg bg-white dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 shadow-2xs">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-                    <polyline points="14 2 14 8 20 8" />
-                  </svg>
-                </span>
-                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
-                  Produtos no cardápio
-                </span>
-              </div>
-              <p className="text-base font-extrabold text-zinc-900 dark:text-white mt-2 leading-tight">
-                {usage.products_count} itens
-              </p>
-            </div>
-            <p className="text-[11px] font-medium text-zinc-500 mt-2.5">
-              Catálogo ilimitado em todos os planos
-            </p>
-          </div>
-
-          {/* Card 4: Forma de Pagamento */}
-          <div className="bg-zinc-50/70 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/60 dark:border-zinc-800/70 p-4 flex flex-col justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="p-1.5 rounded-lg bg-white dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 shadow-2xs">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect width="20" height="14" x="2" y="5" rx="2" />
-                    <line x1="2" x2="22" y1="10" y2="10" />
-                  </svg>
-                </span>
-                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
-                  Forma de pagamento
-                </span>
-              </div>
-              <p className="text-base font-extrabold text-zinc-900 dark:text-white mt-2 leading-tight">
-                {hasAutoPayCard ? 'Cartão de Crédito' : 'PIX'}
-              </p>
-            </div>
-            <div className="mt-2.5 flex items-center gap-1.5">
-              <span className={`w-1.5 h-1.5 rounded-full ${hasAutoPayCard ? 'bg-emerald-500' : 'bg-zinc-400'}`} />
-              <span className={`text-[11px] font-semibold ${hasAutoPayCard ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-600 dark:text-zinc-400'}`}>
-                {hasAutoPayCard ? 'Pagamento automático ativo' : 'Renovação manual via PIX'}
-              </span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* =========================================================================
-          B. SEÇÃO CENTRAL — ESCOLHA DE PLANOS + COLUNA DE GARANTIAS
-          ========================================================================= */}
-      <div id="escolha-de-planos" className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-stretch scroll-mt-6">
-        {/* Coluna da Esquerda: Grade dos 3 Planos (xl:col-span-9) */}
-        <div className="xl:col-span-9 flex flex-col justify-between">
-          {/* Cabeçalho da Seção com Alternador Mensal / Anual */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-            <div>
-              <h2 className="text-lg font-extrabold text-zinc-900 dark:text-white">
-                Escolha o plano ideal para o seu restaurante
-              </h2>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                Faça um upgrade e desbloqueie mais recursos para aumentar sua eficiência e vendas.
-              </p>
-            </div>
-
-            {/* Alternador Mensal / Anual */}
-            <div className="bg-black/90 dark:bg-zinc-800 p-1 rounded-xl flex items-center gap-1 shrink-0 self-start sm:self-auto">
-              <button
-                type="button"
-                onClick={() => startTransition(() => setCycle('monthly'))}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  cycle === 'monthly' ? 'bg-[#2A0800] text-white shadow-xs' : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                Mensal
-              </button>
-              <button
-                type="button"
-                onClick={() => startTransition(() => setCycle('yearly'))}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                  cycle === 'yearly' ? 'bg-[#2A0800] text-white shadow-xs' : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                <span>Anual</span>
-                <span className="bg-emerald-600 text-white font-extrabold text-[9px] px-1.5 py-0.5 rounded-md uppercase">
-                  2 MESES GRÁTIS
-                </span>
-              </button>
-            </div>
-          </div>
-
-          {/* Cards dos 3 Planos */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* 1. PLANO BÁSICO */}
-            <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 sm:p-6 flex flex-col justify-between shadow-xs hover:border-zinc-300 dark:hover:border-zinc-700 transition-all">
-              <div>
-                <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                    <polyline points="9 22 9 12 15 12 15 22" />
-                  </svg>
-                </div>
-                <h3 className="font-extrabold text-base text-zinc-900 dark:text-white mt-3.5">
-                  Plano Básico
-                </h3>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  Ideal para quem está começando.
-                </p>
-
-                <div className="mt-4 flex items-baseline">
-                  <span className="text-2xl sm:text-3xl font-extrabold text-zinc-900 dark:text-white">
-                    {cycle === 'yearly' ? 'R$ 83,25' : 'R$ 99,90'}
-                  </span>
-                  <span className="text-xs text-zinc-400 ml-1.5 font-medium">/mês</span>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={currentRest.subscription_plan === 'basic'}
-                  onClick={() => handleOpenCheckout('basic', cycle)}
-                  className={`w-full py-2.5 rounded-xl font-bold text-xs mt-4 transition-all text-center ${
-                    currentRest.subscription_plan === 'basic'
-                      ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-default'
-                      : 'border border-[#610000] text-[#610000] hover:bg-[#610000]/5 cursor-pointer'
-                  }`}
-                >
-                  {currentRest.subscription_plan === 'basic' ? 'Plano Atual' : 'Selecionar Plano'}
-                </button>
-
-                {/* Lista de Recursos (Sem duplicidade) */}
-                <ul className="mt-5 space-y-2.5 text-xs text-zinc-700 dark:text-zinc-300">
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Até 5 mesas simultâneas</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Cardápio Digital com QR Code</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Pedidos em tempo real nas mesas</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Suporte padrão via e-mail</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            {/* 2. PLANO PROFISSIONAL (MAIS ESCOLHIDO) */}
-            <div className="bg-white dark:bg-zinc-900 rounded-2xl border-2 border-amber-600 dark:border-amber-500 p-5 sm:p-6 flex flex-col justify-between shadow-md relative hover:shadow-lg transition-all">
-              {/* Badge Superior */}
-              <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#D97706] text-white text-[10px] font-extrabold px-3 py-0.5 rounded-full uppercase tracking-wider shadow-xs whitespace-nowrap">
-                MAIS ESCOLHIDO
-              </span>
-
-              <div>
-                <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
-                    <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
-                    <path d="M4 22h16" />
-                    <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
-                    <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
-                    <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
-                  </svg>
-                </div>
-                <h3 className="font-extrabold text-base text-zinc-900 dark:text-white mt-3.5">
-                  Plano Profissional
-                </h3>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  O equilíbrio perfeito para crescer.
-                </p>
-
-                <div className="mt-4 flex items-baseline">
-                  <span className="text-2xl sm:text-3xl font-extrabold text-zinc-900 dark:text-white">
-                    {cycle === 'yearly' ? 'R$ 124,16' : 'R$ 149,00'}
-                  </span>
-                  <span className="text-xs text-zinc-400 ml-1.5 font-medium">/mês</span>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={currentRest.subscription_plan === 'pro'}
-                  onClick={() => handleOpenCheckout('pro', cycle)}
-                  className={`w-full py-2.5 rounded-xl font-bold text-xs mt-4 transition-all text-center shadow-xs ${
-                    currentRest.subscription_plan === 'pro'
-                      ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-default'
-                      : 'bg-[#610000] hover:bg-[#4a0000] text-white cursor-pointer'
-                  }`}
-                >
-                  {currentRest.subscription_plan === 'pro' ? 'Plano Atual' : 'Selecionar Plano'}
-                </button>
-
-                {/* Lista de Recursos */}
-                <ul className="mt-5 space-y-2.5 text-xs text-zinc-700 dark:text-zinc-300">
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Até 15 mesas simultâneas</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Tudo do plano Básico</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>KDS Completo (Cozinha e Bar)</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Gestão de Estoque e Insumos</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Alertas sonoros para garçons</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Relatórios e Dashboard</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            {/* 3. PLANO PREMIUM ENTERPRISE */}
-            <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 sm:p-6 flex flex-col justify-between shadow-xs hover:border-zinc-300 dark:hover:border-zinc-700 transition-all">
-              <div>
-                <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M6 3h12l4 6-10 13L2 9Z" />
-                    <path d="M11 3 8 9l4 13 4-13-3-6" />
-                    <path d="M2 9h20" />
-                  </svg>
-                </div>
-                <h3 className="font-extrabold text-base text-zinc-900 dark:text-white mt-3.5">
-                  Plano Premium Enterprise
-                </h3>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  Para restaurantes com alta demanda.
-                </p>
-
-                <div className="mt-4 flex items-baseline">
-                  <span className="text-2xl sm:text-3xl font-extrabold text-zinc-900 dark:text-white">
-                    {cycle === 'yearly' ? 'R$ 191,66' : 'R$ 230,00'}
-                  </span>
-                  <span className="text-xs text-zinc-400 ml-1.5 font-medium">/mês</span>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={currentRest.subscription_plan === 'premium'}
-                  onClick={() => handleOpenCheckout('premium', cycle)}
-                  className={`w-full py-2.5 rounded-xl font-bold text-xs mt-4 transition-all text-center ${
-                    currentRest.subscription_plan === 'premium'
-                      ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-default'
-                      : 'border border-zinc-300 dark:border-zinc-700 hover:border-zinc-400 text-zinc-800 dark:text-zinc-200 cursor-pointer'
-                  }`}
-                >
-                  {currentRest.subscription_plan === 'premium' ? 'Plano Atual' : 'Selecionar Plano'}
-                </button>
-
-                {/* Lista de Recursos */}
-                <ul className="mt-5 space-y-2.5 text-xs text-zinc-700 dark:text-zinc-300">
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Até 100 mesas simultâneas</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Tudo do plano Profissional</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Comentários e Avaliações Públicas</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Auditoria e Governança Avançada</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Suporte prioritário VIP</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Relatórios avançados de performance</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#610000" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span>Consultoria de implementação</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Coluna da Direita: 4 Cards de Garantia Empilhados (xl:col-span-3) */}
-        <div className="xl:col-span-3 flex flex-col justify-between gap-3 pt-0 xl:pt-12">
-          {/* 1. Ativação Imediata */}
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-4 flex items-start gap-3.5 shadow-xs">
-            <div className="w-9 h-9 rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 flex items-center justify-center shrink-0">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-              </svg>
-            </div>
-            <div>
-              <h4 className="font-extrabold text-xs text-zinc-900 dark:text-white leading-tight">
-                Ativação imediata
-              </h4>
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
-                Seu plano é ativado assim que o pagamento for confirmado.
-              </p>
-            </div>
-          </div>
-
-          {/* 2. Sem Taxa de Adesão */}
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-4 flex items-start gap-3.5 shadow-xs">
-            <div className="w-9 h-9 rounded-full bg-blue-50 text-blue-600 dark:bg-blue-950/40 flex items-center justify-center shrink-0">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <rect width="20" height="14" x="2" y="5" rx="2" />
-                <line x1="2" x2="22" y1="10" y2="10" />
-              </svg>
-            </div>
-            <div>
-              <h4 className="font-extrabold text-xs text-zinc-900 dark:text-white leading-tight">
-                Sem taxa de adesão
-              </h4>
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
-                Comece a usar sem custos extras.
-              </p>
-            </div>
-          </div>
-
-          {/* 3. Pagamento Seguro */}
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-4 flex items-start gap-3.5 shadow-xs">
-            <div className="w-9 h-9 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 flex items-center justify-center shrink-0">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-                <path d="m9 12 2 2 4-4" />
-              </svg>
-            </div>
-            <div>
-              <h4 className="font-extrabold text-xs text-zinc-900 dark:text-white leading-tight">
-                Pagamento seguro
-              </h4>
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
-                PIX, Cartão de crédito ou boleto.
-              </p>
-            </div>
-          </div>
-
-          {/* 4. Evolução Contínua */}
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-4 flex items-start gap-3.5 shadow-xs">
-            <div className="w-9 h-9 rounded-full bg-amber-50 text-amber-600 dark:bg-amber-950/40 flex items-center justify-center shrink-0">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 3v18h18" />
-                <path d="M18 17V9" />
-                <path d="M13 17V5" />
-                <path d="M8 17v-3" />
-              </svg>
-            </div>
-            <div>
-              <h4 className="font-extrabold text-xs text-zinc-900 dark:text-white leading-tight">
-                Evolução contínua
-              </h4>
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
-                Faça upgrade a qualquer momento.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
+            </button></div>
+        </section>
+      </details>
+      <ScheduledDowngradePanel state={planChange} draft={downgradeDraft} busy={changeBusy} error={changeError} onSave={()=>{if(downgradeDraft)void saveDowngrade(downgradeDraft);}} onDismiss={()=>{setDowngradeDraft(null);setChangeError(null);}} onCancel={()=>void saveDowngrade(null)} onRenew={()=>{const scheduled=planChange?.scheduled_change;if(scheduled)void handleOpenCheckout(scheduled.target_plan,scheduled.billing_cycle,true);}}/>
+      <SubscriptionPlanCards catalog={catalog} cycle={cycle}
+        current={visibleContractPlan(currentRest.subscription_plan,r.effectiveSubscription)}
+        onSelect={(plan,period)=>{setFeedback(null);void handleOpenCheckout(plan,period);}} onCycle={period=>startTransition(()=>setCycle(period))}/>
       {/* =========================================================================
           C. SEÇÃO INFERIOR — COMPARATIVO DE RECURSOS + HISTÓRICO E CARTÕES
           ========================================================================= */}
@@ -1116,54 +740,48 @@ export function SubscriptionBillingPage() {
                 <tr className="border-b border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 font-bold">
                   <th className="py-2.5 px-3">Recursos</th>
                   <th className="py-2.5 px-3 text-center">Básico</th>
-                  <th className="py-2.5 px-3 text-center bg-[#FDF8F5] dark:bg-amber-950/20 text-amber-900 dark:text-amber-300 rounded-t-lg">
-                    Profissional
+                  <th className="py-2.5 px-3 text-center">Profissional</th>
+                  <th className="py-2.5 px-3 text-center bg-[#FDF8F5] dark:bg-amber-950/20 text-[#610000] dark:text-amber-300 rounded-t-lg">
+                    Premium
                   </th>
-                  <th className="py-2.5 px-3 text-center">Premium</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/80 font-medium text-zinc-700 dark:text-zinc-300">
                 <tr>
+                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Mesas simultâneas</td>
+                  <td className="py-3 px-3 text-center font-bold text-zinc-800 dark:text-zinc-200">{catalogView.plans.basic.comparisonTablesLabel}</td>
+                  <td className="py-3 px-3 text-center font-bold text-zinc-800 dark:text-zinc-200">{catalogView.plans.pro.comparisonTablesLabel}</td>
+                  <td className="py-3 px-3 text-center font-bold text-[#610000] dark:text-amber-300 bg-[#FDF8F5] dark:bg-amber-950/20">{catalogView.plans.premium.comparisonTablesLabel}</td>
+                </tr>
+                <tr>
                   <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Cardápio Digital (QR Code)</td>
                   <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
-                  <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✓</td>
-                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Pedidos em tempo real</td>
                   <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
                   <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✓</td>
-                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
                 </tr>
                 <tr>
-                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">KDS Cozinha/Bar</td>
+                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Pedidos, mesas e comandas</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✓</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">KDS Cozinha e Bar</td>
                   <td className="py-3 px-3 text-center text-zinc-300 dark:text-zinc-600 font-bold">✕</td>
-                  <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✓</td>
                   <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✓</td>
                 </tr>
                 <tr>
                   <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Gestão de Estoque e Insumos</td>
                   <td className="py-3 px-3 text-center text-zinc-300 dark:text-zinc-600 font-bold">✕</td>
-                  <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✓</td>
-                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Comentários e Avaliações</td>
-                  <td className="py-3 px-3 text-center text-zinc-300 dark:text-zinc-600 font-bold">✕</td>
-                  <td className="py-3 px-3 text-center text-zinc-300 dark:text-zinc-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✕</td>
-                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Relatórios e Dashboard</td>
                   <td className="py-3 px-3 text-center text-zinc-300 dark:text-zinc-600 font-bold">✕</td>
                   <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20">✓</td>
-                  <td className="py-3 px-3 text-center text-emerald-600 font-bold">✓</td>
                 </tr>
                 <tr>
-                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Suporte</td>
-                  <td className="py-3 px-3 text-center text-zinc-600 dark:text-zinc-400">E-mail</td>
-                  <td className="py-3 px-3 text-center font-bold text-amber-900 dark:text-amber-300 bg-[#FDF8F5] dark:bg-amber-950/20 rounded-b-lg">Prioritário</td>
-                  <td className="py-3 px-3 text-center font-bold text-zinc-900 dark:text-white">VIP</td>
+                  <td className="py-3 px-3 font-semibold text-zinc-900 dark:text-white">Financeiro e Fechamento de Caixa</td>
+                  <td className="py-3 px-3 text-center text-zinc-300 dark:text-zinc-600 font-bold">✕</td>
+                  <td className="py-3 px-3 text-center text-zinc-300 dark:text-zinc-600 font-bold">✕</td>
+                  <td className="py-3 px-3 text-center text-emerald-600 font-bold bg-[#FDF8F5] dark:bg-amber-950/20 rounded-b-lg">✓</td>
                 </tr>
               </tbody>
             </table>
@@ -1174,7 +792,7 @@ export function SubscriptionBillingPage() {
         <div className="xl:col-span-6 flex flex-col gap-5">
           {/* Card 1: Histórico de Faturas & Recibos */}
           <section className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 sm:p-6 shadow-xs">
-            <div className="flex items-center justify-between gap-3 mb-4">
+            <div className="billing-secondary-heading flex items-center justify-between gap-3 mb-4">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 shrink-0">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1297,9 +915,9 @@ export function SubscriptionBillingPage() {
             )}
           </section>
 
-          {/* Card 2: Cartões Salvos para Cobrança Automática */}
+          {/* Card 2: Cartões salvos */}
           <section className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 sm:p-6 shadow-xs relative">
-            <div className="flex items-center justify-between gap-3 mb-4">
+            <div className="billing-secondary-heading flex items-center justify-between gap-3 mb-4">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 shrink-0">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1309,10 +927,10 @@ export function SubscriptionBillingPage() {
                 </div>
                 <div>
                   <h3 className="font-extrabold text-sm text-zinc-900 dark:text-white">
-                    Cartões Salvos para Cobrança Automática
+                    Cartões salvos
                   </h3>
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                    Gerencie os cartões usados para renovação da sua assinatura.
+                    Gerencie os cartões disponíveis para suas contratações.
                   </p>
                 </div>
               </div>
@@ -1412,32 +1030,24 @@ export function SubscriptionBillingPage() {
           MODAL DE CHECKOUT TRANSPARENTE (PIX, CRÉDITO E DÉBITO)
           ========================================================================= */}
       {checkoutModal?.open && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-200"
-        >
-          <div className="bg-white dark:bg-zinc-900 rounded-3xl max-w-lg w-full p-6 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-5 text-zinc-900 dark:text-zinc-100 max-h-[92vh] overflow-y-auto">
-            {/* Cabeçalho */}
-            <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
-              <div>
-                <h3 className="text-base font-extrabold text-zinc-900 dark:text-white">
-                  Checkout Seguro de Assinatura
-                </h3>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  {PLAN_TITLES[checkoutModal.planId]} • Ciclo {checkoutModal.cycle === 'yearly' ? 'Anual' : 'Mensal'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleCloseCheckout}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
+        <CheckoutShell plan={checkoutModal.planId} onClose={handleCloseCheckout}>
+          <p className="checkout-subtitle">{PLAN_TITLES[checkoutModal.planId]} · Ciclo {checkoutModal.cycle==='yearly'?'Anual':'Mensal'}</p>
+          {feedback?.type==='error'&&<p role="alert" className={feedback.type==='error'?'rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:bg-red-950 dark:text-red-100':'rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100'}>{feedback.message}</p>}
             {/* Sucesso */}
+            {transitionQuote && !checkoutSuccess && <CheckoutFinancialSummary
+              totalLabel="Valor a pagar agora"
+              periodLabel={checkoutPeriodLabel(r.effectiveSubscription)}
+              price={formatCurrencyBRL(transitionQuote.full_amount_cents)}
+              credit={formatCurrencyBRL(transitionQuote.credit_cents)}
+              difference={formatCurrencyBRL(transitionQuote.amount_to_charge_cents)}
+              start={new Date(transitionQuote.effective_at).toLocaleString('pt-BR')}
+              end={new Date(transitionQuote.expires_at).toLocaleString('pt-BR')}
+            />}
+            {!transitionQuote&&!checkoutSuccess&&checkoutPlanView?.valid&&<CheckoutFinancialSummary
+              price={formatCurrencyBRL(pixPending?.amountCents??(checkoutModal.cycle==='yearly'?checkoutPlanView.yearlyPriceCents!:checkoutPlanView.monthlyPriceCents!))}
+              difference={formatCurrencyBRL(pixPending?.amountCents??(checkoutModal.cycle==='yearly'?checkoutPlanView.yearlyPriceCents!:checkoutPlanView.monthlyPriceCents!))}
+              totalLabel="Valor a pagar agora"/>}
+            {!checkoutSuccess&&r.effectiveSubscription?.known_trial&&r.effectiveSubscription.trial_active&&r.effectiveSubscription.original_trial_end&&<p className="checkout-trial-info">Durante o teste, sua capacidade continua ilimitada até {new Date(r.effectiveSubscription.original_trial_end).toLocaleString('pt-BR')}. O período pago começa após o prazo gratuito.</p>}
             {checkoutSuccess ? (
               <div className="text-center py-6 space-y-4">
                 <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center">
@@ -1446,10 +1056,21 @@ export function SubscriptionBillingPage() {
                   </svg>
                 </div>
                 <h4 className="text-lg font-extrabold text-zinc-900 dark:text-white">
-                  Pagamento Confirmado com Sucesso!
+                  Pagamento confirmado
                 </h4>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-sm mx-auto">
-                  Sua assinatura do <strong>{PLAN_TITLES[checkoutSuccess.planId]}</strong> foi ativada. Sua capacidade agora é de <strong>{checkoutSuccess.maxTables} mesas simultâneas</strong>.
+                  {r.effectiveSubscription?.trial_active && r.effectiveSubscription.original_trial_end ? <>
+                    Contratação do <strong>{PLAN_TITLES[checkoutSuccess.planId]}</strong> confirmada.
+                    O período pago começa em {new Date(r.effectiveSubscription.original_trial_end).toLocaleString('pt-BR')}.
+                    Até lá, sua experiência continua Premium, com mesas ilimitadas.
+                  </> : <>                  Sua assinatura do <strong>{PLAN_TITLES[checkoutSuccess.planId]}</strong> foi ativada. Sua capacidade agora é de{' '}
+                  <strong>
+                    {checkoutSuccess.unlimitedTables
+                      ? 'mesas simultâneas ilimitadas'
+                      : `${checkoutSuccess.maxTables} mesas simultâneas`}
+                  </strong>
+                  .
+                  </>}
                 </p>
                 <button
                   type="button"
@@ -1460,51 +1081,16 @@ export function SubscriptionBillingPage() {
                 </button>
               </div>
             ) : pixPending ? (
-              /* PIX com QR Code */
-              <div className="flex flex-col items-center gap-4 text-center">
-                <div className="bg-white p-4 rounded-2xl border border-zinc-200 shadow-md">
-                  {pixPending.image ? (
-                    <img src={pixPending.image} alt="QR Code PIX Asaas" className="w-48 h-48 block" />
-                  ) : (
-                    <QRCodeSVG value={pixPending.payload} size={192} level="M" />
-                  )}
+              /* PIX data comes exclusively from the existing server response. */
+              <div>
+                <div className="checkout-pix">
+                  <div className="checkout-pix-grid"><div><h3>Pague via PIX</h3><p>Escaneie o QR Code no app do seu banco ou use o código Copia e Cola.</p><p><strong>{formatCurrencyBRL(pixPending.amountCents)}</strong></p></div><div className="checkout-qr">
+                    {pixPending.image?<img src={pixPending.image} alt="QR Code PIX da cobrança" width="192" height="192"/>:<QRCodeSVG value={pixPending.payload} size={192} level="M"/>}
+                  </div></div>
+                  <div className="checkout-code"><div><label htmlFor="checkout-pix-code">Código PIX (Copia e Cola)</label><input id="checkout-pix-code" type="text" readOnly value={pixPending.payload}/></div><button type="button" onClick={()=>void copyToClipboard(pixPending.payload)}>{copiedPix?'Copiado!':'Copiar'}</button></div>
+                  <p role="status" className="sr-only">{copiedPix?'Código PIX copiado.':''}</p>
                 </div>
-
-                <div>
-                  <span className="text-2xl font-extrabold text-zinc-900 dark:text-white">
-                    {formatCurrencyBRL(pixPending.amountCents)}
-                  </span>
-                  <p className="text-xs text-zinc-500 mt-1">
-                    Escaneie o QR Code no app do banco ou use o Copia e Cola.
-                  </p>
-                </div>
-
-                <div className="w-full flex items-center gap-2 bg-zinc-50 dark:bg-zinc-800 p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700">
-                  <input
-                    type="text"
-                    readOnly
-                    value={pixPending.payload}
-                    className="bg-transparent border-0 outline-hidden font-mono text-[11px] flex-1 text-zinc-800 dark:text-zinc-200 truncate"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void copyToClipboard(pixPending.payload)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white shrink-0 cursor-pointer ${
-                      copiedPix ? 'bg-emerald-600' : 'bg-[#610000] hover:bg-[#4a0000]'
-                    }`}
-                  >
-                    {copiedPix ? 'Copiado!' : 'Copiar'}
-                  </button>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={checkingPayment}
-                  onClick={() => void handleVerifyPixPayment(pixPending.invoiceId)}
-                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer shadow-md transition-colors"
-                >
-                  {checkingPayment ? 'Verificando pagamento…' : 'Já realizei o pagamento (Confirmar)'}
-                </button>
+                <button type="button" className="checkout-consult" disabled={checkingPayment} onClick={()=>void handleVerifyPixPayment(pixPending.invoiceId)}>{checkingPayment?'Consultando pagamento…':'Já realizei o pagamento · Consultar'}</button>
               </div>
             ) : (
               /* Formulário com Abas PIX e Cartão */
@@ -1514,7 +1100,7 @@ export function SubscriptionBillingPage() {
                     type="button"
                     onClick={() => setActiveTab('pix')}
                     className={`flex-1 py-2 text-xs font-bold border-b-2 cursor-pointer transition-all ${
-                      activeTab === 'pix' ? 'border-[#610000] text-[#610000]' : 'border-transparent text-zinc-400'
+                      activeTab === 'pix' ? 'border-[#610000] text-[#610000] dark:border-red-400 dark:text-red-300' : 'border-transparent text-zinc-400'
                     }`}
                   >
                     PIX Instantâneo
@@ -1523,7 +1109,7 @@ export function SubscriptionBillingPage() {
                     type="button"
                     onClick={() => setActiveTab('credit_card')}
                     className={`flex-1 py-2 text-xs font-bold border-b-2 cursor-pointer transition-all ${
-                      activeTab === 'credit_card' ? 'border-[#610000] text-[#610000]' : 'border-transparent text-zinc-400'
+                      activeTab === 'credit_card' ? 'border-[#610000] text-[#610000] dark:border-red-400 dark:text-red-300' : 'border-transparent text-zinc-400'
                     }`}
                   >
                     Cartão de Crédito
@@ -1533,7 +1119,7 @@ export function SubscriptionBillingPage() {
                 {activeTab === 'pix' && (
                   <div className="space-y-3 pt-2">
                     <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl text-xs text-zinc-500">
-                      Liberação imediata via Asaas e Banco Central em poucos segundos.
+                      A contratação será concluída após a confirmação do pagamento.
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
@@ -1553,7 +1139,7 @@ export function SubscriptionBillingPage() {
                       onClick={() => void handleProcessPix()}
                       className="w-full py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white font-bold text-xs cursor-pointer shadow-md transition-colors"
                     >
-                      {checkoutBusy ? 'Gerando QR Code PIX…' : 'Gerar PIX e Pagar Agora'}
+                      {checkoutBusy ? 'Gerando QR Code PIX…' : transitionQuote ? 'Gerar PIX da diferença' : 'Gerar PIX e Pagar Agora'}
                     </button>
                   </div>
                 )}
@@ -1688,14 +1274,13 @@ export function SubscriptionBillingPage() {
                       onClick={() => void handleProcessCardPayment('credit_card')}
                       className="w-full py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white font-bold text-xs cursor-pointer shadow-md transition-colors"
                     >
-                      {checkoutBusy ? 'Processando transação…' : 'Pagar e Ativar Plano Agora'}
+                      {checkoutBusy ? 'Processando transação…' : transitionQuote ? 'Pagar diferença e confirmar upgrade' : 'Pagar e Ativar Plano Agora'}
                     </button>
                   </div>
                 )}
               </div>
             )}
-          </div>
-        </div>
+        </CheckoutShell>
       )}
 
       {/* =========================================================================
@@ -1794,7 +1379,7 @@ export function SubscriptionBillingPage() {
                   Adicionar Novo Cartão
                 </h3>
                 <p className="text-xs text-zinc-500">
-                  Cadastre um cartão para renovação automática segura.
+                  Cadastre um cartão para suas próximas contratações.
                 </p>
               </div>
               <button

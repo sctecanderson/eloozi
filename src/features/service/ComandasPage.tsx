@@ -826,7 +826,7 @@ export function ComandasPage() {
                         Em preparo
                       </span>
                     ) : card.status === 'closed' ? (
-                      <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-500 font-semibold text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                      <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-500 font-semibold text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5 dark:text-zinc-300">
                         <span className="w-2 h-2 rounded-full bg-zinc-400" />
                         Finalizada
                       </span>
@@ -992,7 +992,7 @@ export function ComandasPage() {
                           }}
                           className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-700/60 flex items-center gap-2 transition-colors cursor-pointer"
                         >
-                          <svg className="w-3.5 h-3.5 text-zinc-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <svg className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <polyline points="6 9 6 2 18 2 18 9" />
                             <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
                             <rect x="6" y="14" width="12" height="8" />
@@ -1012,7 +1012,7 @@ export function ComandasPage() {
                           }}
                           className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-700/60 flex items-center gap-2 transition-colors cursor-pointer"
                         >
-                          <svg className="w-3.5 h-3.5 text-zinc-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <svg className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                           </svg>
@@ -1206,7 +1206,7 @@ export function ComandasPage() {
                           </span>
                         </div>
                         {item.status === 'cancelled' ? (
-                          <span className="text-[10px] text-rose-600 font-semibold">Cancelado</span>
+                          <span className="text-[10px] text-rose-600 font-semibold dark:text-rose-300">Cancelado</span>
                         ) : (
                           <span className="text-[10px] text-zinc-400 font-normal">
                             {currency.format(item.unit_price_in_cents / 100)} cada
@@ -1276,7 +1276,7 @@ export function ComandasPage() {
                   onClick={() => handlePrintReceipt(viewingCard)}
                   className="flex-1 py-2.5 px-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-xs font-bold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700/60 flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs"
                 >
-                  <svg className="w-4 h-4 text-zinc-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg className="w-4 h-4 text-zinc-500 dark:text-zinc-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M6 9V2h12v7" />
                     <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
                     <path d="M6 14h12v8H6z" />
@@ -1348,7 +1348,7 @@ export function ComandasPage() {
                   Mesa de destino:
                 </label>
                 {transferOccupiedTables.length === 0 ? (
-                  <p className="text-xs text-zinc-500 bg-zinc-50 dark:bg-zinc-800/60 p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700">
+                  <p className="text-xs text-zinc-500 bg-zinc-50 dark:bg-zinc-800/60 p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 dark:text-zinc-300">
                     Não há outras mesas em atendimento no salão no momento.
                   </p>
                 ) : (
@@ -1395,7 +1395,7 @@ export function ComandasPage() {
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <label htmlFor="target-transfer-reason" className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                    Motivo da transferência (auditoria) <span className="text-rose-500">*</span>:
+                    Motivo da transferência (auditoria) <span className="text-rose-500 dark:text-rose-300">*</span>:
                   </label>
                   <span className="text-[10px] text-zinc-400">
                     {transferReason.trim().length}/300
@@ -1414,7 +1414,7 @@ export function ComandasPage() {
                   className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:border-amber-600 focus:outline-none resize-none"
                 />
                 {transferReasonError && (
-                  <p className="text-[11px] text-rose-500 font-medium mt-1">{transferReasonError}</p>
+                  <p className="text-[11px] text-rose-500 font-medium mt-1 dark:text-rose-300">{transferReasonError}</p>
                 )}
               </div>
 
@@ -1514,7 +1514,7 @@ export function ComandasPage() {
                           checked={closingFeeAccepted}
                           onChange={(e) => setClosingFeeAccepted(e.target.checked)}
                           disabled={busyAction}
-                          className="w-4 h-4 rounded text-amber-800 focus:ring-amber-800 dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer"
+                          className="w-4 h-4 rounded text-amber-800 focus:ring-amber-800 dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer dark:text-amber-200"
                         />
                         <span>Taxa de serviço ({restaurantFee}%)</span>
                       </label>

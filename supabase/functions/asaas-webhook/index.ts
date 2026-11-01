@@ -8,7 +8,7 @@ serve(async (req: Request) => {
     supabaseServiceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     asaasWebhookToken: Deno.env.get("ASAAS_WEBHOOK_TOKEN") ?? "",
     asaasApiKey: Deno.env.get("ASAAS_API_KEY") ?? "",
-    asaasBaseUrl: Deno.env.get("ASAAS_BASE_URL") ?? "https://api.asaas.com/v3",
+    asaasBaseUrl: Deno.env.get("ASAAS_BASE_URL") ?? Deno.env.get("ASAAS_API_BASE_URL") ?? "",
     createSupabaseClient: (url, key) => createClient(url, key),
     fetchFn: fetch,
   });

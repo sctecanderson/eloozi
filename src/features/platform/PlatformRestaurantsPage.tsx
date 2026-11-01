@@ -282,12 +282,15 @@ function PlatformRestaurantsContent() {
     superadminName: 'SuperAdmin',
     superadminAvatarUrl: null,
     updatedAt: new Date().toISOString(),
-    basicPriceCents: 9900,
-    basicMaxTables: 10,
-    proPriceCents: 14900,
-    proMaxTables: 25,
-    premiumPriceCents: 19900,
-    premiumMaxTables: 100,
+    basicPriceCents: 9990,
+    basicMaxTables: 5,
+    basicUnlimitedTables: false,
+    proPriceCents: 17990,
+    proMaxTables: 20,
+    proUnlimitedTables: false,
+    premiumPriceCents: 27990,
+    premiumMaxTables: null,
+    premiumUnlimitedTables: true,
   });
   const [tempPlatformName, setTempPlatformName] = useState('Elozi');
   const [tempPlatformSubtitle, setTempPlatformSubtitle] = useState('Administração da Plataforma');
@@ -338,20 +341,22 @@ function PlatformRestaurantsContent() {
   // Modal / Alteração de Plano SaaS (com valores e ciclo customizados)
   const [planTarget, setPlanTarget] = useState<PlatformRestaurant | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlan>('basic');
-  const [planCustomPrice, setPlanCustomPrice] = useState('99,00');
-  const [planCustomMaxTables, setPlanCustomMaxTables] = useState<number | string>(10);
+  const [planCustomPrice, setPlanCustomPrice] = useState('99,90');
+  const [planCustomMaxTables, setPlanCustomMaxTables] = useState<number | string>(5);
+  const [planCustomUnlimitedTables, setPlanCustomUnlimitedTables] = useState(false);
   const [planBillingCycleDays, setPlanBillingCycleDays] = useState<number | string>(30);
   const [planRenewCycle, setPlanRenewCycle] = useState(false);
   const [planBusy, setPlanBusy] = useState(false);
   const [planError, setPlanError] = useState('');
 
   // Catálogo Global de Planos Editável (Aba Planos SaaS)
-  const [catalogBasicPrice, setCatalogBasicPrice] = useState('99,00');
-  const [catalogBasicMaxTables, setCatalogBasicMaxTables] = useState<number | string>(10);
-  const [catalogProPrice, setCatalogProPrice] = useState('149,00');
-  const [catalogProMaxTables, setCatalogProMaxTables] = useState<number | string>(25);
-  const [catalogPremiumPrice, setCatalogPremiumPrice] = useState('199,00');
+  const [catalogBasicPrice, setCatalogBasicPrice] = useState('99,90');
+  const [catalogBasicMaxTables, setCatalogBasicMaxTables] = useState<number | string>(5);
+  const [catalogProPrice, setCatalogProPrice] = useState('179,90');
+  const [catalogProMaxTables, setCatalogProMaxTables] = useState<number | string>(20);
+  const [catalogPremiumPrice, setCatalogPremiumPrice] = useState('279,90');
   const [catalogPremiumMaxTables, setCatalogPremiumMaxTables] = useState<number | string>(100);
+  const [catalogPremiumUnlimitedTables, setCatalogPremiumUnlimitedTables] = useState(true);
   const [catalogSyncExisting, setCatalogSyncExisting] = useState(false);
   const [catalogBusy, setCatalogBusy] = useState(false);
   const [catalogNotice, setCatalogNotice] = useState('');
@@ -379,7 +384,8 @@ function PlatformRestaurantsContent() {
           setCatalogProPrice((b.proPriceCents / 100).toFixed(2).replace('.', ','));
           setCatalogProMaxTables(b.proMaxTables);
           setCatalogPremiumPrice((b.premiumPriceCents / 100).toFixed(2).replace('.', ','));
-          setCatalogPremiumMaxTables(b.premiumMaxTables);
+          setCatalogPremiumUnlimitedTables(b.premiumUnlimitedTables);
+          setCatalogPremiumMaxTables(b.premiumMaxTables ?? 100);
         }
       })
       .catch(() => {});
@@ -416,7 +422,8 @@ function PlatformRestaurantsContent() {
             setCatalogProPrice((brandingResult.proPriceCents / 100).toFixed(2).replace('.', ','));
             setCatalogProMaxTables(brandingResult.proMaxTables);
             setCatalogPremiumPrice((brandingResult.premiumPriceCents / 100).toFixed(2).replace('.', ','));
-            setCatalogPremiumMaxTables(brandingResult.premiumMaxTables);
+            setCatalogPremiumUnlimitedTables(brandingResult.premiumUnlimitedTables);
+            setCatalogPremiumMaxTables(brandingResult.premiumMaxTables ?? 100);
           }
         }
       } catch (cause) {
@@ -501,7 +508,7 @@ function PlatformRestaurantsContent() {
     [activeRestaurants],
   );
   const totalMaxTables = useMemo(
-    () => activeRestaurants.reduce((sum, r) => sum + r.maxTables, 0),
+    () => activeRestaurants.reduce((sum, r) => sum + (r.maxTables ?? 0), 0),
     [activeRestaurants],
   );
   const globalTableCapacityPercent = useMemo(
@@ -548,7 +555,10 @@ function PlatformRestaurantsContent() {
   const upgradeOpportunities = useMemo(() => {
     return [...activeRestaurants]
       .map((r) => {
-        const usage = r.maxTables > 0 ? Math.round((r.activeTablesCount / r.maxTables) * 100) : 0;
+        const usage =
+          !r.unlimitedTables && r.maxTables && r.maxTables > 0
+            ? Math.round((r.activeTablesCount / r.maxTables) * 100)
+            : 0;
         return { ...r, usage };
       })
       .sort((a, b) => b.usage - a.usage);
@@ -563,7 +573,7 @@ function PlatformRestaurantsContent() {
       all: base.length,
       active: base.filter((r) => r.active && (r.billingStatus === 'active' || r.daysRemaining > 0)).length,
       expiring: base.filter((r) => r.daysRemaining > 0 && r.daysRemaining <= 7).length,
-      quota_warning: base.filter((r) => r.maxTables > 0 && (r.activeTablesCount / r.maxTables) >= 0.8).length,
+      quota_warning: base.filter((r) => !r.unlimitedTables && r.maxTables !== null && r.maxTables > 0 && (r.activeTablesCount / r.maxTables) >= 0.8).length,
       expired_grace: base.filter((r) => r.billingStatus === 'grace_period' || r.billingStatus === 'expired' || r.daysRemaining <= 0).length,
     };
   }, [restaurants, restaurantFilter]);
@@ -574,7 +584,7 @@ function PlatformRestaurantsContent() {
   }, [activeRestaurants]);
 
   const quotaAlerts = useMemo(() => {
-    return activeRestaurants.filter((r) => r.maxTables > 0 && (r.activeTablesCount / r.maxTables) >= 0.8);
+    return activeRestaurants.filter((r) => !r.unlimitedTables && r.maxTables !== null && r.maxTables > 0 && (r.activeTablesCount / r.maxTables) >= 0.8);
   }, [activeRestaurants]);
 
   const totalAlertsCount = useMemo(() => {
@@ -601,7 +611,7 @@ function PlatformRestaurantsContent() {
         if (portfolioFilter === 'all') return true;
         if (portfolioFilter === 'active') return r.active && (r.billingStatus === 'active' || r.daysRemaining > 0);
         if (portfolioFilter === 'expiring') return r.daysRemaining > 0 && r.daysRemaining <= 7;
-        if (portfolioFilter === 'quota_warning') return r.maxTables > 0 && (r.activeTablesCount / r.maxTables) >= 0.8;
+        if (portfolioFilter === 'quota_warning') return !r.unlimitedTables && r.maxTables !== null && r.maxTables > 0 && (r.activeTablesCount / r.maxTables) >= 0.8;
         if (portfolioFilter === 'expired_grace') return r.billingStatus === 'grace_period' || r.billingStatus === 'expired' || r.daysRemaining <= 0;
         return true;
       })();
@@ -842,7 +852,8 @@ function PlatformRestaurantsContent() {
     setPlanTarget({ ...target });
     setSelectedPlan(target.subscriptionPlan);
     setPlanCustomPrice((target.monthlyPriceCents / 100).toFixed(2).replace('.', ','));
-    setPlanCustomMaxTables(target.maxTables);
+    setPlanCustomUnlimitedTables(Boolean(target.unlimitedTables || target.maxTables === null));
+    setPlanCustomMaxTables(target.maxTables ?? 100);
     setPlanBillingCycleDays(target.billingCycleDays || 30);
     setPlanRenewCycle(false);
     setPlanError('');
@@ -852,13 +863,16 @@ function PlatformRestaurantsContent() {
     setSelectedPlan(tier);
     if (tier === 'basic') {
       setPlanCustomPrice((branding.basicPriceCents / 100).toFixed(2).replace('.', ','));
+      setPlanCustomUnlimitedTables(false);
       setPlanCustomMaxTables(branding.basicMaxTables);
     } else if (tier === 'pro') {
       setPlanCustomPrice((branding.proPriceCents / 100).toFixed(2).replace('.', ','));
+      setPlanCustomUnlimitedTables(false);
       setPlanCustomMaxTables(branding.proMaxTables);
     } else {
       setPlanCustomPrice((branding.premiumPriceCents / 100).toFixed(2).replace('.', ','));
-      setPlanCustomMaxTables(branding.premiumMaxTables);
+      setPlanCustomUnlimitedTables(branding.premiumUnlimitedTables);
+      setPlanCustomMaxTables(branding.premiumMaxTables ?? 100);
     }
   }
 
@@ -871,9 +885,10 @@ function PlatformRestaurantsContent() {
         restaurant.id,
         restaurant.subscriptionPlan,
         restaurant.monthlyPriceCents,
-        restaurant.maxTables,
+        restaurant.unlimitedTables ? null : restaurant.maxTables,
         30,
         true,
+        restaurant.unlimitedTables,
       );
       setRestaurants((prev) =>
         prev.map((r) =>
@@ -906,13 +921,14 @@ function PlatformRestaurantsContent() {
     const cleanPriceStr = String(planCustomPrice).replace(/\./g, '').replace(',', '.').trim();
     const priceNumber = parseFloat(cleanPriceStr);
     if (isNaN(priceNumber) || priceNumber < 0) {
-      setPlanError('Informe um valor mensal válido em Reais (ex.: 149,00 ou 300,00).');
+      setPlanError('Informe um valor mensal válido em Reais (ex.: 179,90 ou 279,90).');
       return;
     }
     const priceInCents = Math.round(priceNumber * 100);
 
-    const tablesNumber = Number(planCustomMaxTables);
-    if (!Number.isInteger(tablesNumber) || tablesNumber < 1 || tablesNumber > 500) {
+    const isUnlimited = Boolean(planCustomUnlimitedTables);
+    const tablesNumber = isUnlimited ? null : Number(planCustomMaxTables);
+    if (!isUnlimited && (tablesNumber === null || !Number.isInteger(tablesNumber) || tablesNumber < 1 || tablesNumber > 500)) {
       setPlanError('O limite de mesas deve ser um número inteiro entre 1 e 500.');
       return;
     }
@@ -934,6 +950,7 @@ function PlatformRestaurantsContent() {
         tablesNumber,
         cycleDaysNumber,
         planRenewCycle,
+        isUnlimited,
       );
       setRestaurants((prev) =>
         prev.map((r) =>
@@ -943,6 +960,7 @@ function PlatformRestaurantsContent() {
                 subscriptionPlan: updated.subscriptionPlan,
                 monthlyPriceCents: updated.monthlyPriceCents,
                 maxTables: updated.maxTables,
+                unlimitedTables: updated.unlimitedTables,
                 activeTablesCount: updated.activeTablesCount,
                 subscriptionStartedAt: updated.subscriptionStartedAt || r.subscriptionStartedAt,
                 subscriptionExpiresAt: updated.subscriptionExpiresAt || r.subscriptionExpiresAt,
@@ -953,8 +971,9 @@ function PlatformRestaurantsContent() {
         ),
       );
       setPlanTarget(null);
+      const tablesSummary = updated.unlimitedTables ? 'mesas ilimitadas' : `${updated.maxTables} mesas`;
       setNotice(
-        `Plano de ${planTarget.name} atualizado para ${updated.subscriptionPlan.toUpperCase()} (R$ ${(priceInCents / 100).toFixed(2).replace('.', ',')}/mês, ${tablesNumber} mesas) com sucesso.`
+        `Plano de ${planTarget.name} atualizado para ${updated.subscriptionPlan.toUpperCase()} (R$ ${(priceInCents / 100).toFixed(2).replace('.', ',')}/mês, ${tablesSummary}) com sucesso.`
       );
       setRefresh((c) => c + 1);
     } catch (err) {
@@ -990,12 +1009,17 @@ function PlatformRestaurantsContent() {
 
     const basicTables = Number(catalogBasicMaxTables);
     const proTables = Number(catalogProMaxTables);
-    const premiumTables = Number(catalogPremiumMaxTables);
+    const premiumTables = catalogPremiumUnlimitedTables ? null : Number(catalogPremiumMaxTables);
 
-    if (!basicTables || !proTables || !premiumTables ||
-        basicTables < 1 || basicTables > 500 ||
-        proTables < 1 || proTables > 500 ||
-        premiumTables < 1 || premiumTables > 500) {
+    if (
+      !basicTables ||
+      !proTables ||
+      basicTables < 1 ||
+      basicTables > 500 ||
+      proTables < 1 ||
+      proTables > 500 ||
+      (!catalogPremiumUnlimitedTables && (!premiumTables || premiumTables < 1 || premiumTables > 500))
+    ) {
       setCatalogError('Os limites de mesas devem ser números entre 1 e 500.');
       setCatalogBusy(false);
       return;
@@ -1005,10 +1029,13 @@ function PlatformRestaurantsContent() {
       const result = await updatePlatformPlanCatalog({
         basicPriceCents: basicCents,
         basicMaxTables: basicTables,
+        basicUnlimitedTables: false,
         proPriceCents: proCents,
         proMaxTables: proTables,
+        proUnlimitedTables: false,
         premiumPriceCents: premiumCents,
         premiumMaxTables: premiumTables,
+        premiumUnlimitedTables: catalogPremiumUnlimitedTables,
         syncExistingRestaurants: catalogSyncExisting,
       });
 
@@ -1016,10 +1043,13 @@ function PlatformRestaurantsContent() {
         ...b,
         basicPriceCents: basicCents,
         basicMaxTables: basicTables,
+        basicUnlimitedTables: false,
         proPriceCents: proCents,
         proMaxTables: proTables,
+        proUnlimitedTables: false,
         premiumPriceCents: premiumCents,
-        premiumMaxTables: premiumTables,
+        premiumMaxTables: result.premiumMaxTables,
+        premiumUnlimitedTables: result.premiumUnlimitedTables,
       }));
 
       if (catalogSyncExisting && result.syncedRestaurantsCount > 0) {
@@ -1568,7 +1598,7 @@ function PlatformRestaurantsContent() {
                             </span>
                             <div className="space-y-2">
                               {quotaAlerts.map((rest) => {
-                                const usagePct = Math.round((rest.activeTablesCount / rest.maxTables) * 100);
+                                const usagePct = rest.maxTables ? Math.round((rest.activeTablesCount / rest.maxTables) * 100) : 0;
                                 return (
                                   <div
                                     key={rest.id}
@@ -2077,10 +2107,12 @@ function PlatformRestaurantsContent() {
                         <div className="mt-3 space-y-1.5">
                           <div className="flex items-center justify-between text-xs font-bold">
                             <span className="text-slate-600 dark:text-stone-300">
-                              {rest.activeTablesCount} / {rest.maxTables} mesas
+                              {rest.unlimitedTables || rest.maxTables === null
+                                ? `${rest.activeTablesCount} mesas (Ilimitadas)`
+                                : `${rest.activeTablesCount} / ${rest.maxTables} mesas`}
                             </span>
                             <span className={isHigh ? 'text-amber-700 dark:text-amber-300' : 'text-slate-500'}>
-                              {rest.usage}% ocupação
+                              {rest.unlimitedTables || rest.maxTables === null ? 'Ilimitado' : `${rest.usage}% ocupação`}
                             </span>
                           </div>
                           <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-stone-700 overflow-hidden">
@@ -2488,9 +2520,11 @@ function PlatformRestaurantsContent() {
                               <div>
                                 <div className="flex items-center justify-between mb-1">
                                   <span className="font-bold text-slate-800 dark:text-stone-200">
-                                    {restaurant.activeTablesCount} / {restaurant.maxTables} mesas configuradas
+                                    {restaurant.unlimitedTables || restaurant.maxTables === null
+                                      ? `${restaurant.activeTablesCount} mesas ativas (Ilimitadas)`
+                                      : `${restaurant.activeTablesCount} / ${restaurant.maxTables} mesas configuradas`}
                                   </span>
-                                  {restaurant.activeTablesCount >= restaurant.maxTables && (
+                                  {!restaurant.unlimitedTables && restaurant.maxTables !== null && restaurant.activeTablesCount >= restaurant.maxTables && (
                                     <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300">
                                       Limite Atingido
                                     </span>
@@ -2499,12 +2533,14 @@ function PlatformRestaurantsContent() {
                                 <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-stone-800 overflow-hidden">
                                   <div
                                     className={`h-full rounded-full transition-all ${
-                                      restaurant.activeTablesCount >= restaurant.maxTables
+                                      !restaurant.unlimitedTables && restaurant.maxTables !== null && restaurant.activeTablesCount >= restaurant.maxTables
                                         ? 'bg-amber-500'
                                         : 'bg-emerald-500'
                                     }`}
                                     style={{
-                                      width: `${Math.min(100, Math.round((restaurant.activeTablesCount / restaurant.maxTables) * 100))}%`,
+                                      width: restaurant.unlimitedTables || !restaurant.maxTables
+                                        ? '100%'
+                                        : `${Math.min(100, Math.round((restaurant.activeTablesCount / restaurant.maxTables) * 100))}%`,
                                     }}
                                   />
                                 </div>
@@ -2964,19 +3000,37 @@ function PlatformRestaurantsContent() {
                           </div>
                         </div>
 
-                        <div>
-                          <label className="block text-xs font-bold text-slate-700 dark:text-stone-300 mb-1">
-                            Limite de Mesas
-                          </label>
-                          <input
-                            type="number"
-                            min="1"
-                            max="500"
-                            value={catalogPremiumMaxTables}
-                            onChange={(e) => setCatalogPremiumMaxTables(e.target.value ? Number(e.target.value) : '')}
-                            disabled={catalogBusy}
-                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-stone-700 bg-[#fffdfa] dark:bg-stone-800 text-slate-900 dark:text-stone-100 text-sm font-bold focus:outline-none focus:border-amber-500 shadow-2xs"
-                          />
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="block text-xs font-bold text-slate-700 dark:text-stone-300">
+                              Limite de Mesas
+                            </label>
+                            <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-300 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={catalogPremiumUnlimitedTables}
+                                onChange={(e) => setCatalogPremiumUnlimitedTables(e.target.checked)}
+                                disabled={catalogBusy}
+                                className="rounded border-amber-400 text-amber-600 focus:ring-amber-500 w-3.5 h-3.5 cursor-pointer"
+                              />
+                              <span>Mesas ilimitadas</span>
+                            </label>
+                          </div>
+                          {catalogPremiumUnlimitedTables ? (
+                            <div className="w-full px-3 py-2 rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 text-sm font-bold">
+                              Ilimitadas
+                            </div>
+                          ) : (
+                            <input
+                              type="number"
+                              min="1"
+                              max="500"
+                              value={catalogPremiumMaxTables}
+                              onChange={(e) => setCatalogPremiumMaxTables(e.target.value ? Number(e.target.value) : '')}
+                              disabled={catalogBusy}
+                              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-stone-700 bg-[#fffdfa] dark:bg-stone-800 text-slate-900 dark:text-stone-100 text-sm font-bold focus:outline-none focus:border-amber-500 shadow-2xs"
+                            />
+                          )}
                         </div>
                       </div>
 
@@ -3029,7 +3083,9 @@ function PlatformRestaurantsContent() {
                         <strong className="text-slate-900 dark:text-white font-bold text-sm">{rest.name}</strong>
                         <span className="text-slate-400 ml-2 font-mono">/{rest.slug}</span>
                         <div className="text-[11px] text-slate-500 dark:text-stone-400 mt-0.5">
-                          {rest.activeTablesCount} / {rest.maxTables} mesas configuradas
+                          {rest.unlimitedTables || rest.maxTables === null
+                            ? `${rest.activeTablesCount} mesas ativas (Ilimitadas)`
+                            : `${rest.activeTablesCount} / ${rest.maxTables} mesas configuradas`}
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
@@ -3717,7 +3773,7 @@ function PlatformRestaurantsContent() {
                       <div className="flex items-center gap-2">
                         <span className="font-extrabold text-sm text-slate-900 dark:text-white">Premium</span>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-300">
-                          Padrão: {branding.premiumMaxTables} mesas
+                          Padrão: {branding.premiumUnlimitedTables || branding.premiumMaxTables === null ? 'Mesas ilimitadas' : `${branding.premiumMaxTables} mesas`}
                         </span>
                       </div>
                       <p className="text-xs text-slate-500 dark:text-stone-400 mt-0.5">
@@ -3760,19 +3816,37 @@ function PlatformRestaurantsContent() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-stone-300 mb-1">
-                      Limite de Mesas
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="500"
-                      value={planCustomMaxTables}
-                      onChange={(e) => setPlanCustomMaxTables(e.target.value ? Number(e.target.value) : '')}
-                      disabled={planBusy}
-                      required
-                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:border-slate-400"
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-stone-300">
+                        Limite de Mesas
+                      </label>
+                      <label className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={planCustomUnlimitedTables}
+                          onChange={(e) => setPlanCustomUnlimitedTables(e.target.checked)}
+                          disabled={planBusy}
+                          className="rounded border-slate-300 text-amber-600 focus:ring-amber-500 w-3 h-3 cursor-pointer"
+                        />
+                        <span>Ilimitadas</span>
+                      </label>
+                    </div>
+                    {planCustomUnlimitedTables ? (
+                      <div className="w-full px-3 py-1.5 rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 text-xs font-bold">
+                        Ilimitadas
+                      </div>
+                    ) : (
+                      <input
+                        type="number"
+                        min="1"
+                        max="500"
+                        value={planCustomMaxTables}
+                        onChange={(e) => setPlanCustomMaxTables(e.target.value ? Number(e.target.value) : '')}
+                        disabled={planBusy}
+                        required
+                        className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:border-slate-400"
+                      />
+                    )}
                   </div>
 
                   <div>
@@ -3809,7 +3883,9 @@ function PlatformRestaurantsContent() {
               <div className="text-[11px] text-slate-500 dark:text-stone-400 bg-slate-50 dark:bg-stone-800/50 p-3 rounded-xl border border-slate-100 dark:border-stone-800 space-y-1">
                 <div>
                   Mesas atuais configuradas: <strong className="text-slate-800 dark:text-stone-200">{planTarget.activeTablesCount}</strong>.
-                  Se a quantidade ultrapassar o novo limite ({planCustomMaxTables || 0}), novas adições de mesas serão bloqueadas pelo sistema.
+                  {planCustomUnlimitedTables
+                    ? ' Com capacidade ilimitada, todas as mesas ativas permanecem liberadas.'
+                    : ` Se a quantidade ultrapassar o novo limite (${planCustomMaxTables || 0}), novas ativações de mesas serão bloqueadas pelo sistema.`}
                 </div>
                 <div>
                   Vigência atual: <strong className="text-slate-700 dark:text-stone-300 font-mono">{formatDate(planTarget.subscriptionExpiresAt)}</strong> ({planTarget.daysRemaining} dias restantes).

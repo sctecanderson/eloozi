@@ -48,6 +48,12 @@ export function ServiceActionPopup({
         guestSessionId: null,
         request: null,
     });
+    const waiterRevision = useRef(0);
+    const billRevision = useRef(0);
+    const waiterMutating = useRef(false);
+    const billMutating = useRef(false);
+    const [waiterChecking, setWaiterChecking] = useState(true);
+    const [billChecking, setBillChecking] = useState(true);
     const [waiterBusy, setWaiterBusy] = useState(false);
     const [waiterError, setWaiterError] = useState('');
     const [waiterRateLimitSeconds, setWaiterRateLimitSeconds] = useState<number | null>(null);
@@ -70,6 +76,12 @@ export function ServiceActionPopup({
 
         if (isOpen && !dialog.open) {
             dialog.showModal();
+            ++waiterRevision.current;
+            ++billRevision.current;
+            setWaiterState({ guestSessionId: null, request: null });
+            setBillRequest(null);
+            setWaiterChecking(true);
+            setBillChecking(true);
             setWaiterError('');
             setBillError('');
             setConfirmCancelBill(false);
@@ -174,10 +186,13 @@ export function ServiceActionPopup({
 
         let disposed = false;
         async function fetchWaiter() {
+            if (waiterMutating.current) return;
+            const revision = ++waiterRevision.current;
             try {
                 const res = await getWaiterRequestState(restaurantSlug, tableNumber);
-                if (!disposed) {
+                if (!disposed && revision === waiterRevision.current && !waiterMutating.current) {
                     setWaiterState(res);
+                    setWaiterChecking(false);
                 }
             } catch {
                 // Silencia falha se não houver chamado registrado
@@ -222,18 +237,22 @@ export function ServiceActionPopup({
 
         let disposed = false;
         async function fetchTabAndBill() {
+            if (billMutating.current) return;
+            const revision = ++billRevision.current;
             try {
                 const tabState = await getGuestTabState(restaurantSlug, tableNumber);
-                if (disposed) return;
+                if (disposed || revision !== billRevision.current || billMutating.current) return;
 
                 if (tabState?.status === 'ready') {
                     setTableTabId(tabState.tab.id);
                     setTabStatus(tabState.tab.status);
                     const billState = await getBillRequestState(tabState.tab.id);
-                    if (!disposed) {
+                    if (!disposed && revision === billRevision.current && !billMutating.current) {
                         setBillRequest(billState);
+                        setBillChecking(false);
                     }
                 } else {
+                    setBillChecking(false);
                     setTableTabId(null);
                     setTabStatus(tabState?.status ?? null);
                     setBillRequest(null);
@@ -335,7 +354,10 @@ export function ServiceActionPopup({
 
     // Ações do Garçom
     async function handleConfirmWaiter() {
-        if (waiterBusy || (waiterRateLimitSeconds !== null && waiterRateLimitSeconds > 0)) return;
+        if (waiterChecking || waiterBusy || (waiterRateLimitSeconds !== null && waiterRateLimitSeconds > 0)) return;
+        if (waiterMutating.current) return;
+        waiterMutating.current = true;
+        ++waiterRevision.current;
         setWaiterBusy(true);
         setWaiterError('');
         try {
@@ -351,12 +373,17 @@ export function ServiceActionPopup({
         } catch (err) {
             setWaiterError(err instanceof Error ? err.message : 'Não foi possível chamar o garçom.');
         } finally {
+            ++waiterRevision.current;
+            waiterMutating.current = false;
             setWaiterBusy(false);
         }
     }
 
     async function handleCancelWaiter() {
         if (waiterBusy) return;
+        if (waiterMutating.current) return;
+        waiterMutating.current = true;
+        ++waiterRevision.current;
         setWaiterBusy(true);
         setWaiterError('');
         try {
@@ -368,17 +395,24 @@ export function ServiceActionPopup({
         } catch (err) {
             setWaiterError(err instanceof Error ? err.message : 'Não foi possível cancelar o chamado.');
         } finally {
+            ++waiterRevision.current;
+            waiterMutating.current = false;
             setWaiterBusy(false);
         }
     }
 
     // Ações da Conta
     async function handleConfirmBill() {
-        if (billBusy || (billRateLimitSeconds !== null && billRateLimitSeconds > 0)) return;
+        if (billChecking || billBusy || (billRateLimitSeconds !== null && billRateLimitSeconds > 0)) return;
+        if (billMutating.current) return;
+        billMutating.current = true;
+        ++billRevision.current;
         setBillBusy(true);
         setBillError('');
 
         if (!tableTabId) {
+            ++billRevision.current;
+            billMutating.current = false;
             setBillBusy(false);
             setBillError(
                 'Sua comanda ainda não está vinculada a esta mesa. Acesse a aba Comanda ou solicite a abertura de comanda com nossa equipe.',
@@ -387,6 +421,8 @@ export function ServiceActionPopup({
         }
 
         if (restaurant.serviceFeePercent > 0 && includeServiceFee === null) {
+            ++billRevision.current;
+            billMutating.current = false;
             setBillBusy(false);
             setBillError('Selecione se deseja incluir ou não a taxa de serviço antes de pedir a conta.');
             return;
@@ -402,12 +438,17 @@ export function ServiceActionPopup({
         } catch (err) {
             setBillError(err instanceof Error ? err.message : 'Não foi possível solicitar a conta.');
         } finally {
+            ++billRevision.current;
+            billMutating.current = false;
             setBillBusy(false);
         }
     }
 
     async function handleCancelBill() {
         if (billBusy || !tableTabId) return;
+        if (billMutating.current) return;
+        billMutating.current = true;
+        ++billRevision.current;
         setBillBusy(true);
         setBillError('');
         try {
@@ -417,6 +458,8 @@ export function ServiceActionPopup({
         } catch (err) {
             setBillError(err instanceof Error ? err.message : 'Não foi possível cancelar o pedido de conta.');
         } finally {
+            ++billRevision.current;
+            billMutating.current = false;
             setBillBusy(false);
         }
     }
@@ -630,7 +673,7 @@ export function ServiceActionPopup({
                             <button
                                 type="button"
                                 className="service-popup-btn solid"
-                                disabled={waiterBusy || (waiterRateLimitSeconds !== null && waiterRateLimitSeconds > 0)}
+                                disabled={waiterChecking || waiterBusy || (waiterRateLimitSeconds !== null && waiterRateLimitSeconds > 0)}
                                 onClick={() => void handleConfirmWaiter()}
                             >
                                 {waiterBusy ? 'Enviando…' : 'Confirmar'}
@@ -828,7 +871,7 @@ export function ServiceActionPopup({
                                     <button
                                         type="button"
                                         className="service-popup-btn solid"
-                                        disabled={billBusy || (billRateLimitSeconds !== null && billRateLimitSeconds > 0) || (restaurant.serviceFeePercent > 0 && includeServiceFee === null)}
+                                        disabled={billChecking || billBusy || (billRateLimitSeconds !== null && billRateLimitSeconds > 0) || (restaurant.serviceFeePercent > 0 && includeServiceFee === null)}
                                         onClick={() => void handleConfirmBill()}
                                     >
                                         {billBusy ? 'Solicitando…' : 'Pedir Conta'}

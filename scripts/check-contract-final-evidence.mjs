@@ -1,0 +1,7 @@
+// Validates saved browser evidence, not a browser replay.
+import fs from 'node:fs';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';
+const rows=JSON.parse(fs.readFileSync('docs/contract-final-browser.json','utf8'));assert.equal(rows.length,26);
+for(const r of rows){assert.ok(r.images);assert.ok(r.scroll<=r.client);assert.ok(fs.statSync(r.file).size>1000);assert.equal(r.buttons[0].rect.width,r.buttons[1].rect.width);assert.equal(r.buttons[0].rect.height,r.buttons[1].rect.height);for(const c of r.content)assert.ok(!(Math.min(c.right,r.art.right)-Math.max(c.left,r.art.left)>1&&Math.min(c.bottom,r.art.bottom)-Math.max(c.top,r.art.top)>1));if(r.scenario==='premium')assert.deepEqual(r.features,['Mesas simultâneas ilimitadas','Cardápio digital e comandas','KDS Cozinha e Bar','Estoque e Insumos','Financeiro']);if(r.file.includes('second'))assert.match(r.restaurant,/Restaurante de demonstração/);}
+for(const w of [1920,900,390])for(const theme of ['light','dark'])for(const scenario of ['basic','pro','premium','first'])assert.ok(rows.find(r=>r.w===w&&r.theme===theme&&r.scenario===scenario));
+const scope=JSON.parse(fs.readFileSync('docs/contract-final-scope.json','utf8'));for(const [p,h] of Object.entries(scope.hashes))assert.equal(createHash('sha256').update(fs.readFileSync(p)).digest('hex'),h);
+console.log('PASS: 26 saved browser observations; equal button dimensions; no art overlap or horizontal overflow; five Premium resources; dynamic restaurant name; source hashes. Not a browser replay.');

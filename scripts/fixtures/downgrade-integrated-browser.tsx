@@ -1,0 +1,12 @@
+// Only imported by .tools fixture entry. Never included in production src/build.
+import {createContext,useContext,useState,useEffect,type ReactNode} from 'react';
+async function api(path:string,body?:unknown){const res=await fetch('/__validation/'+path,body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:undefined);const value=await res.json();if(!res.ok)throw Error(value.error?.message??'Fixture error');return value;}
+const Context=createContext<any>(null);
+export function useRestaurant(){return useContext(Context);}
+export function LocalFixture({children}:{children:ReactNode}){
+ const [restaurant,setRestaurant]=useState<any>(null);const reload=async()=>{const state=await api('state');const now=Date.parse(state.__fixture_clock);if(Number.isFinite(now))Date.now=()=>now;setRestaurant(state);};useEffect(()=>{void reload();},[]);
+ return restaurant?<Context.Provider value={{restaurant,reload}}>{children}</Context.Provider>:<p>Carregando PostgreSQL LOCAL descartável…</p>;
+}
+export function Controls(){const {reload}=useRestaurant();const [message,setMessage]=useState('');const command=async(action:string)=>{try{const r=await api('control',{action});setMessage(r.notice??'Fixture atualizada. Recarregue a página para consultar o estado.');if(action!=='stop')await reload();}catch(e){setMessage(String(e));}};return <aside aria-label="Controle exclusivamente local" style={{padding:12,background:'#fff4cc',color:'#302200',position:'relative',zIndex:1,fontSize:13}}><strong>Bancada LOCAL: PostgreSQL real · gateway simulado · relógio virtual · sem pagamento real</strong><div style={{display:'flex',flexWrap:'wrap',gap:12,marginTop:8}}><button onClick={()=>void command('advance')}>Avançar relógio local até a fronteira</button><button onClick={()=>void command('receive')}>Simular recebimento no gateway local</button><button onClick={()=>void command('save')}>Salvar evidência local</button><button onClick={()=>void command('stop')}>Encerrar bancada local</button></div><p>{message}</p></aside>;}
+export const supabase={rpc:(name:string,args:unknown)=>api('rpc',{name,args}),functions:{invoke:(name:string,{body}:any)=>api('function',{name,body})},channel:()=>({on(){return this},subscribe(){return this}}),removeChannel:async()=>{},auth:{signOut:async()=>({error:null})}};
+export const fetchUnreadAlerts=async()=>[];export const markAlertAsRead=async()=>{throw Error('Outside fixture scope')};export const markAllAlertsAsRead=markAlertAsRead;export const subscribeToAlerts=()=>()=>{};

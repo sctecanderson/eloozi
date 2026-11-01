@@ -1,9 +1,19 @@
 import { supabase } from '../../lib/supabase';
+import { isQueryTimeoutError } from '../../lib/queryErrors';
 import { fetchActiveKdsItems, advanceKdsItemStatus } from '../kds/kdsService';
-import { attendWaiterRequest } from './serviceRequests';
-import { attendBillRequest } from './billRequests';
+import { attendWaiterRequest, completeWaiterRequest } from './serviceRequests';
+import { attendBillRequest, completeBillRequest } from './billRequests';
 
 export type ChamadoCategory = 'ready_order' | 'waiter_call' | 'bill_request';
+
+export function shouldRefreshReadyOrderQueue(payload: {
+  new?: { production_status?: string | null };
+  old?: { production_status?: string | null };
+}): boolean {
+  return payload.new?.production_status === 'ready'
+    || payload.new?.production_status === 'delivered'
+    || payload.old?.production_status === 'ready';
+}
 
 export interface ChamadoItem {
   id: string;
@@ -15,7 +25,7 @@ export interface ChamadoItem {
   description: string;
   createdAt: string;
   prepReadyAt?: string | null;
-  status: 'pending' | 'ready';
+  status: 'pending' | 'attended' | 'ready';
   productName?: string;
   quantity?: number;
   preparationStation?: 'kitchen' | 'bar' | 'none';
@@ -289,11 +299,13 @@ export async function fetchPendingChamados(
       `)
       .eq('restaurant_id', restaurantId)
       .in('request_type', ['waiter', 'bill'])
-      .eq('status', 'pending')
+      .in('status', ['pending', 'attended'])
       .order('created_at', { ascending: true });
 
     if (error) {
-      serviceRequestsError = error.message || 'Erro ao carregar solicitações de serviço.';
+      serviceRequestsError = isQueryTimeoutError(error)
+        ? 'A consulta de chamados excedeu o tempo limite. Atualize novamente; isso não significa que seu acesso foi negado.'
+        : error.message || 'Erro ao carregar solicitações de serviço.';
       console.error('Erro ao buscar service_requests:', error);
       if (previousItems) {
         serviceItems = previousItems.filter(
@@ -319,7 +331,7 @@ export async function fetchPendingChamados(
             tabLabel,
             description: 'Cliente solicitou atendimento do garçom',
             createdAt: req.created_at,
-            status: 'pending',
+            status: req.status,
             tableVisitId: req.table_visit_id ?? undefined,
             tableTabId: req.table_tab_id ?? undefined,
           });
@@ -335,7 +347,7 @@ export async function fetchPendingChamados(
               ? 'Cliente pediu a conta (com taxa de serviço)'
               : 'Cliente pediu a conta (sem taxa de serviço)',
             createdAt: req.created_at,
-            status: 'pending',
+            status: req.status,
             includeServiceFee: req.include_service_fee,
             tableVisitId: req.table_visit_id ?? undefined,
             tableTabId: req.table_tab_id ?? undefined,
@@ -344,7 +356,9 @@ export async function fetchPendingChamados(
       }
     }
   } catch (err) {
-    serviceRequestsError = err instanceof Error ? err.message : 'Falha na consulta de chamados.';
+    serviceRequestsError = isQueryTimeoutError(err)
+      ? 'A consulta de chamados excedeu o tempo limite. Atualize novamente; isso não significa que seu acesso foi negado.'
+      : err instanceof Error ? err.message : 'Falha na consulta de chamados.';
     console.error('Falha de rede/exceção em service_requests:', err);
     if (previousItems) {
       serviceItems = previousItems.filter(
@@ -433,5 +447,15 @@ export async function executeAttendBillRequest(
       success: false,
       error: err instanceof Error ? err.message : 'Falha ao marcar conta como atendida.',
     };
+  }
+}
+
+export async function executeCompleteServiceCall(restaurantSlug: string, requestId: string, kind: 'waiter' | 'bill') {
+  try {
+    if (kind === 'waiter') await completeWaiterRequest(restaurantSlug, requestId);
+    else await completeBillRequest(restaurantSlug, requestId);
+    return { success: true };
+  } catch (cause) {
+    return { success: false, error: cause instanceof Error ? cause.message : 'Não foi possível concluir o atendimento.' };
   }
 }

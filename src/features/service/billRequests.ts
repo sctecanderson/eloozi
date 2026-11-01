@@ -34,7 +34,7 @@ function parseBillRequest(value: unknown): BillRequest {
     || typeof value.table_visit_id !== 'string'
     || typeof value.table_tab_id !== 'string'
     || value.request_type !== 'bill'
-    || (value.status !== 'pending' && value.status !== 'attended' && value.status !== 'cancelled')
+    || (value.status !== 'pending' && value.status !== 'attended' && value.status !== 'cancelled' && value.status !== 'completed')
     || typeof value.created_at !== 'string' || !Number.isFinite(Date.parse(value.created_at))
     || !isNullableString(value.resolved_at)
     || !isNullableString(value.resolved_by_member_id)) {
@@ -61,6 +61,7 @@ export async function getBillRequestState(tableTabId: string): Promise<BillReque
     .select('id, restaurant_id, restaurant_table_id, table_visit_id, table_tab_id, request_type, status, created_at, resolved_at, resolved_by_member_id, include_service_fee')
     .eq('table_tab_id', tableTabId)
     .eq('request_type', 'bill')
+    .in('status', ['pending', 'attended'])
     .order('created_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(1)
@@ -99,7 +100,7 @@ export async function requestBill(
     throw new Error('O servidor não confirmou sua solicitação.');
   }
   const request = parseBillRequest(data.request);
-  if (request.table_tab_id !== tableTabId || request.status !== 'pending') {
+  if (request.table_tab_id !== tableTabId || (request.status !== 'pending' && request.status !== 'attended')) {
     throw new Error('O servidor não confirmou um pedido pendente para esta comanda.');
   }
   return { status: data.status, request };
@@ -164,4 +165,15 @@ export async function cancelBillRequest(restaurantSlug: string, tableTabId: stri
     requestId: data.request_id,
     tableTabId: data.table_tab_id,
   };
+}
+
+/** Conclui a solicitação de atendimento, sem quitar a comanda. */
+export async function completeBillRequest(restaurantSlug: string, requestId: string): Promise<BillRequest> {
+  const { data, error } = await supabase.rpc('complete_table_tab_bill', {
+    p_restaurant_slug: restaurantSlug, p_service_request_id: requestId,
+  }).single();
+  if (error) throw operationError(error, 'Não foi possível concluir o atendimento da conta.');
+  const request = parseBillRequest(data);
+  if (request.id !== requestId || request.status !== 'completed') throw new Error('Conclusão não confirmada pelo servidor.');
+  return request;
 }

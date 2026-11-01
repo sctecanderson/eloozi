@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { Link } from 'react-router';
 import { supabase } from '../../lib/supabase';
+import { createRefreshCoalescer } from '../../lib/refreshCoalescer';
+import { TableTabsPaymentDialog } from './TableTabsPaymentDialog';
+import {
+  aggregateOpenTabs,
+  collectOpenTabItems,
+  createSplitBillBasis,
+  getOpenTabIds,
+} from './tableTabsPayment';
 import {
   closeTableTab,
   createTableTab,
@@ -16,6 +24,7 @@ import {
   cancelTabConsumptionBatch,
   transferTabConsumptionItems,
   getTabConsumption,
+  getVisitTabConsumptions,
 } from './tabConsumption';
 import type { TabConsumptionItem } from './tabConsumption';
 import {
@@ -43,6 +52,7 @@ import {
   parseSplitPeopleCount,
 } from './splitBillRules';
 import { useRestaurant } from '../restaurants/RestaurantProvider';
+import { canConfirmDelivery, confirmDelivery } from './manualDelivery';
 import { printTableBillThermal } from '../../components/ThermalReceiptPrint';
 
 interface TableTabsPanelProps {
@@ -150,6 +160,8 @@ function TableTabsContent({
       return null;
     }
   });
+  const [jointPaymentRequest, setJointPaymentRequest] = useState<{ id: number; tabIds: string[] } | null>(null);
+  const jointPaymentRequestIdRef = useRef(0);
 
   const currentVisitIdRef = useRef(tableVisitId);
   currentVisitIdRef.current = tableVisitId;
@@ -255,6 +267,11 @@ function TableTabsContent({
 
   // Modal de Simulação de Divisão de Conta (Estimativa Visual)
   const [isSplitBillModalOpen, setIsSplitBillModalOpen] = useState(false);
+  const [splitBillBasis, setSplitBillBasis] = useState<{
+    kind: 'joint' | 'individual';
+    tabId: string | null;
+    totalInCents: number;
+  } | null>(null);
   const [splitPeopleInput, setSplitPeopleInput] = useState('2');
 
   // Ao alterar a pessoa/comanda ou visita, atualiza corretamente a lista e a página selecionada
@@ -270,6 +287,7 @@ function TableTabsContent({
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const consumptionRefreshRef = useRef<{ request: () => Promise<void> } | null>(null);
 
   // Auto-dismiss do Toast verde de confirmação
   useEffect(() => {
@@ -426,62 +444,73 @@ function TableTabsContent({
           return next;
         });
 
-        // Carrega consumo de cada comanda aberta com versão compartilhada por comanda
-        await Promise.all(
-          openTabsList.map(async (tab) => {
-            const tabId = tab.id;
-            const tabVersion = (tabVersionRef.current[tabId] = (tabVersionRef.current[tabId] || 0) + 1);
+        // Uma única RPC lê todos os consumos da visita no mesmo snapshot, sem repetir o catálogo.
+        const batchVersions = new Map<string, number>();
+        for (const tab of openTabsList) {
+          batchVersions.set(tab.id, tabVersionRef.current[tab.id] = (tabVersionRef.current[tab.id] || 0) + 1);
+        }
+        let loadedConsumptions: Awaited<ReturnType<typeof getVisitTabConsumptions>> | null = null;
+        try {
+          const consumptions: Awaited<ReturnType<typeof getVisitTabConsumptions>> = openTabsList.length
+            ? await getVisitTabConsumptions(restaurantId, targetVisitId)
+            : {};
+          if (
+            disposed || !isMountedRef.current
+            || currentVersion !== loadVersionRef.current
+            || currentVisitIdRef.current !== targetVisitId
+          ) return;
 
-            try {
-              const c = await getTabConsumption(restaurantId, tabId);
-              if (
-                disposed ||
-                !isMountedRef.current ||
-                currentVisitIdRef.current !== targetVisitId
-              ) {
-                return;
+          loadedConsumptions = consumptions;
+          setTabConsumptions((previous) => {
+            const next: Record<string, TabConsumptionEntry> = {};
+            for (const tab of openTabsList) {
+              if (batchVersions.get(tab.id) !== tabVersionRef.current[tab.id]) {
+                if (previous[tab.id]) next[tab.id] = previous[tab.id];
+                continue;
               }
-              if (tabVersionRef.current[tabId] !== tabVersion) return;
-
-              setTabConsumptions((prev) => ({
-                ...prev,
-                [tabId]: {
-                  status: 'loaded',
-                  items: c.items,
-                  totalInCents: c.totalInCents,
-                  isStale: false,
-                },
-              }));
-            } catch (cause) {
-              if (
-                disposed ||
-                !isMountedRef.current ||
-                currentVisitIdRef.current !== targetVisitId
-              ) {
-                return;
-              }
-              if (tabVersionRef.current[tabId] !== tabVersion) return;
-
-              setTabConsumptions((prev) => {
-                const cur = prev[tabId];
-                const hadPreviousData = Boolean(cur && (cur.status === 'loaded' || cur.isStale));
-                return {
-                  ...prev,
-                  [tabId]: {
-                    status: 'error',
-                    items: cur?.items ?? [],
-                    totalInCents: cur?.totalInCents ?? 0,
-                    error:
-                      cause instanceof Error
-                        ? cause.message
-                        : 'Falha ao consultar consumo desta comanda.',
-                    isStale: hadPreviousData,
-                  },
+              const consumption = consumptions[tab.id];
+              const current = previous[tab.id];
+              if (consumption) {
+                next[tab.id] = {
+                  status: 'loaded', items: consumption.items,
+                  totalInCents: consumption.totalInCents, isStale: false,
                 };
-              });
+              } else {
+                next[tab.id] = {
+                  status: 'error', items: current?.items ?? [],
+                  totalInCents: current?.totalInCents ?? 0,
+                  error: 'O servidor não retornou o consumo desta comanda.',
+                  isStale: Boolean(current && (current.status === 'loaded' || current.isStale)),
+                };
+              }
             }
-          }),
-        );
+            return next;
+          });
+        } catch (cause) {
+          if (
+            disposed || !isMountedRef.current
+            || currentVersion !== loadVersionRef.current
+            || currentVisitIdRef.current !== targetVisitId
+          ) throw cause;
+          setTabConsumptions((previous) => {
+            const next: Record<string, TabConsumptionEntry> = {};
+            for (const tab of openTabsList) {
+              if (batchVersions.get(tab.id) !== tabVersionRef.current[tab.id]) {
+                if (previous[tab.id]) next[tab.id] = previous[tab.id];
+                continue;
+              }
+              const current = previous[tab.id];
+              const hadPreviousData = Boolean(current && (current.status === 'loaded' || current.isStale));
+              next[tab.id] = {
+                status: 'error', items: current?.items ?? [],
+                totalInCents: current?.totalInCents ?? 0,
+                error: cause instanceof Error ? cause.message : 'Falha ao consultar consumo desta comanda.',
+                isStale: hadPreviousData,
+              };
+            }
+            return next;
+          });
+        }
 
         if (
           disposed ||
@@ -497,8 +526,12 @@ function TableTabsContent({
         // REGRA DE RENDERIZAÇÃO AUTOMÁTICA DA ABA "COMANDA":
         // 1. Se a comanda ativa possuir itens lançados (items.length > 0): Renderize IMEDIATAMENTE a Tela 4.
         // 2. Se a comanda ativa não possuir itens: Exiba a Tela 3 (a não ser que o garçom já tenha aberto o catálogo via sessionStorage).
+        const activeTabBatchIsCurrent = currentActiveTabId !== null
+          && batchVersions.get(currentActiveTabId) === tabVersionRef.current[currentActiveTabId];
         const activeItemsCount = currentActiveTabId
-          ? (tabConsumptionsRef.current[currentActiveTabId]?.items?.filter((it) => it.status === 'active')?.length ?? 0)
+          ? (((activeTabBatchIsCurrent ? loadedConsumptions?.[currentActiveTabId]?.items : undefined)
+            ?? tabConsumptionsRef.current[currentActiveTabId]?.items)
+            ?.filter((it) => it.status === 'active')?.length ?? 0)
           : 0;
 
         let storedMode: string | null = null;
@@ -541,7 +574,9 @@ function TableTabsContent({
       }
     }
 
-    void load();
+    const refreshes = createRefreshCoalescer(load, 120);
+    consumptionRefreshRef.current = refreshes;
+    void refreshes.request();
 
     const channel = supabase
       .channel(`table-items-waiter:${restaurantId}:${tableVisitId}`)
@@ -555,7 +590,7 @@ function TableTabsContent({
         },
         () => {
           if (!disposed && isMountedRef.current && currentVisitIdRef.current === tableVisitId) {
-            void load();
+            void refreshes.request();
           }
         },
       )
@@ -563,9 +598,15 @@ function TableTabsContent({
 
     return () => {
       disposed = true;
+      refreshes.dispose();
+      if (consumptionRefreshRef.current === refreshes) consumptionRefreshRef.current = null;
       void supabase.removeChannel(channel);
     };
-  }, [restaurantId, tableVisitId, restaurantSlug, refresh]);
+  }, [restaurantId, tableVisitId, restaurantSlug]);
+
+  useEffect(() => {
+    if (refresh > 0) void consumptionRefreshRef.current?.request();
+  }, [refresh]);
 
   // Função centralizada para recarregar consumo de comanda com controle de versão e resultado explícito
   async function reloadTabConsumption(tabId: string): Promise<ReloadConsumptionResult> {
@@ -750,31 +791,11 @@ function TableTabsContent({
   }, [tabConsumptions, selectedTabId]);
 
   // Cálculos financeiros totais da mesa e identificação estrita de dados incompletos/erro/desatualizados
-  const { tableSubtotal, tableFee, tableGrandTotal, tableTotalsIncomplete } = useMemo(() => {
-    let subtotal = 0;
-    let incomplete = false;
-
-    // Se houver comandas abertas, cada uma DEVE ter entrada carregada e válida em tabConsumptions
-    for (const t of openTabs) {
-      const c = tabConsumptions[t.id];
-      // Qualquer comanda sem entrada, em carregamento, com erro ou desatualizada torna o total da mesa incompleto
-      if (!c || c.status !== 'loaded' || c.isStale) {
-        incomplete = true;
-      }
-      if (c && c.status === 'loaded') {
-        subtotal += c.totalInCents;
-      }
-    }
-
-    const fee = calculateTabClosureFee(subtotal, restaurantFeePercent);
-    const grand = subtotal + fee;
-    return {
-      tableSubtotal: subtotal,
-      tableFee: fee,
-      tableGrandTotal: grand,
-      tableTotalsIncomplete: incomplete,
-    };
-  }, [openTabs, tabConsumptions, restaurantFeePercent]);
+  const { subtotalInCents: tableSubtotal, serviceFeeInCents: tableFee,
+    totalInCents: tableGrandTotal, incomplete: tableTotalsIncomplete } = useMemo(
+    () => aggregateOpenTabs(openTabs, tabConsumptions, restaurantFeePercent),
+    [openTabs, tabConsumptions, restaurantFeePercent],
+  );
 
   // Cálculos financeiros específicos da pessoa/comanda selecionada (Tela 4)
   const { personSubtotal, personFee, personTotal, personConsumptionIncomplete } = useMemo(() => {
@@ -819,6 +840,18 @@ function TableTabsContent({
     personTotal,
     personConsumptionIncomplete,
   ]);
+
+  function openJointPaymentDialog() {
+    if (disabled || busy || tableTotalsIncomplete) return;
+    const tabIds = getOpenTabIds(openTabs);
+    if (tabIds.length === 0) return;
+    setJointPaymentRequest({ id: ++jointPaymentRequestIdRef.current, tabIds });
+  }
+
+  function openSplitBillDialog() {
+    setSplitBillBasis(createSplitBillBasis(isSharedTabSelected, selectedTabId, effectiveTotal));
+    setIsSplitBillModalOpen(true);
+  }
 
   async function perform(
     operation: () => Promise<unknown>,
@@ -1305,54 +1338,27 @@ function TableTabsContent({
     });
   }
 
-  // Ação rápida: Garçom marca item pronto como entregue na mesa
+  // Server-confirmed delivery; reload even after a partially successful group or error.
   async function handleMarkDelivered(group: { itemIds: string[]; productName: string }) {
-    if (disabled) return;
-
-    // Atualização otimista imediata na UI
-    setTabConsumptions((prev) => {
-      const updated = { ...prev };
-      for (const [tabId, cur] of Object.entries(updated)) {
-        updated[tabId] = {
-          ...cur,
-          items: cur.items.map((it) =>
-            group.itemIds.includes(it.id)
-              ? {
-                  ...it,
-                  production_status: 'delivered' as const,
-                  prep_delivered_at: new Date().toISOString(),
-                }
-              : it,
-          ),
-        };
-      }
-      return updated;
-    });
-
-    await perform(
-      async () => {
-        for (const itemId of group.itemIds) {
-          try {
-            const { error: rpcErr } = await supabase.rpc('update_tab_item_production_status', {
-              p_restaurant_slug: restaurantSlug,
-              p_item_id: itemId,
-              p_target_status: 'delivered',
-            });
-            if (rpcErr) throw rpcErr;
-          } catch {
-            const { error } = await supabase
-              .from('table_tab_items')
-              .update({
-                production_status: 'delivered',
-                prep_delivered_at: new Date().toISOString(),
-              })
-              .eq('id', itemId);
-            if (error) throw new Error(error.message);
-          }
+    if (disabled || submitting.current) return;
+    const tabIds = Object.entries(tabConsumptions)
+      .filter(([, c]) => c.items.some((it) => group.itemIds.includes(it.id)))
+      .map(([id]) => id);
+    await perform(async () => {
+      try {
+        for (const tabId of tabIds) {
+          const entry = tabConsumptions[tabId];
+          if (entry.status !== 'loaded' || entry.isStale) throw new Error('Atualize o consumo antes de confirmar a entrega.');
+          await confirmDelivery({
+            restaurantSlug, restaurantId, visitId: tableVisitId, tabId,
+            itemIds: entry.items.filter((it) => group.itemIds.includes(it.id)).map((it) => it.id),
+          });
         }
-      },
-      `${group.productName} marcado como entregue.`,
-    );
+        if (tabIds.length === 0) throw new Error('Item não encontrado no consumo atual.');
+      } finally {
+        await Promise.all(tabIds.map((id) => reloadTabConsumption(id)));
+      }
+    }, `${group.productName}: entrega confirmada pelo servidor.`);
   }
 
   // Limpar itens da comanda atual com tratamento de erros parciais, confirmação, bloqueio estrito e recarregamento garantido
@@ -1408,13 +1414,10 @@ function TableTabsContent({
     setNotice(`Pedido de ${selectedTab?.label || 'Mesa'} enviado com sucesso para a cozinha!`);
   }
 
-  const allActiveItems = useMemo(() => {
-    const list: TabConsumptionItem[] = [];
-    for (const c of Object.values(tabConsumptions)) {
-      list.push(...c.items.filter((it) => it.status === 'active'));
-    }
-    return list;
-  }, [tabConsumptions]);
+  const allActiveItems = useMemo(
+    () => collectOpenTabItems(openTabs, tabConsumptions),
+    [openTabs, tabConsumptions],
+  );
 
   // Imprimir pré-conta térmica (bloqueia estritamente se houver dados incompletos, pendentes ou desatualizados)
   function handlePrintReceipt() {
@@ -1572,6 +1575,7 @@ function TableTabsContent({
     primaryItemId: string;
   }) {
     const isReady = group.productionStatus === 'ready';
+    const canDeliver = canConfirmDelivery(restaurant.subscriptionPlan, group.productionStatus);
 
     return (
       <div
@@ -1619,7 +1623,7 @@ function TableTabsContent({
 
               {/* Badges de Status de Produção */}
               {group.productionStatus === 'pending' && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200/60">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200/60 dark:text-amber-200 dark:bg-amber-950/40">
                   ● Aguardando início de preparo
                 </span>
               )}
@@ -1634,7 +1638,7 @@ function TableTabsContent({
                 </span>
               )}
               {group.productionStatus === 'delivered' && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-100 text-zinc-600 border border-zinc-200">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-100 text-zinc-600 border border-zinc-200 dark:text-zinc-300 dark:bg-zinc-800">
                   ✓ Entregue
                 </span>
               )}
@@ -1644,7 +1648,7 @@ function TableTabsContent({
 
         <div className="flex items-center gap-2 shrink-0">
           {/* Ação rápida de entrega para o garçom */}
-          {isReady && (
+          {canDeliver && (
             <button
               type="button"
               disabled={disabled}
@@ -1655,7 +1659,7 @@ function TableTabsContent({
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
-              <span>Marcar como entregue</span>
+              <span>Confirmar entrega</span>
             </button>
           )}
 
@@ -1961,6 +1965,19 @@ function TableTabsContent({
 
   return (
     <div className="space-y-4">
+      <TableTabsPaymentDialog slug={restaurantSlug} visitId={tableVisitId}
+        tabs={openTabs} feePercent={restaurantFeePercent} disabled={disabled} request={jointPaymentRequest}
+        onPaid={result => {
+          const paidIds = new Set(result.tabs.map(tab => tab.id));
+          setState(previous => ({ ...previous, tabs: previous.tabs.filter(tab => !paidIds.has(tab.id)) }));
+          if (selectedTabId && paidIds.has(selectedTabId)) {
+            const next = state.tabs.find(tab => tab.status === 'open' && !paidIds.has(tab.id));
+            setSelectedTabId(next?.id ?? null);
+            if (!next) setIsCatalogOpen(false);
+          }
+          setNotice('Pagamento confirmado: ' + currency.format(result.totalInCents / 100) + '. ' + result.openTabsCount + ' comanda(s) ainda aberta(s).');
+          setRefresh(current => current + 1);
+        }} />
       {/* Toast verde temporário de acesso confirmado */}
       {showSuccessToast && (
         <div className="flex items-center justify-between p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/90 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 shadow-xs text-xs animate-fadeIn transition-all">
@@ -2099,7 +2116,7 @@ function TableTabsContent({
                     setIsCreatingDraft(true);
                     setDraftName('');
                   }}
-                  className="border border-dashed border-amber-900/20 dark:border-zinc-800 bg-[#FCF9F5]/60 dark:bg-zinc-900/60 rounded-2xl p-4 flex items-center justify-center gap-2 text-xs text-zinc-500 cursor-pointer hover:bg-[#FCF9F5] transition"
+                  className="border border-dashed border-amber-900/20 dark:border-zinc-800 bg-[#FCF9F5]/60 dark:bg-zinc-900/60 rounded-2xl p-4 flex items-center justify-center gap-2 text-xs text-zinc-500 cursor-pointer hover:bg-[#FCF9F5] transition dark:text-zinc-300"
                 >
                   <span>+ Clique para criar a primeira comanda</span>
                 </div>
@@ -2256,7 +2273,7 @@ function TableTabsContent({
                             {tabConsumptions[tab.id]?.status === 'loading' ? (
                               <span className="text-zinc-400 font-normal">Calculando consumo…</span>
                             ) : tabConsumptions[tab.id]?.status === 'error' ? (
-                              <span className="text-rose-500 font-normal">Erro no consumo</span>
+                              <span className="text-rose-500 font-normal dark:text-rose-300">Erro no consumo</span>
                             ) : (
                               <span>
                                 {currency.format((tabConsumptions[tab.id]?.totalInCents ?? 0) / 100)}
@@ -2384,7 +2401,7 @@ function TableTabsContent({
             {tableTotalsIncomplete && (
               <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 p-2.5 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-amber-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg className="w-4 h-4 text-amber-600 shrink-0 dark:text-amber-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <circle cx="12" cy="12" r="10" />
                     <line x1="12" y1="8" x2="12" y2="12" />
                     <line x1="12" y1="16" x2="12.01" y2="16" />
@@ -2479,7 +2496,7 @@ function TableTabsContent({
             <div className="grid grid-cols-2 gap-2 mt-2">
               <button
                 type="button"
-                onClick={() => setIsSplitBillModalOpen(true)}
+                onClick={openSplitBillDialog}
                 className="py-2.5 px-2 sm:px-3 rounded-2xl border border-amber-300 dark:border-amber-800/80 bg-amber-50/90 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-[#782006] dark:text-amber-300 font-semibold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer text-center"
                 title="Simular divisão estimada da conta"
               >
@@ -2492,7 +2509,20 @@ function TableTabsContent({
                 <span className="truncate">Dividir conta</span>
               </button>
 
-              {selectedTab && selectedTab.status === 'open' && (
+              {isSharedTabSelected ? (
+                <button
+                  type="button"
+                  disabled={disabled || busy || tableTotalsIncomplete || openTabs.length === 0}
+                  onClick={openJointPaymentDialog}
+                  className="min-w-0 py-2.5 px-2 sm:px-3 rounded-2xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/80 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 font-semibold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-center"
+                  title="Conferir e fechar todas as comandas abertas desta mesa"
+                >
+                  <svg className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a2 2 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="min-w-0 text-center leading-tight">Fechar conta conjunta</span>
+                </button>
+              ) : selectedTab && selectedTab.status === 'open' && (
                 <button
                   type="button"
                   disabled={disabled || busy || (selectedTabId ? tabConsumptions[selectedTabId]?.status === 'loading' : false)}
@@ -2522,7 +2552,7 @@ function TableTabsContent({
           <button
             type="button"
             onClick={handleBackToComandas}
-            className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-800 dark:hover:text-white transition cursor-pointer"
+            className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-800 dark:hover:text-white transition cursor-pointer dark:text-zinc-300"
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="15 18 9 12 15 6" />
@@ -2617,7 +2647,7 @@ function TableTabsContent({
                   setNewPersonName('');
                 }}
                 disabled={disabled}
-                className="border-2 border-dashed border-zinc-200 dark:border-zinc-700 hover:border-amber-900/40 bg-white/40 dark:bg-zinc-900/40 rounded-2xl p-2.5 flex flex-col items-center justify-center min-w-[85px] shrink-0 text-zinc-500 hover:text-zinc-800 transition cursor-pointer disabled:opacity-50"
+                className="border-2 border-dashed border-zinc-200 dark:border-zinc-700 hover:border-amber-900/40 bg-white/40 dark:bg-zinc-900/40 rounded-2xl p-2.5 flex flex-col items-center justify-center min-w-[85px] shrink-0 text-zinc-500 hover:text-zinc-800 transition cursor-pointer disabled:opacity-50 dark:text-zinc-300"
               >
                 <div className="w-6 h-6 rounded-full border border-zinc-300 dark:border-zinc-600 flex items-center justify-center text-zinc-600 dark:text-zinc-300 text-sm font-bold mb-1">
                   +
@@ -2816,8 +2846,8 @@ function TableTabsContent({
                   </div>
 
                   <div>
-                    <h4 className="font-bold text-xs text-zinc-900 dark:text-white truncate">
-                      {sharedTab ? 'Conta conjunta' : '+ Conta conjunta'}
+                      <h4 className="font-bold text-xs text-zinc-900 dark:text-white leading-tight">
+                      {sharedTab ? 'Conta conjunta — Mesa toda' : '+ Conta conjunta — Mesa toda'}
                     </h4>
                     <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 block mt-0.5">
                       {tableTotalsIncomplete
@@ -2995,7 +3025,7 @@ function TableTabsContent({
                                 className="w-14 h-14 rounded-xl object-cover shrink-0 bg-zinc-100 dark:bg-zinc-800"
                               />
                             ) : (
-                              <div className="w-14 h-14 rounded-xl bg-[#FAF4EE] dark:bg-zinc-800 flex items-center justify-center text-[#782006] shrink-0 font-bold text-sm">
+                              <div className="w-14 h-14 rounded-xl bg-[#FAF4EE] dark:bg-zinc-800 flex items-center justify-center text-[#782006] dark:text-amber-200 shrink-0 font-bold text-sm">
                                 {prod.name.charAt(0)}
                               </div>
                             )}
@@ -3087,7 +3117,7 @@ function TableTabsContent({
                       <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
                       <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                     </svg>
-                    Conta conjunta (Mesa toda)
+                    Conta conjunta — Mesa toda
                   </h4>
                 ) : (
                   <>
@@ -3185,7 +3215,7 @@ function TableTabsContent({
                         </span>
                         <span className="font-extrabold text-amber-950 dark:text-amber-200">
                           {sharedConsumption?.status === 'error' ? (
-                            <span className="text-rose-600 text-[11px]">Indisponível</span>
+                            <span className="text-rose-600 text-[11px] dark:text-rose-300">Indisponível</span>
                           ) : sharedConsumption?.status === 'loading' ? (
                             <span className="text-zinc-400 text-[11px]">…</span>
                           ) : (
@@ -3338,7 +3368,7 @@ function TableTabsContent({
                             </span>
                             <span className="font-extrabold text-zinc-900 dark:text-white">
                               {personConsumption.status === 'error' ? (
-                                <span className="text-rose-600 text-[11px]">Indisponível</span>
+                                <span className="text-rose-600 text-[11px] dark:text-rose-300">Indisponível</span>
                               ) : personConsumption.status === 'loading' ? (
                                 <span className="text-zinc-400 text-[11px]">…</span>
                               ) : (
@@ -3395,7 +3425,7 @@ function TableTabsContent({
                                   ) : (
                                     paginatedPerson.isPaginated && (
                                       <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-1.5 border-t border-zinc-100 dark:border-zinc-800">
-                                        <span className="text-[11px] text-zinc-500 font-medium">
+                                        <span className="text-[11px] text-zinc-500 font-medium dark:text-zinc-300">
                                           {paginatedPerson.rangeText}
                                         </span>
                                         <div className="flex items-center gap-1">
@@ -3462,7 +3492,7 @@ function TableTabsContent({
                 {selectedTabConsumption.status === 'loading' ? (
                   <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 text-center space-y-1 my-2">
                     <div className="w-5 h-5 border-2 border-[#4A1505] border-t-transparent rounded-full animate-spin mx-auto" />
-                    <p className="text-xs text-zinc-500">Consultando consumo no servidor…</p>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-300">Consultando consumo no servidor…</p>
                   </div>
                 ) : selectedTabConsumption.status === 'error' ? (
                   <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40 text-center space-y-2 my-2">
@@ -3511,7 +3541,7 @@ function TableTabsContent({
                             {/* Paginação se total > 5 */}
                             {paginatedItemsResult.isPaginated && (
                               <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-1.5 border-t border-zinc-100 dark:border-zinc-800">
-                                <span className="text-[11px] text-zinc-500 font-medium">
+                                <span className="text-[11px] text-zinc-500 font-medium dark:text-zinc-300">
                                   {paginatedItemsResult.rangeText}
                                 </span>
                                 <div className="flex items-center gap-1">
@@ -3592,7 +3622,7 @@ function TableTabsContent({
                         setIsEditingObservation(false);
                         setObservationInput('');
                       }}
-                      className="px-2.5 py-1 text-xs text-zinc-500 hover:text-zinc-700 cursor-pointer"
+                      className="px-2.5 py-1 text-xs text-zinc-500 hover:text-zinc-700 cursor-pointer dark:text-zinc-300"
                     >
                       Cancelar
                     </button>
@@ -3646,7 +3676,7 @@ function TableTabsContent({
             {effectiveIncomplete && (
               <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 p-2.5 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-amber-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg className="w-4 h-4 text-amber-600 shrink-0 dark:text-amber-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <circle cx="12" cy="12" r="10" />
                     <line x1="12" y1="8" x2="12" y2="12" />
                     <line x1="12" y1="16" x2="12.01" y2="16" />
@@ -3749,7 +3779,7 @@ function TableTabsContent({
             <div className="grid grid-cols-2 gap-2 mt-2">
               <button
                 type="button"
-                onClick={() => setIsSplitBillModalOpen(true)}
+                onClick={openSplitBillDialog}
                 className="py-3 px-2 sm:px-3 rounded-2xl border border-amber-300 dark:border-amber-800/80 bg-amber-50/90 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-[#782006] dark:text-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer text-center"
                 title="Simular divisão estimada da conta"
               >
@@ -3762,7 +3792,20 @@ function TableTabsContent({
                 <span className="truncate">Dividir conta</span>
               </button>
 
-              {selectedTab && selectedTab.status === 'open' && (
+              {isSharedTabSelected ? (
+                <button
+                  type="button"
+                  disabled={disabled || busy || tableTotalsIncomplete || openTabs.length === 0}
+                  onClick={openJointPaymentDialog}
+                  className="min-w-0 py-3 px-2 sm:px-3 rounded-2xl border border-rose-300 dark:border-rose-900/60 bg-rose-50/90 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-center"
+                  title="Conferir e fechar todas as comandas abertas desta mesa"
+                >
+                  <svg className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a2 2 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="min-w-0 text-center leading-tight">Fechar conta conjunta</span>
+                </button>
+              ) : selectedTab && selectedTab.status === 'open' && (
                 <button
                   type="button"
                   disabled={
@@ -3813,7 +3856,10 @@ function TableTabsContent({
       {/* MODAL: SIMULAÇÃO DE DIVISÃO DE CONTA (ESTIMATIVA VISUAL ENTRE PESSOAS)   */}
       {/* ========================================================================= */}
       {isSplitBillModalOpen && (() => {
-        const totalToSplitInCents = effectiveTotal;
+        const totalToSplitInCents = splitBillBasis?.totalInCents ?? 0;
+        const splitPersonLabel = splitBillBasis?.tabId
+          ? state.tabs.find(tab => tab.id === splitBillBasis.tabId)?.label || 'cliente'
+          : 'cliente';
         const activePeopleCount = parseSplitPeopleCount(splitPeopleInput);
         const splitResult = calculateSplitBill(totalToSplitInCents, activePeopleCount);
 
@@ -3854,7 +3900,7 @@ function TableTabsContent({
               <div className="bg-[#FAF6F0] dark:bg-zinc-800/70 rounded-2xl p-3 border border-amber-900/10 dark:border-zinc-800 flex items-center justify-between">
                 <div>
                   <span className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider block">
-                    {isSharedTabSelected ? 'Total da conta conjunta' : `Total da comanda (${selectedTab?.label || 'cliente'})`}
+                    {splitBillBasis?.kind === 'joint' ? 'Total da conta conjunta' : `Total da comanda (${splitPersonLabel})`}
                   </span>
                   <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
                     Subtotal + serviço ({restaurantFeePercent}%)
@@ -4116,7 +4162,7 @@ function TableTabsContent({
                             checked={closingFeeAccepted}
                             onChange={(e) => setClosingFeeAccepted(e.target.checked)}
                             disabled={busy}
-                            className="w-4 h-4 rounded text-amber-800 focus:ring-amber-800 dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer"
+                            className="w-4 h-4 rounded text-amber-800 focus:ring-amber-800 dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer dark:text-amber-200"
                           />
                           <span className="font-medium">
                             Taxa de serviço ({restaurantFeePercent}%)
@@ -4322,7 +4368,7 @@ function TableTabsContent({
 
               <div>
                 <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 mb-1">
-                  Pessoa / Comanda de destino <span className="text-rose-500">*</span>
+                  Pessoa / Comanda de destino <span className="text-rose-500 dark:text-rose-300">*</span>
                 </label>
                 {movableTargetTabs.length === 0 ? (
                   <p className="text-xs text-zinc-400 italic py-1">
@@ -4348,7 +4394,7 @@ function TableTabsContent({
 
               <div>
                 <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 mb-1">
-                  Motivo da movimentação (auditoria) <span className="text-rose-500">*</span>
+                  Motivo da movimentação (auditoria) <span className="text-rose-500 dark:text-rose-300">*</span>
                 </label>
                 <textarea
                   rows={2}
@@ -4361,7 +4407,7 @@ function TableTabsContent({
                   className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:border-[#4A1505] focus:outline-none resize-none"
                 />
                 {moveReasonError && (
-                  <p className="text-[11px] text-rose-500 font-medium mt-1">{moveReasonError}</p>
+                  <p className="text-[11px] text-rose-500 font-medium mt-1 dark:text-rose-300">{moveReasonError}</p>
                 )}
               </div>
             </div>
@@ -4456,7 +4502,7 @@ function TableTabsContent({
 
               <div>
                 <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 mb-1">
-                  Comanda de destino (seleção explícita) <span className="text-rose-500">*</span>
+                  Comanda de destino (seleção explícita) <span className="text-rose-500 dark:text-rose-300">*</span>
                 </label>
                 {loadingTargetTabs ? (
                   <p className="text-xs text-zinc-400 py-1.5">Carregando comandas da mesa...</p>
@@ -4465,7 +4511,7 @@ function TableTabsContent({
                     Selecione a mesa de destino para listar as comandas abertas.
                   </p>
                 ) : transferTableTargetTabs.length === 0 ? (
-                  <p className="text-xs text-rose-500 italic py-1">
+                  <p className="text-xs text-rose-500 italic py-1 dark:text-rose-300">
                     A mesa selecionada não possui comanda aberta para receber o item.
                   </p>
                 ) : (
@@ -4490,7 +4536,7 @@ function TableTabsContent({
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                    Motivo da transferência (auditoria) <span className="text-rose-500">*</span>
+                    Motivo da transferência (auditoria) <span className="text-rose-500 dark:text-rose-300">*</span>
                   </label>
                   <span className="text-[10px] text-zinc-400">
                     {transferReason.trim().length}/300
@@ -4507,7 +4553,7 @@ function TableTabsContent({
                   className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:border-[#4A1505] focus:outline-none resize-none"
                 />
                 {transferReasonError && (
-                  <p className="text-[11px] text-rose-500 font-medium mt-1">{transferReasonError}</p>
+                  <p className="text-[11px] text-rose-500 font-medium mt-1 dark:text-rose-300">{transferReasonError}</p>
                 )}
               </div>
             </div>
@@ -4547,7 +4593,7 @@ function TableTabsContent({
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-5 max-w-sm w-full shadow-2xl space-y-4">
             <div>
               <h3 className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-2">
-                <svg className="w-4 h-4 text-rose-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg className="w-4 h-4 text-rose-600 shrink-0 dark:text-rose-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M3 6h18" />
                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
                   <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -4570,7 +4616,7 @@ function TableTabsContent({
                 )}
               </div>
               {cancellingItem.unitPriceInCents > 0 && cancellingItem.quantity > 1 && (
-                <p className="text-[11px] text-zinc-500">
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-300">
                   {currency.format(cancellingItem.unitPriceInCents / 100)} cada
                 </p>
               )}
@@ -4579,7 +4625,7 @@ function TableTabsContent({
             {/* Descrição do motivo */}
             <div className="space-y-1">
               <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                Motivo do cancelamento <span className="text-rose-500">*</span>
+                Motivo do cancelamento <span className="text-rose-500 dark:text-rose-300">*</span>
               </label>
               <textarea
                 autoFocus

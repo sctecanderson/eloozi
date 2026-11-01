@@ -1,0 +1,81 @@
+.current-contract {
+  position: relative; isolation: isolate; overflow: hidden; display: grid;
+  grid-template-columns: minmax(160px,.72fr) minmax(320px,1.5fr) minmax(210px,1fr);
+  grid-template-areas: 'identity information .' 'actions actions .';
+  gap: 18px 22px; align-content: center; min-height: 330px; padding: 28px 32px;
+  border: 0; border-radius: 24px; background: #fffafa; box-shadow: none;
+}
+.contract-card-art { position: absolute; inset: 0 0 0 70%; z-index: -1; background: url('/landing/planos/card-plano-atual.png') right center / auto 100% no-repeat; pointer-events: none; }
+.contract-identity { grid-area: identity; min-width: 0; }
+.current-contract .contract-restaurant { font-size: 12px; margin: 12px 0 8px; overflow-wrap: anywhere; }
+.contract-name { display: flex; align-items: center; gap: 12px; }
+.contract-name .billing-symbol { flex: 0 0 42px; height: 48px; width: 42px; color: #a60013; background: #fff0eb; }
+.current-contract h2 { margin: 0; color: #a80014; font-size: clamp(23px,2vw,34px); line-height: 1.15; overflow-wrap: anywhere; }
+.contract-identity > .contract-cycle { margin: 10px 0 0; }
+.contract-information { grid-area: information; min-width: 0; }
+.current-contract .contract-period { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin: 0; }
+.contract-period > div { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.contract-period .billing-symbol { width: 34px; height: 38px; flex: 0 0 34px; color: #b00017; background: #fff0eb; }
+.contract-period dd { font-size: 12px; overflow-wrap: anywhere; }
+.contract-trial-note:empty { display: none; }
+.contract-trial-note p { margin: 12px 0 0; padding: 9px 12px; border-radius: 10px; background: #f5f4f5; color: #526071; font-size: 12px; line-height: 1.6; }
+.current-contract h3 { margin: 16px 0 10px; font-size: 13px; }
+.current-contract .contract-benefits { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; padding: 0; margin: 0; list-style: none; }
+.contract-benefits li { display: flex; align-items: center; gap: 9px; padding: 10px; border-radius: 12px; background: #fff0eddf; line-height: 1.4; font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
+.contract-benefits svg { flex: 0 0 18px; color: #ad0016; }
+.current-contract .contract-actions { grid-area: actions; margin: 0; align-items: stretch; }
+.contract-actions button { white-space: normal; max-width: 100%; }
+.contract-actions button:focus-visible { outline: 3px solid #a80014; outline-offset: 3px; }
+.dark .current-contract { border: 1px solid #874134; background: #18181b; }
+.dark .contract-card-art { background-image: url('/landing/planos/card-plano-atual.png'); }
+.dark .current-contract h2 { color: #ffb5b9; }
+.dark .contract-benefits li { background: #372327ed; color: #f7e9e9; }
+.dark .contract-benefits svg { color: #ffadb7; }
+.dark .contract-trial-note p { background: #27272a; color: #d5d8e1; }
+.dark .contract-actions button:focus-visible { outline-color: #ffb5b9; }
+.subscription-current-details { container: contract-card / inline-size; }
+@container contract-card (max-width: 1060px) {
+  .current-contract { grid-template-columns: minmax(0,1fr) 32%; grid-template-areas: 'identity .' 'information .' 'actions .'; gap: 18px; padding: 24px; border: 1px solid #ffc6ab; }
+  .contract-card-art { left: 68%; background-size: auto 100%; background-position: right bottom; }
+  .dark .contract-card-art { background-image: url('/landing/planos/card-plano-atual.png'); }
+}
+@container contract-card (max-width: 680px) {
+  .current-contract { grid-template-columns: minmax(0,1fr); grid-template-areas: 'identity' 'information' 'actions' 'art'; padding: 22px; gap: 18px; border: 1px solid #ffc6ab; }
+  .contract-card-art { position: relative; inset: auto; grid-area: art; min-height: 200px; z-index: 0; margin: 0 -22px -22px; background-size: auto 100%; }
+  .dark .contract-card-art { background-image: url('/landing/planos/card-plano-atual.png'); }
+  .current-contract h2 { font-size: 28px; }
+  .current-contract .contract-period { grid-template-columns: minmax(0,1fr); }
+  .contract-actions button { width: 100%; justify-content: center; }
+}
+@container contract-card (max-width: 360px) {
+  .current-contract .contract-benefits { grid-template-columns: minmax(0,1fr); }
+}
+
+/* Provided title art contains its own word “Plano”; equivalent heading stays accessible. */
+.current-contract .contract-title-art { margin: 0; width: 100%; max-width: 240px; }
+.contract-title-art > img { display: block; width: 100%; height: auto; object-fit: contain; }
+.dark .contract-title-art { padding: 8px; border-radius: 12px; background: #fffafa; }
+.current-contract h3 { display: flex; align-items: center; gap: 8px; }
+.current-contract h3 > img { flex: 0 0 22px; object-fit: contain; }
+.current-contract .contract-benefits { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.contract-benefits li { gap: 8px; padding: 9px; }
+.contract-benefits .contract-resource-icon { display: block; width: 28px; height: 28px; object-fit: contain; flex: 0 0 28px; }
+.dark .contract-resource-icon,.dark .contract-upgrade-icon,.dark .current-contract h3 > img { background: #fff0ed; border-radius: 6px; padding: 3px; }
+.contract-actions .contract-upgrade-icon { flex: 0 0 22px; object-fit: contain; }
+@container contract-card (min-width: 1061px) {
+ .contract-information { padding-right: 10px; }
+}
+
+.current-contract .contract-identification { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-bottom: 14px; }
+.current-contract .contract-identification .contract-restaurant { margin: 0; min-width: 0; }
+.current-contract .contract-status-active { display: inline-flex; align-items: center; gap: 7px; border: 0; padding: 4px 0; background: transparent; color: #087344; font-weight: 750; }
+.contract-status-dot { width: 9px; height: 9px; border-radius: 50%; background: #009957; flex: 0 0 9px; }
+.dark .current-contract .contract-status-active { color: #64e8ab; }
+.current-contract .contract-description { margin: 14px 0 0; font-size: 14px; line-height: 1.5; }
+.current-contract .contract-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); width: min(100%,480px); gap: 10px; }
+.current-contract .contract-actions button { width: 100%; height: 100%; min-height: 44px; justify-content: center; }
+.contract-benefits .contract-resource-icon { padding: 5px; border-radius: 50%; background: #ffe2dc; color: #ad0016; flex-basis: 34px; width: 34px; height: 34px; }
+.contract-benefits li > span { font-weight: 600; }
+@container contract-card (max-width: 1060px) { .current-contract .contract-benefits { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@container contract-card (max-width: 680px) { .current-contract .contract-actions { grid-template-columns: minmax(0,1fr); grid-auto-rows: 1fr; } }
+@container contract-card (max-width: 360px) { .current-contract .contract-benefits { grid-template-columns: minmax(0,1fr); } }

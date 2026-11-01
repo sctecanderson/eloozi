@@ -37,6 +37,35 @@ function expectedBillingTypeForMethod(method: unknown): string {
   return method === "pix" ? "PIX" : "CREDIT_CARD";
 }
 
+function isMissingRpcSignature(error: any, functionName: string): boolean {
+  if (!error) return false;
+  if (error.code === "PGRST202" || error.code === "42883") return true;
+  const message = String(error.message ?? "").toLowerCase();
+  return message.includes(functionName.toLowerCase()) &&
+    (message.includes("could not find the function") || message.includes("does not exist"));
+}
+
+async function confirmSubscriptionPayment(
+  adminClient: any,
+  invoice: { id: string; restaurant_id: string },
+  externalReference: string,
+  paidAmountCents: number,
+): Promise<{ data: any; error: any }> {
+  const fn = "confirm_subscription_invoice_payment";
+  const current = await adminClient.rpc(fn, {
+    p_invoice_id: invoice.id,
+    p_external_reference: externalReference,
+    p_paid_amount_cents: paidAmountCents,
+    p_restaurant_id: invoice.restaurant_id,
+  });
+  if (!isMissingRpcSignature(current?.error, fn)) return current;
+  // A narrow compatibility path for the old, server-only RPC during rollout.
+  return adminClient.rpc(fn, {
+    p_invoice_id: invoice.id,
+    p_external_reference: externalReference,
+  });
+}
+
 export async function handleAsaasWebhookRequest(
   req: Request,
   env: WebhookHandlerEnv,
@@ -68,9 +97,10 @@ export async function handleAsaasWebhookRequest(
       );
     }
 
-    const asaasBaseUrl = (env.asaasBaseUrl || "https://api.asaas.com/v3")
-      .trim()
-      .replace(/\/+$/, "");
+    const asaasBaseUrl = (env.asaasBaseUrl ?? "").trim().replace(/\/+$/, "");
+    if (!asaasBaseUrl) {
+      return jsonResponse({ error: "Gateway Asaas não configurado no servidor (ASAAS_BASE_URL ausente)." }, 500);
+    }
     const fetchImpl = env.fetchFn ?? fetch;
 
     const payload = await req.json();
@@ -229,6 +259,13 @@ export async function handleAsaasWebhookRequest(
       );
 
       if (attachErr || !attachData || attachData.attached !== true) {
+        if (isMissingRpcSignature(attachErr, "attach_subscription_invoice_external_reference")) {
+          return jsonResponse({
+            error: "A referência do pagamento foi verificada; a reconciliação será repetida quando o banco estiver atualizado.",
+            payment_received: true,
+            retryable: true,
+          }, 503);
+        }
         return jsonResponse(
           { error: attachErr?.message || "Não foi possível vincular a referência externa reconciliada da fatura." },
           422,
@@ -238,14 +275,8 @@ export async function handleAsaasWebhookRequest(
     }
 
     // 4. Confirmar pagamento via RPC restrita ao service_role (com todos os 4 parâmetros obrigatórios)
-    const { data: rpcResult, error: rpcErr } = await adminClient.rpc(
-      "confirm_subscription_invoice_payment",
-      {
-        p_invoice_id: invoice.id,
-        p_external_reference: asaasPaymentId,
-        p_paid_amount_cents: verifiedAmountCents,
-        p_restaurant_id: invoice.restaurant_id,
-      },
+    const { data: rpcResult, error: rpcErr } = await confirmSubscriptionPayment(
+      adminClient, invoice, asaasPaymentId, verifiedAmountCents,
     );
 
     if (rpcErr) {
@@ -257,7 +288,8 @@ export async function handleAsaasWebhookRequest(
 
     return jsonResponse({
       received: true,
-      confirmed: true,
+      confirmed: !rpcResult?.requires_review,
+      requires_review: Boolean(rpcResult?.requires_review),
       already_paid: Boolean(rpcResult?.already_paid),
       invoice_id: invoice.id,
       result: rpcResult,

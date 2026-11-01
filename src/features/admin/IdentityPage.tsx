@@ -1,3 +1,4 @@
+import { contactUrl, visibleContactUrls, type ContactChannels } from "../restaurants/contactChannels";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   useRestaurant,
@@ -142,30 +143,24 @@ export function IdentityPage() {
     }
   });
 
-  const [instagram, setInstagram] = useState(() => {
-    try {
-      return localStorage.getItem(`elozi_id_instagram_${restaurant.id}`) || `@${restaurant.slug}`;
-    } catch {
-      return `@${restaurant.slug}`;
-    }
-  });
-
-  const [whatsapp, setWhatsapp] = useState(() => {
-    try {
-      return localStorage.getItem(`elozi_id_whatsapp_${restaurant.id}`) || restaurant.phone || "47920013755";
-    } catch {
-      return restaurant.phone || "47920013755";
-    }
-  });
-
-  const [facebook, setFacebook] = useState(() => {
-    try {
-      return localStorage.getItem(`elozi_id_facebook_${restaurant.id}`) || `/${restaurant.slug}`;
-    } catch {
-      return `/${restaurant.slug}`;
-    }
-  });
-
+  const loadContacts = (): ContactChannels => {
+    if (restaurant.contactChannels) return restaurant.contactChannels;
+    const legacy = (key: string, fallback = '') => {
+      try { return localStorage.getItem(`elozi_id_${key}_${restaurant.id}`) || fallback; } catch { return fallback; }
+    };
+    return {
+      instagram: { value: legacy('instagram'), enabled: true },
+      whatsapp: { value: legacy('whatsapp', restaurant.phone), enabled: true },
+      facebook: { value: legacy('facebook'), enabled: true },
+    };
+  };
+  const [contacts, setContacts] = useState<ContactChannels>(loadContacts);
+  const instagram = contacts.instagram.value, whatsapp = contacts.whatsapp.value, facebook = contacts.facebook.value;
+  const setContactValue = (key: keyof ContactChannels, value: string) => setContacts(old => ({...old,[key]: {...old[key],value}}));
+  const setInstagram = (value: string) => setContactValue('instagram',value);
+  const setWhatsapp = (value: string) => setContactValue('whatsapp',value);
+  const setFacebook = (value: string) => setContactValue('facebook',value);
+  const publicContacts = visibleContactUrls(contacts);
   const [showAddressPhoneOnMenu, setShowAddressPhoneOnMenu] = useState(() => {
     try {
       const val = localStorage.getItem(`elozi_id_show_address_phone_${restaurant.id}`);
@@ -213,9 +208,6 @@ export function IdentityPage() {
       localStorage.setItem(`elozi_id_wifi_ssid_${restaurant.id}`, wifiSsid);
       localStorage.setItem(`elozi_id_wifi_pass_${restaurant.id}`, wifiPassword);
       localStorage.setItem(`elozi_id_show_wifi_${restaurant.id}`, String(showWifi));
-      localStorage.setItem(`elozi_id_instagram_${restaurant.id}`, instagram);
-      localStorage.setItem(`elozi_id_whatsapp_${restaurant.id}`, whatsapp);
-      localStorage.setItem(`elozi_id_facebook_${restaurant.id}`, facebook);
       localStorage.setItem(`elozi_id_show_address_phone_${restaurant.id}`, String(showAddressPhoneOnMenu));
       localStorage.setItem(`elozi_id_banner_title_${restaurant.id}`, bannerTitle);
       localStorage.setItem(`elozi_id_banner_subtitle_${restaurant.id}`, bannerSubtitle);
@@ -230,9 +222,6 @@ export function IdentityPage() {
     wifiSsid,
     wifiPassword,
     showWifi,
-    instagram,
-    whatsapp,
-    facebook,
     showAddressPhoneOnMenu,
     bannerTitle,
     bannerSubtitle,
@@ -367,6 +356,7 @@ export function IdentityPage() {
   }
 
   function reset() {
+    setContacts(loadContacts());
     release(logo);
     release(cover);
     setDraft({
@@ -429,11 +419,12 @@ export function IdentityPage() {
     try {
       const nextLogo = await uploadIdentity(logo, restaurant.id, uploads.current);
       const nextCover = await uploadIdentity(cover, restaurant.id, uploads.current);
-      const saved = await saveIdentity(draft, nextLogo, nextCover);
+      const saved = await saveIdentity({ ...draft, contactChannels: contacts }, nextLogo, nextCover);
       if (!mounted.current) return;
       release(logo);
       release(cover);
       setDraft(saved);
+      if (saved.contactChannels) setContacts(saved.contactChannels);
       setLogo(saved.logo);
       setCover(saved.cover);
       setNotice("Identidade visual salva com sucesso! Seu cardápio foi atualizado.");
@@ -1541,10 +1532,19 @@ export function IdentityPage() {
                           type="text"
                           maxLength={100}
                           placeholder="@seurestaurante"
+                          disabled={busy} aria-invalid={contacts.instagram.enabled && Boolean(instagram.trim()) && !contactUrl('instagram', instagram)}
+                          aria-describedby="contact-instagram-help" id="contact-instagram" aria-label="Instagram"
                           value={instagram}
                           onChange={(e) => setInstagram(e.target.value)}
                           className="w-full pl-8 pr-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-xs"
                         />
+                        <label className="mt-2 flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-200">
+                          <input className="contact-channel-switch" type="checkbox" role="switch" checked={contacts.instagram.enabled} disabled={busy}
+                            onChange={(e) => setContacts(old => ({...old, instagram: {...old.instagram, enabled: e.target.checked}}))}
+                            aria-label="Mostrar Instagram no cardápio" />
+                          Mostrar no cardápio · {contacts.instagram.enabled ? 'Ativado' : 'Oculto'}
+                        </label>
+                        <p id="contact-instagram-help" className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">{!instagram.trim() ? 'Sem valor: canal oculto.' : !contactUrl('instagram', instagram) ? 'Endereço inválido: canal oculto no cardápio.' : 'Desativar preserva o endereço salvo.'}</p>
                       </div>
                     </div>
 
@@ -1562,10 +1562,19 @@ export function IdentityPage() {
                           type="text"
                           maxLength={40}
                           placeholder="(11) 99999-9999"
+                          disabled={busy} aria-invalid={contacts.whatsapp.enabled && Boolean(whatsapp.trim()) && !contactUrl('whatsapp', whatsapp)}
+                          aria-describedby="contact-whatsapp-help" id="contact-whatsapp" aria-label="WhatsApp"
                           value={whatsapp}
                           onChange={(e) => setWhatsapp(e.target.value)}
                           className="w-full pl-8 pr-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-xs"
                         />
+                        <label className="mt-2 flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-200">
+                          <input className="contact-channel-switch" type="checkbox" role="switch" checked={contacts.whatsapp.enabled} disabled={busy}
+                            onChange={(e) => setContacts(old => ({...old, whatsapp: {...old.whatsapp, enabled: e.target.checked}}))}
+                            aria-label="Mostrar WhatsApp no cardápio" />
+                          Mostrar no cardápio · {contacts.whatsapp.enabled ? 'Ativado' : 'Oculto'}
+                        </label>
+                        <p id="contact-whatsapp-help" className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">{!whatsapp.trim() ? 'Sem valor: canal oculto.' : !contactUrl('whatsapp', whatsapp) ? 'Endereço inválido: canal oculto no cardápio.' : 'Desativar preserva o endereço salvo.'}</p>
                       </div>
                     </div>
 
@@ -1583,10 +1592,19 @@ export function IdentityPage() {
                           type="text"
                           maxLength={120}
                           placeholder="facebook.com/seurestaurante"
+                          disabled={busy} aria-invalid={contacts.facebook.enabled && Boolean(facebook.trim()) && !contactUrl('facebook', facebook)}
+                          aria-describedby="contact-facebook-help" id="contact-facebook" aria-label="Facebook / Site"
                           value={facebook}
                           onChange={(e) => setFacebook(e.target.value)}
                           className="w-full pl-8 pr-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-xs"
                         />
+                        <label className="mt-2 flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-200">
+                          <input className="contact-channel-switch" type="checkbox" role="switch" checked={contacts.facebook.enabled} disabled={busy}
+                            onChange={(e) => setContacts(old => ({...old, facebook: {...old.facebook, enabled: e.target.checked}}))}
+                            aria-label="Mostrar Facebook / Site no cardápio" />
+                          Mostrar no cardápio · {contacts.facebook.enabled ? 'Ativado' : 'Oculto'}
+                        </label>
+                        <p id="contact-facebook-help" className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">{!facebook.trim() ? 'Sem valor: canal oculto.' : !contactUrl('facebook', facebook) ? 'Endereço inválido: canal oculto no cardápio.' : 'Desativar preserva o endereço salvo.'}</p>
                       </div>
                     </div>
                   </div>
@@ -1973,11 +1991,11 @@ export function IdentityPage() {
               </div>
 
               {/* 3.1 CARD INFERIOR ESPELHADO: GOOGLE, WI-FI E REDES SOCIAIS */}
-              {(Boolean(draft.googleReviewUrl) || showWifi || Boolean(instagram || whatsapp || facebook)) && (
+              {(Boolean(draft.googleReviewUrl) || showWifi || Boolean(publicContacts.instagram || publicContacts.whatsapp || publicContacts.facebook)) && (
                 <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200/80 dark:border-zinc-800 overflow-hidden shadow-2xs">
                   <div
                     className={`grid grid-cols-1 ${
-                      draft.googleReviewUrl && (showWifi || instagram || whatsapp || facebook)
+                      draft.googleReviewUrl && (showWifi || publicContacts.instagram || publicContacts.whatsapp || publicContacts.facebook)
                         ? "divide-y divide-zinc-100 dark:divide-zinc-800"
                         : ""
                     }`}
@@ -2012,7 +2030,7 @@ export function IdentityPage() {
                     )}
 
                     {/* Wi-Fi & Redes */}
-                    {(showWifi || instagram || whatsapp || facebook) && (
+                    {(showWifi || publicContacts.instagram || publicContacts.whatsapp || publicContacts.facebook) && (
                       <div className="p-2.5 space-y-2 bg-[#FAF6F2]/60 dark:bg-zinc-800/40">
                         <div className="flex items-center justify-between gap-1">
                           <span className="font-bold text-[10px] text-zinc-800 dark:text-zinc-200 flex items-center gap-1">
@@ -2047,11 +2065,11 @@ export function IdentityPage() {
                           </div>
                         )}
 
-                        {(instagram || whatsapp || facebook) && (
+                        {(publicContacts.instagram || publicContacts.whatsapp || publicContacts.facebook) && (
                           <div className="flex items-center justify-between pt-1 border-t border-zinc-200/60 dark:border-zinc-700">
                             <span className="text-[8px] text-zinc-500 dark:text-zinc-400 font-medium">Redes:</span>
                             <div className="flex items-center gap-1.5">
-                              {instagram && (
+                              {publicContacts.instagram && (
                                 <span className="w-5 h-5 rounded-full bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 flex items-center justify-center text-rose-500 shadow-2xs">
                                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                                     <rect width="20" height="20" x="2" y="2" rx="5" ry="5" />
@@ -2060,14 +2078,14 @@ export function IdentityPage() {
                                   </svg>
                                 </span>
                               )}
-                              {whatsapp && (
+                              {publicContacts.whatsapp && (
                                 <span className="w-5 h-5 rounded-full bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 flex items-center justify-center text-emerald-500 shadow-2xs">
                                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                                     <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
                                   </svg>
                                 </span>
                               )}
-                              {facebook && (
+                              {publicContacts.facebook && (
                                 <span className="w-5 h-5 rounded-full bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 flex items-center justify-center text-blue-600 shadow-2xs">
                                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                                     <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />

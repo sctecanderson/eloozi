@@ -76,6 +76,7 @@ export async function saveIdentity(
       service_fee_percent: r.serviceFeePercent,
       timezone: r.timezone,
       google_review_url: r.googleReviewUrl ? r.googleReviewUrl.trim() : null,
+      ...(r.contactChannels ? { contact_channels: r.contactChannels } : {}),
     },
   });
   if (error)

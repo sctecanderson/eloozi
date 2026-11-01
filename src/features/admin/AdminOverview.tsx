@@ -1,3 +1,4 @@
+import { fetchModuleAccess } from "../restaurants/moduleAccessService";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useOutletContext } from "react-router";
 import { useRestaurant } from "../restaurants/RestaurantProvider";
@@ -288,6 +289,7 @@ export function AdminOverview() {
   const [openTabsCount, setOpenTabsCount] = useState(0);
   const [occupiedTableIdsCount, setOccupiedTableIdsCount] = useState(0);
 
+  const [financeIncluded,setFinanceIncluded] = useState<boolean|null>(null);
   const [todaySalesCents, setTodaySalesCents] = useState(0);
   const [todaySubtotalCents, setTodaySubtotalCents] = useState(0);
   const [todayServiceFeeCents, setTodayServiceFeeCents] = useState(0);
@@ -340,6 +342,8 @@ export function AdminOverview() {
         const start7Days = new Date(startToday);
         start7Days.setDate(start7Days.getDate() - 6);
 
+        const moduleAccess = await fetchModuleAccess(r.id);
+        setFinanceIncluded(moduleAccess.finance);
         // Consultas paralelas em tempo real ao Supabase
         const [
           openTabsRes,
@@ -356,31 +360,31 @@ export function AdminOverview() {
             )
             .eq("restaurant_id", r.id)
             .eq("status", "open"),
-          supabase
+          moduleAccess.finance ? supabase
             .from("table_tabs")
             .select(
               "id, label, status, subtotal_in_cents, service_fee_in_cents, total_in_cents, created_at, closed_at, table_visit:table_visits(id, restaurant_table_id)"
             )
             .eq("restaurant_id", r.id)
             .gte("created_at", start7Days.toISOString())
-            .order("created_at", { ascending: false }),
+            .order("created_at", { ascending: false }) : Promise.resolve({data:[],error:null}),
           supabase
             .from("menu_products")
             .select("id, name, price_in_cents, images, featured, sort_order, likes_count, comments_count")
             .eq("restaurant_id", r.id)
             .order("featured", { ascending: false })
             .order("sort_order", { ascending: true }),
-          supabase.rpc("get_restaurant_financial_report", {
+          moduleAccess.finance ? supabase.rpc("get_restaurant_financial_report", {
             p_restaurant_id: r.id,
             p_start_date: startToday.toISOString(),
             p_end_date: endToday.toISOString(),
-          }),
-          supabase
+          }) : Promise.resolve({data:null,error:null}),
+          moduleAccess.inventory ? supabase
             .from("inventory_items")
             .select("id, name, current_quantity, unit_measure, alert_threshold, updated_at")
             .eq("restaurant_id", r.id)
             .order("updated_at", { ascending: false })
-            .limit(4),
+            .limit(4) : Promise.resolve({data:[],error:null}),
           supabase
             .from("product_comments")
             .select("id, author_name, body, created_at")
@@ -434,7 +438,7 @@ export function AdminOverview() {
           (acc: number, t: any) => acc + Number(t.total_in_cents || t.subtotal_in_cents || 0),
           0
         );
-        const totalSalesToday = closedSalesToday + openSalesToday;
+        const totalSalesToday = moduleAccess.finance ? closedSalesToday + openSalesToday : 0;
 
         const closedSubtotalToday = closedToday.reduce(
           (acc: number, t: any) =>
@@ -446,7 +450,7 @@ export function AdminOverview() {
             acc + Number(t.subtotal_in_cents || t.total_in_cents || 0),
           0
         );
-        const totalSubtotalToday = closedSubtotalToday + openSubtotalToday;
+        const totalSubtotalToday = moduleAccess.finance ? closedSubtotalToday + openSubtotalToday : 0;
 
         const closedFeeToday = closedToday.reduce(
           (acc: number, t: any) => acc + Number(t.service_fee_in_cents || 0),
@@ -457,7 +461,7 @@ export function AdminOverview() {
           0
         );
         const totalServiceFeeToday =
-          closedFeeToday + openFeeToday > 0
+          moduleAccess.finance && closedFeeToday + openFeeToday > 0
             ? closedFeeToday + openFeeToday
             : Math.round(totalSubtotalToday * ((r.serviceFeePercent ?? 10) / 100));
 
@@ -479,7 +483,7 @@ export function AdminOverview() {
         let manualDiscounts = 0;
         let latestClosure: any = null;
         try {
-          const rawClosures = localStorage.getItem(`elozi_caixa_fechamentos_${r.id}`);
+          const rawClosures = moduleAccess.finance ? localStorage.getItem(`elozi_caixa_fechamentos_${r.id}`) : null;
           if (rawClosures) {
             const parsedClosures = JSON.parse(rawClosures);
             if (Array.isArray(parsedClosures) && parsedClosures.length > 0) {
@@ -510,7 +514,7 @@ export function AdminOverview() {
         });
 
         try {
-          const rawMovs = localStorage.getItem(`elozi_caixa_movimentacoes_${r.id}`);
+          const rawMovs = moduleAccess.finance ? localStorage.getItem(`elozi_caixa_movimentacoes_${r.id}`) : null;
           if (rawMovs) {
             const movs = JSON.parse(rawMovs);
             if (Array.isArray(movs)) {
@@ -1184,7 +1188,7 @@ export function AdminOverview() {
 
           <div className="mt-2.5">
             <h3 className="text-2xl font-extrabold text-zinc-900 dark:text-white tracking-tight">
-              {currency.format(todaySalesCents / 100)}
+              {(financeIncluded ? currency.format(todaySalesCents / 100) : "Não incluído")}
             </h3>
           </div>
 
@@ -1879,7 +1883,7 @@ export function AdminOverview() {
                       <span>Vendas</span>
                     </span>
                     <span className="font-extrabold text-zinc-900 dark:text-white">
-                      {currency.format(todaySubtotalCents / 100)}
+                      {(financeIncluded ? currency.format(todaySubtotalCents / 100) : "Não incluído")}
                     </span>
                   </div>
 
@@ -1891,7 +1895,7 @@ export function AdminOverview() {
                       <span>Taxa de serviço ({r.serviceFeePercent ?? 10}%)</span>
                     </span>
                     <span className="font-semibold text-zinc-700 dark:text-zinc-300">
-                      {currency.format(todayServiceFeeCents / 100)}
+                      {(financeIncluded ? currency.format(todayServiceFeeCents / 100) : "Não incluído")}
                     </span>
                   </div>
 
@@ -1903,7 +1907,7 @@ export function AdminOverview() {
                       <span>Descontos</span>
                     </span>
                     <span className="font-semibold text-zinc-500">
-                      - {currency.format(todayDiscountsCents / 100)}
+                      - {(financeIncluded ? currency.format(todayDiscountsCents / 100) : "Não incluído")}
                     </span>
                   </div>
 
@@ -1915,7 +1919,7 @@ export function AdminOverview() {
                       <span>Taxas (cartão/PIX)</span>
                     </span>
                     <span className="font-semibold text-zinc-500">
-                      - {currency.format(todayCardPixFeesCents / 100)}
+                      - {(financeIncluded ? currency.format(todayCardPixFeesCents / 100) : "Não incluído")}
                     </span>
                   </div>
                 </div>
@@ -1940,7 +1944,7 @@ export function AdminOverview() {
                     <span>Total Líquido</span>
                   </span>
                   <span className="text-base font-extrabold text-[#610000] dark:text-amber-400">
-                    {currency.format(todayNetTotalCents / 100)}
+                    {(financeIncluded ? currency.format(todayNetTotalCents / 100) : "Não incluído")}
                   </span>
                 </div>
               </div>
