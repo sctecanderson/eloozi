@@ -1,0 +1,144 @@
+{
+  "project_ref": "llhujxzefujdsthpezag",
+  "generated_utc": "2026-10-31T17:10:48.006Z",
+  "hash_algorithm": "SHA-256 over exact source bytes; no CRLF normalization",
+  "rehearsal_archive_sha256": "9176bd202f2ca47cde5fc90f0d04814bc37d669c7e371465a7cc47aef815c26d",
+  "migrations": [
+    {
+      "order": 1,
+      "path": "supabase/migrations/20261017000000_product_badge_text.sql",
+      "bytes": 9896,
+      "sha256": "b3d3e27d50777f342e5f175d4ecb58847adf9da257c4a19a25f993fbf45284b2"
+    },
+    {
+      "order": 2,
+      "path": "supabase/migrations/20261024140000_restaurant_dashboard_media.sql",
+      "bytes": 4650,
+      "sha256": "f5cd9565fa560aa2de702fb27f5f329750357550cafd9e2b3f9c3082b1b045c8"
+    },
+    {
+      "order": 3,
+      "path": "supabase/migrations/20261026160000_batch_cancel_table_tab_items.sql",
+      "bytes": 5678,
+      "sha256": "788a342d096c284a983089492ce9fc9d76b4f8e4d8daab44bcfc03562a974587"
+    },
+    {
+      "order": 4,
+      "path": "supabase/migrations/20261026190000_atomic_transfer_table_tab_items.sql",
+      "bytes": 16505,
+      "sha256": "38aa84ace77ec216a939a98dde146a30ba3359aa307597ea610af159cbe7f20a"
+    },
+    {
+      "order": 5,
+      "path": "supabase/migrations/20261026233815_checkout_and_subscription_security_hardening.sql",
+      "bytes": 29863,
+      "sha256": "3727f1601e25dcbc0ee907e64569560ef0eaafeef447cf6b242a2aaebbb68794"
+    },
+    {
+      "order": 6,
+      "path": "supabase/migrations/20261027000000_enforce_strict_trial_rules.sql",
+      "bytes": 53770,
+      "sha256": "455d90667e909eb2e4dc7c50b57e4d756a26e7ac72380fd84ccdc5b6675bb588"
+    },
+    {
+      "order": 7,
+      "path": "supabase/migrations/20261027210000_create_staff_profiles.sql",
+      "bytes": 5148,
+      "sha256": "0dbae10a923d0f170ca1ca7f0e9074cf05910e90cd5822fe54bca8272767d6e0"
+    },
+    {
+      "order": 8,
+      "path": "supabase/migrations/20261028183120_fix_get_restaurant_billing_summary_invoices_columns.sql",
+      "bytes": 5871,
+      "sha256": "2b39cf1e0dfbe42c69b547ffe0401a7ce4141376363471304e58a0d5cada0653"
+    },
+    {
+      "order": 9,
+      "path": "supabase/migrations/20261028223000_commercial_catalog_modules_and_active_tables_quota.sql",
+      "bytes": 79186,
+      "sha256": "23b1e5b2d69b3389ce82505bac566c41e0a39af73aceb6062830c50d7a44df10"
+    },
+    {
+      "order": 10,
+      "path": "supabase/migrations/20261029000754_subscription_transition_quotes.sql",
+      "bytes": 9344,
+      "sha256": "9829dcf7de38ac2f19512364ddc4fc32060bcf16b4a80fd16daa9826db843729"
+    },
+    {
+      "order": 11,
+      "path": "supabase/migrations/20261029002852_basic_manual_delivery.sql",
+      "bytes": 7425,
+      "sha256": "b98bb46b32f5d5d7a1b40d11d795ac4d4e9d2a8259177690fc31bedfa49de2ff"
+    },
+    {
+      "order": 12,
+      "path": "supabase/migrations/20261029010637_restaurant_contact_channels.sql",
+      "bytes": 11366,
+      "sha256": "ea0b6b88aa1789ef730708010721e86f234f17da24b289397ec0568f32ff3852"
+    },
+    {
+      "order": 13,
+      "path": "supabase/migrations/20261029024000_contract_module_access.sql",
+      "bytes": 24295,
+      "sha256": "ba67ff44f852414035c523c3cd719d9db1c16301a25bd20b2792f40b20952056"
+    },
+    {
+      "order": 14,
+      "path": "supabase/migrations/20261029143000_premium_trial_and_prepaid_cycle.sql",
+      "bytes": 80775,
+      "sha256": "af9f1ce0274626ec28d41890c03b4edcc5f875c4a5c3c4c91e1578262a024482"
+    },
+    {
+      "order": 15,
+      "path": "supabase/migrations/20261029180000_trial_prepaid_upgrades.sql",
+      "bytes": 25532,
+      "sha256": "96dc7c320b33a23b83af2739ba7bca3d88b5924b4f1e47d43904b3b1734429bf"
+    },
+    {
+      "order": 16,
+      "path": "supabase/migrations/20261030130000_scheduled_subscription_downgrades.sql",
+      "bytes": 22718,
+      "sha256": "3aaa9dd33864bb49c9d8eea59c09c09d12cb783f76313ce6928ac73abc4f893d"
+    },
+    {
+      "order": 17,
+      "path": "supabase/migrations/20261030223205_service_call_cycles_and_group_payment.sql",
+      "bytes": 28385,
+      "sha256": "1cd63a956ad1875638058a2ce750c913a646f80ddaf8b508c2b84a9144e1e8c7"
+    },
+    {
+      "order": 18,
+      "path": "supabase/migrations/20261031015051_get_visit_tab_consumptions.sql",
+      "bytes": 1430,
+      "sha256": "ed9e9a23fa7091ee91a9ff70a2f1a6946bca087d70e06de833803b05346fbc8a"
+    },
+    {
+      "order": 19,
+      "path": "supabase/migrations/20261031120000_billing_cutover_pending_invoice_quarantine.sql",
+      "bytes": 709,
+      "sha256": "9f7ca0645ae6d697ea318ab88f033a1334e10d139100b4251cde519b53bf6b77"
+    }
+  ],
+  "handlers": [
+    {
+      "path": "supabase/functions/asaas-checkout/handler.ts",
+      "bytes": 48097,
+      "sha256": "d859f3a2a25a86bd657d12eea171d163bd3583739181c541a7ada1d75dfd8f72"
+    },
+    {
+      "path": "supabase/functions/asaas-checkout/index.ts",
+      "bytes": 812,
+      "sha256": "3288a91bf3934456516367162a6bb71f8888392064c201de7ea6c05023afeaa8"
+    },
+    {
+      "path": "supabase/functions/asaas-webhook/handler.ts",
+      "bytes": 10503,
+      "sha256": "0b9b227c98ddf464fdec5e7f0af044a7d6559a89a687d57f0fe1b4f2ba855dc7"
+    },
+    {
+      "path": "supabase/functions/asaas-webhook/index.ts",
+      "bytes": 717,
+      "sha256": "8d9ce438620ea70fbb1f8b6027990af4ccd3fe6154587c05d6352ad464869b12"
+    }
+  ]
+}

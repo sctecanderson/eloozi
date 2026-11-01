@@ -11,9 +11,12 @@ import {
   executeDeliverReadyOrder,
   executeAttendWaiterCall,
   executeAttendBillRequest,
+  executeCompleteServiceCall,
+  shouldRefreshReadyOrderQueue,
 } from './staffChamados';
 import { supabase } from '../../lib/supabase';
 import { playDishReadySound, playWaiterCallSound } from '../../lib/soundAlerts';
+import { createRefreshCoalescer } from '../../lib/refreshCoalescer';
 
 interface StaffChamadosContextValue {
   chamados: ChamadoItem[];
@@ -26,6 +29,7 @@ interface StaffChamadosContextValue {
   deliverOrder: (itemId: string) => Promise<boolean>;
   attendWaiter: (requestId: string) => Promise<boolean>;
   attendBill: (requestId: string) => Promise<boolean>;
+  completeService: (requestId: string) => Promise<boolean>;
 }
 
 const StaffChamadosContext = createContext<StaffChamadosContextValue | null>(null);
@@ -71,6 +75,7 @@ export function StaffChamadosProvider({
 
   // Controle de versão de requisição para evitar que respostas lentas sobrescrevam consultas recentes
   const requestIdRef = useRef(0);
+  const requestLoadRef = useRef<(() => Promise<void>) | null>(null);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -136,6 +141,10 @@ export function StaffChamadosProvider({
     }
   }, [restaurantSlug, restaurantId]);
 
+  const requestLoadChamados = useCallback(() => {
+    return requestLoadRef.current?.() ?? loadChamados();
+  }, [loadChamados]);
+
   // Efeito ao trocar restaurante ou montar o Provider
   useEffect(() => {
     mountedRef.current = true;
@@ -157,7 +166,9 @@ export function StaffChamadosProvider({
     setError(null);
     setLoading(true);
 
-    void loadChamados();
+    const refreshQueue = createRefreshCoalescer(loadChamados, 100);
+    requestLoadRef.current = refreshQueue.request;
+    void refreshQueue.request();
 
     // Reconciliação Realtime com Supabase
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -165,7 +176,7 @@ export function StaffChamadosProvider({
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         if (mountedRef.current) {
-          void loadChamados();
+          void requestLoadChamados();
         }
       }, 250);
     };
@@ -190,22 +201,26 @@ export function StaffChamadosProvider({
           table: 'table_tab_items',
           filter: `restaurant_id=eq.${restaurantId}`,
         },
-        scheduleReload,
+        (payload) => {
+          if (shouldRefreshReadyOrderQueue(payload)) {
+            scheduleReload();
+          }
+        },
       )
       .subscribe((status) => {
         // Reconcilia dados ao reconectar o canal Realtime (SUBSCRIBED)
         if (status === 'SUBSCRIBED') {
-          void loadChamados();
+          void requestLoadChamados();
         }
       });
 
     // Reconciliação ao reconectar internet ou ao voltar foco à aba
     const handleSync = () => {
-      void loadChamados();
+      void requestLoadChamados();
     };
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        void loadChamados();
+        void requestLoadChamados();
       }
     };
 
@@ -213,18 +228,25 @@ export function StaffChamadosProvider({
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     // Limpeza de estado e resposta pendente ao trocar sessão/logout
-    const { data: authListener } = supabase.auth.onAuthStateChange(() => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+      // A carga inicial já está em andamento; eventos de inicialização e
+      // renovação do token não mudam a identidade que pode ver a fila.
+      if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') return;
       requestIdRef.current++;
       isInitialLoadRef.current = true;
       knownIdsRef.current.clear();
       setChamados([]);
       setToastQueue([]);
       setActiveToast(null);
-      void loadChamados();
+      void requestLoadChamados();
     });
 
     return () => {
       mountedRef.current = false;
+      refreshQueue.dispose();
+      if (requestLoadRef.current === refreshQueue.request) {
+        requestLoadRef.current = null;
+      }
       if (debounceTimer) clearTimeout(debounceTimer);
       if (activeToastTimerRef.current) clearTimeout(activeToastTimerRef.current);
       window.removeEventListener('online', handleSync);
@@ -232,7 +254,7 @@ export function StaffChamadosProvider({
       authListener?.subscription.unsubscribe();
       void supabase.removeChannel(channel);
     };
-  }, [restaurantSlug, restaurantId, loadChamados]);
+  }, [restaurantSlug, restaurantId, loadChamados, requestLoadChamados]);
 
   // Avanço automático da fila de avisos (popups de 3 segundos sem sobreposição)
   useEffect(() => {
@@ -303,7 +325,9 @@ export function StaffChamadosProvider({
           return false;
         }
 
-        setChamados((prev) => prev.filter((i) => i.id !== requestId));
+        ++requestIdRef.current;
+        setChamados((prev) => prev.map((i) => i.id === requestId ? { ...i, status: 'attended' } : i));
+        await requestLoadChamados();
         setToastQueue((prev) => prev.filter((t) => t.chamadoId !== requestId));
         if (activeToast?.chamadoId === requestId) {
           setActiveToast(null);
@@ -314,7 +338,7 @@ export function StaffChamadosProvider({
         setBusyActionId(null);
       }
     },
-    [restaurantSlug, activeToast],
+    [restaurantSlug, activeToast, requestLoadChamados],
   );
 
   const attendBill = useCallback(
@@ -331,7 +355,9 @@ export function StaffChamadosProvider({
           return false;
         }
 
-        setChamados((prev) => prev.filter((i) => i.id !== requestId));
+        ++requestIdRef.current;
+        setChamados((prev) => prev.map((i) => i.id === requestId ? { ...i, status: 'attended' } : i));
+        await requestLoadChamados();
         setToastQueue((prev) => prev.filter((t) => t.chamadoId !== requestId));
         if (activeToast?.chamadoId === requestId) {
           setActiveToast(null);
@@ -342,8 +368,29 @@ export function StaffChamadosProvider({
         setBusyActionId(null);
       }
     },
-    [restaurantSlug, activeToast],
+    [restaurantSlug, activeToast, requestLoadChamados],
   );
+
+  const completeService = useCallback(async (requestId: string): Promise<boolean> => {
+    if (actionLockRef.current) return false;
+    const item = chamadosRef.current.find(i => i.id === requestId);
+    if (!item || item.category === 'ready_order' || item.status !== 'attended') return false;
+    actionLockRef.current = true;
+    ++requestIdRef.current;
+    setBusyActionId(requestId);
+    setError(null);
+    try {
+      const result = await executeCompleteServiceCall(restaurantSlug, requestId, item.category === 'bill_request' ? 'bill' : 'waiter');
+      if (!result.success) { setError(result.error || 'Não foi possível concluir.'); return false; }
+      ++requestIdRef.current;
+      setChamados(prev => prev.filter(i => i.id !== requestId));
+      return true;
+    } finally {
+      actionLockRef.current = false;
+      setBusyActionId(null);
+      await requestLoadChamados();
+    }
+  }, [restaurantSlug, requestLoadChamados]);
 
   const summary = calculateChamadosSummary(chamados);
 
@@ -360,6 +407,7 @@ export function StaffChamadosProvider({
         deliverOrder,
         attendWaiter,
         attendBill,
+        completeService,
       }}
     >
       {/* Popup compacto deslizando do topo (Toast Notification de 3 segundos) */}

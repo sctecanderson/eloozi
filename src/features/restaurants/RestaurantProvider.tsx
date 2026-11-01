@@ -1,3 +1,4 @@
+import type { EffectiveSubscription } from "../billing/TrialBanner";
 import {
   createContext,
   useCallback,
@@ -8,8 +9,11 @@ import {
 } from "react";
 import { supabase } from "../../lib/supabase";
 import type { Restaurant } from "../../types/restaurant";
+import { parseContactChannels, type ContactChannels } from './contactChannels';
 
 export interface RestaurantIdentity extends Restaurant {
+  effectiveSubscription?: EffectiveSubscription;
+  contactChannels?: ContactChannels | null;
   id: string;
   revision: number;
   logo: IdentityMedia | null;
@@ -22,7 +26,8 @@ export interface RestaurantIdentity extends Restaurant {
   timezone: string;
   googleReviewUrl?: string | null;
   subscriptionPlan?: string;
-  maxTables?: number;
+  maxTables?: number | null;
+  unlimitedTables?: boolean;
   subscriptionExpiresAt?: string | null;
   subscriptionIsTrial?: boolean;
   billingStatus?: 'active' | 'grace_period' | 'expired';
@@ -76,12 +81,19 @@ export function parseRestaurant(value: unknown): RestaurantIdentity {
       : typeof v.subscription_plan === "string"
       ? v.subscription_plan
       : "basic";
-  const maxTables =
-    typeof v.maxTables === "number" && Number.isFinite(v.maxTables)
-      ? v.maxTables
-      : typeof v.max_tables === "number" && Number.isFinite(v.max_tables)
-      ? v.max_tables
-      : 10;
+  const unlimitedTables =
+    typeof v.unlimitedTables === "boolean"
+      ? v.unlimitedTables
+      : typeof v.unlimited_tables === "boolean"
+      ? v.unlimited_tables
+      : false;
+  const maxTables = unlimitedTables
+    ? null
+    : typeof v.maxTables === "number" && Number.isFinite(v.maxTables)
+    ? v.maxTables
+    : typeof v.max_tables === "number" && Number.isFinite(v.max_tables)
+    ? v.max_tables
+    : 5;
   const subscriptionIsTrial =
     typeof v.subscriptionIsTrial === "boolean"
       ? v.subscriptionIsTrial
@@ -147,10 +159,12 @@ export function parseRestaurant(value: unknown): RestaurantIdentity {
       : null;
   return {
     ...(value as RestaurantIdentity),
+    contactChannels: parseContactChannels(v.contactChannels ?? v.contact_channels),
     serviceFeePercent,
     timezone,
     subscriptionPlan,
     maxTables,
+    unlimitedTables,
     subscriptionExpiresAt,
     subscriptionIsTrial,
     billingStatus,

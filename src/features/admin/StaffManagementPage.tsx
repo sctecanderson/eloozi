@@ -2,12 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { getStaffAccess } from '../auth/staffAuth';
 import {
+  clearMigratedLegacyProfiles,
   createInvite,
-  deleteStoredStaffProfile,
-  getStoredStaffProfiles,
   getTeam,
   revokeInvite,
-  saveStoredStaffProfile,
+  staffProfileApi,
   transferVisits,
   updateMember,
   type StaffExtendedProfile,
@@ -15,6 +14,19 @@ import {
   type TeamMember,
   type TeamState,
 } from './staffManagement';
+import {
+  describeLegacyFailures,
+  displayName,
+  indexProfilesByEmail,
+  normalizeEmail,
+  readLegacyProfiles,
+  resolveProfile,
+  STAFF_ACCESS_LABEL,
+  staffAccessState,
+  summarizeOutcome,
+  type OutcomeStep,
+} from './staffProfiles';
+import { shrinkImageToDataUrl } from './staffAvatar';
 
 export function StaffManagementPage() {
   const { restaurantSlug = '' } = useParams();
@@ -106,6 +118,26 @@ function TeamContent({ slug }: { slug: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // Link do convite mantido apenas em memória enquanto o modal estiver aberto.
+  const [inviteLink, setInviteLink] = useState<{ url: string; name: string; email: string } | null>(
+    null,
+  );
+  const [inviteCopyStatus, setInviteCopyStatus] = useState('');
+
+  function closeInviteModal() {
+    setInviteLink(null);
+    setInviteCopyStatus('');
+  }
+
+  async function handleCopyInvite() {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink.url);
+      setInviteCopyStatus('Link copiado.');
+    } catch {
+      setInviteCopyStatus('Não foi possível copiar automaticamente. Selecione o link e copie manualmente.');
+    }
+  }
 
   // Estados do Formulário
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -116,8 +148,6 @@ function TeamContent({ slug }: { slug: string }) {
   const [birthDate, setBirthDate] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [cargo, setCargo] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [active, setActive] = useState(true);
   const [permissions, setPermissions] = useState<string[]>([
     'cardapio',
@@ -147,13 +177,26 @@ function TeamContent({ slug }: { slug: string }) {
 
     async function loadData() {
       try {
-        const [state, stored] = await Promise.all([
-          getTeam(slug),
-          getStoredStaffProfiles(slug),
-        ]);
+        const [state, serverList] = await Promise.all([getTeam(slug), staffProfileApi.list(slug)]);
+        let list = serverList;
+        // Migra perfis do armazenamento local antigo, preservando os registros existentes.
+        // O registro local só é apagado depois da confirmação do servidor.
+        let migrationWarning = '';
+        const legacy = readLegacyProfiles(localStorage, slug);
+        if (legacy.length > 0) {
+          const result = await staffProfileApi.migrateLegacy(slug, legacy, serverList, (dataUrl) =>
+            shrinkImageToDataUrl(dataUrl),
+          );
+          if (result.migrated.length > 0) {
+            list = await staffProfileApi.list(slug);
+            clearMigratedLegacyProfiles(slug, result.migrated);
+          }
+          migrationWarning = describeLegacyFailures(result.failed);
+        }
         if (!disposed && alive.current) {
           setTeam(state);
-          setProfiles(stored);
+          setProfiles(indexProfilesByEmail(list));
+          if (migrationWarning) setError(migrationWarning);
         }
       } catch (err) {
         if (!disposed && alive.current) {
@@ -188,15 +231,12 @@ function TeamContent({ slug }: { slug: string }) {
       const emailLower = (m.email || '').toLowerCase();
       if (emailLower) seenEmails.add(emailLower);
 
-      const profile =
-        profiles[m.id] ||
-        (emailLower ? profiles[emailLower] : undefined) ||
-        Object.values(profiles).find((p) => p.email.toLowerCase() === emailLower);
+      const profile = resolveProfile(profiles, { id: m.id, email: m.email });
 
       list.push({
         id: m.id,
         memberId: m.id,
-        name: profile?.name || (m.email ? m.email.split('@')[0] : 'Funcionário'),
+        name: displayName(profile, m.email),
         email: m.email || '',
         phone: profile?.phone || '',
         cpf: profile?.cpf || '',
@@ -221,15 +261,12 @@ function TeamContent({ slug }: { slug: string }) {
       if (seenEmails.has(emailLower)) continue;
       seenEmails.add(emailLower);
 
-      const profile =
-        profiles[inv.id] ||
-        profiles[emailLower] ||
-        Object.values(profiles).find((p) => p.email.toLowerCase() === emailLower);
+      const profile = resolveProfile(profiles, { id: inv.id, email: inv.email });
 
       list.push({
         id: inv.id,
         inviteId: inv.id,
-        name: profile?.name || inv.email.split('@')[0],
+        name: displayName(profile, inv.email),
         email: inv.email,
         phone: profile?.phone || '',
         cpf: profile?.cpf || '',
@@ -275,13 +312,13 @@ function TeamContent({ slug }: { slug: string }) {
 
   // Contadores reais baseados estritamente nos dados do restaurante
   const totalCount = unifiedMembers.length;
-  const activeCount = unifiedMembers.filter((m) => m.active).length;
+  const activeCount = unifiedMembers.filter((m) => staffAccessState(m) === 'access_active').length;
   const inactiveCount = unifiedMembers.filter((m) => !m.active).length;
 
   // Filtragem da lista
   const filteredMembers = useMemo(() => {
     return unifiedMembers.filter((m) => {
-      if (filter === 'active' && !m.active) return false;
+      if (filter === 'active' && staffAccessState(m) !== 'access_active') return false;
       if (filter === 'inactive' && m.active) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -305,8 +342,6 @@ function TeamContent({ slug }: { slug: string }) {
     setBirthDate('');
     setAvatarUrl('');
     setCargo('');
-    setPassword('');
-    setShowPassword(false);
     setActive(true);
     setPermissions([
       'cardapio',
@@ -332,7 +367,6 @@ function TeamContent({ slug }: { slug: string }) {
     setCargo(m.cargo);
     setActive(m.active);
     setPermissions(m.permissions);
-    setPassword('');
     setError('');
     setNotice('');
     formTopRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -369,16 +403,29 @@ function TeamContent({ slug }: { slug: string }) {
     }
 
     setError('');
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setAvatarUrl(reader.result);
-      }
-    };
-    reader.readAsDataURL(file);
+    // Reduz a foto (máx. 320px, JPEG) para caber com folga no limite do banco.
+    shrinkImageToDataUrl(file)
+      .then((dataUrl) => setAvatarUrl(dataUrl))
+      .catch((cause) => setError(cause instanceof Error ? cause.message : 'Não foi possível processar a foto.'));
   }
 
-  // Submissão do formulário (Criar ou Editar funcionário)
+  // Recarrega o estado real (equipe + perfis) do servidor; devolve se conseguiu.
+  async function reloadFromServer(): Promise<boolean> {
+    try {
+      const [state, list] = await Promise.all([getTeam(slug), staffProfileApi.list(slug)]);
+      if (alive.current) {
+        setTeam(state);
+        setProfiles(indexProfilesByEmail(list));
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Submissão do formulário (Criar ou Editar funcionário).
+  // As etapas (vínculo/convite e perfil) são chamadas separadas, NÃO atômicas: o
+  // resultado de cada uma é registrado e o estado real é recarregado ao final.
   async function handleSubmit(e?: React.FormEvent) {
     if (e) e.preventDefault();
     if (acting.current || busy) return;
@@ -407,15 +454,14 @@ function TeamContent({ slug }: { slug: string }) {
       return;
     }
 
-    if (!editingId && (!password || password.length < 6)) {
-      setError('Defina uma senha ou PIN temporário com no mínimo 6 caracteres.');
-      return;
-    }
-
     acting.current = true;
     setBusy(true);
     setError('');
     setNotice('');
+
+    const reason = (cause: unknown) => (cause instanceof Error ? cause.message : 'erro desconhecido');
+    const steps: OutcomeStep[] = [];
+    let inviteUrl = '';
 
     try {
       const systemRole: StaffRole =
@@ -423,92 +469,100 @@ function TeamContent({ slug }: { slug: string }) {
           ? 'admin'
           : 'waiter';
 
-      // 1. Se estiver editando
+      const buildProfile = (id: string, profileEmail: string): StaffExtendedProfile => ({
+        id,
+        name: trimmedName,
+        email: profileEmail,
+        phone: phone.trim(),
+        cpf: cpf.trim(),
+        birthDate: birthDate.trim(),
+        avatarUrl: avatarUrl || undefined,
+        cargo: trimmedCargo,
+        active,
+        permissions,
+        createdAt: new Date().toISOString(),
+      });
+
+      let canSaveProfile = true;
+      let profileToSave: StaffExtendedProfile;
+
       if (editingId) {
+        // 1. Edição: atualiza o vínculo (se membro real) e depois o perfil.
         const existing = unifiedMembers.find((m) => m.id === editingId);
+        profileToSave = buildProfile(editingId, normalizeEmail(existing?.email || trimmedEmail));
 
-        // Atualizar no Supabase se for membro real de restaurant_members
-        if (existing?.memberId) {
-          const rawMember = team.members.find((m) => m.id === existing.memberId);
-          if (rawMember) {
+        const rawMember = existing?.memberId
+          ? team.members.find((m) => m.id === existing.memberId)
+          : undefined;
+        if (rawMember) {
+          try {
             await updateMember(slug, rawMember, systemRole, active);
+            steps.push({ label: 'cargo de acesso e status do vínculo atualizados', status: 'ok' });
+          } catch (cause) {
+            canSaveProfile = false;
+            steps.push({
+              label: 'atualização do cargo de acesso e status',
+              status: 'failed',
+              detail: reason(cause),
+            });
           }
-        }
-
-        // Atualizar perfil estendido
-        const updatedProfile: StaffExtendedProfile = {
-          id: editingId,
-          name: trimmedName,
-          email: trimmedEmail,
-          phone: phone.trim(),
-          cpf: cpf.trim(),
-          birthDate: birthDate.trim(),
-          avatarUrl: avatarUrl || undefined,
-          cargo: trimmedCargo,
-          active,
-          permissions,
-          createdAt: new Date().toISOString(),
-        };
-
-        saveStoredStaffProfile(slug, updatedProfile);
-        setProfiles(getStoredStaffProfiles(slug));
-
-        // Recarregar equipe do Supabase
-        const freshTeam = await getTeam(slug);
-        if (alive.current) {
-          setTeam(freshTeam);
-          setNotice(`Dados de ${trimmedName} atualizados com sucesso!`);
-          handleResetForm();
         }
       } else {
-        // 2. Novo cadastro: gerar convite no Supabase + persistir perfil
-        let inviteUrl = '';
+        // 2. Novo cadastro: convite e depois perfil.
+        profileToSave = buildProfile(crypto.randomUUID(), trimmedEmail);
         try {
           inviteUrl = await createInvite(slug, trimmedEmail, systemRole);
+          steps.push({ label: 'convite gerado', status: 'ok' });
         } catch (inviteErr) {
-          // Se o e-mail já existir ou der limite, apenas logamos o erro amigável se não for impeditivo
-          const msg = inviteErr instanceof Error ? inviteErr.message : '';
-          if (!msg.includes('já está vinculada')) {
-            throw inviteErr;
+          const msg = reason(inviteErr);
+          if (msg.includes('já está vinculada')) {
+            steps.push({ label: 'conta já vinculada (convite desnecessário)', status: 'ok' });
+          } else {
+            canSaveProfile = false;
+            steps.push({ label: 'geração do convite', status: 'failed', detail: msg });
           }
         }
-
-        const newId = crypto.randomUUID();
-        const newProfile: StaffExtendedProfile = {
-          id: newId,
-          name: trimmedName,
-          email: trimmedEmail,
-          phone: phone.trim(),
-          cpf: cpf.trim(),
-          birthDate: birthDate.trim(),
-          avatarUrl: avatarUrl || undefined,
-          cargo: trimmedCargo,
-          active,
-          permissions,
-          createdAt: new Date().toISOString(),
-        };
-
-        saveStoredStaffProfile(slug, newProfile);
-        setProfiles(getStoredStaffProfiles(slug));
-
-        const freshTeam = await getTeam(slug);
-        if (alive.current) {
-          setTeam(freshTeam);
-          setNotice(
-            inviteUrl
-              ? `Funcionário ${trimmedName} cadastrado com sucesso! Link de convite gerado.`
-              : `Funcionário ${trimmedName} salvo com sucesso!`,
-          );
-          handleResetForm();
-        }
       }
-    } catch (cause) {
+
+      if (canSaveProfile) {
+        try {
+          await staffProfileApi.save(slug, profileToSave);
+          steps.push({ label: 'dados pessoais do perfil salvos', status: 'ok' });
+        } catch (cause) {
+          steps.push({ label: 'salvamento dos dados pessoais', status: 'failed', detail: reason(cause) });
+        }
+      } else {
+        steps.push({ label: 'salvamento dos dados pessoais', status: 'skipped' });
+      }
+
+      // 3. Sempre recarrega o estado real antes de informar o resultado.
+      const reloaded = await reloadFromServer();
+      const outcome = summarizeOutcome(steps, reloaded);
+
       if (alive.current) {
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : 'Não foi possível salvar o funcionário. Tente novamente.',
-        );
+        if (inviteUrl) {
+          setInviteCopyStatus('');
+          setInviteLink({ url: inviteUrl, name: trimmedName, email: trimmedEmail });
+        }
+        if (outcome.kind === 'success') {
+          handleResetForm();
+          setNotice(
+            editingId
+              ? `Dados de ${trimmedName} atualizados com sucesso!`
+              : inviteUrl
+                ? `Perfil salvo e convite pendente gerado para ${trimmedName}. Nenhum e-mail ou SMS foi enviado; encaminhe o link manualmente.`
+                : `Perfil de ${trimmedName} salvo com sucesso!`,
+          );
+          if (!reloaded) {
+            setError('Salvo, mas não foi possível recarregar a lista do servidor. Atualize a página.');
+          }
+        } else {
+          // Parcial ou falha: o formulário é mantido e nenhum sucesso é declarado.
+          const retryHint = inviteUrl
+            ? ' O convite foi gerado e o link está na janela aberta; salvar novamente gera outro link e invalida o anterior.'
+            : '';
+          setError(outcome.message + retryHint);
+        }
       }
     } finally {
       acting.current = false;
@@ -534,46 +588,63 @@ function TeamContent({ slug }: { slug: string }) {
     setError('');
     setNotice('');
 
+    const reason = (cause: unknown) => (cause instanceof Error ? cause.message : 'erro desconhecido');
+    const steps: OutcomeStep[] = [];
+
     try {
       const nextActive = !m.active;
+      let canSaveProfile = true;
 
-      // Se for membro no Supabase
+      // Etapa 1: vínculo real no Supabase (se for membro)
       if (m.memberId) {
         const rawMember = team.members.find((item) => item.id === m.memberId);
         if (rawMember) {
-          await updateMember(slug, rawMember, rawMember.role, nextActive);
+          try {
+            await updateMember(slug, rawMember, rawMember.role, nextActive);
+            steps.push({ label: 'status do vínculo atualizado', status: 'ok' });
+          } catch (cause) {
+            canSaveProfile = false;
+            steps.push({ label: 'atualização do status do vínculo', status: 'failed', detail: reason(cause) });
+          }
         }
       }
 
-      // Atualizar no perfil local
-      const existingProfile =
-        profiles[m.id] ||
-        (m.email ? profiles[m.email.toLowerCase()] : undefined);
-
+      // Etapa 2: perfil complementar (chamada separada, não atômica com a etapa 1)
+      const existingProfile = resolveProfile(profiles, { id: m.id, email: m.email });
       if (existingProfile) {
-        saveStoredStaffProfile(slug, {
-          ...existingProfile,
-          active: nextActive,
-        });
-        setProfiles(getStoredStaffProfiles(slug));
+        if (canSaveProfile) {
+          try {
+            await staffProfileApi.save(slug, { ...existingProfile, active: nextActive });
+            steps.push({ label: 'status no perfil atualizado', status: 'ok' });
+          } catch (cause) {
+            steps.push({ label: 'atualização do status no perfil', status: 'failed', detail: reason(cause) });
+          }
+        } else {
+          steps.push({ label: 'atualização do status no perfil', status: 'skipped' });
+        }
       }
 
-      const freshTeam = await getTeam(slug);
+      const reloaded = await reloadFromServer();
+      const outcome = summarizeOutcome(steps, reloaded);
       if (alive.current) {
-        setTeam(freshTeam);
-        setNotice(
-          nextActive
-            ? `Acesso de ${m.name} reativado com sucesso.`
-            : `Acesso de ${m.name} desativado com sucesso.`,
-        );
-      }
-    } catch (err) {
-      if (alive.current) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Não foi possível alterar o status do funcionário.',
-        );
+        if (outcome.kind === 'success') {
+          if (m.memberId) {
+            setNotice(
+              nextActive
+                ? `Acesso de ${m.name} reativado com sucesso.`
+                : `Acesso de ${m.name} desativado com sucesso.`,
+            );
+          } else {
+            setNotice(
+              nextActive
+                ? `Perfil de ${m.name} marcado como ativo. O acesso ao sistema só existirá quando o convite for aceito.`
+                : `Perfil de ${m.name} marcado como inativo.`,
+            );
+          }
+          if (!reloaded) setError('Alterado, mas não foi possível recarregar a lista do servidor. Atualize a página.');
+        } else {
+          setError(outcome.message);
+        }
       }
     } finally {
       acting.current = false;
@@ -581,45 +652,59 @@ function TeamContent({ slug }: { slug: string }) {
     }
   }
 
-  // Excluir funcionário ou revogar convite
+  // Excluir funcionário ou revogar convite (etapas separadas, não atômicas)
   async function handleDeleteMember(m: UnifiedStaffMember) {
     const confirmMessage = `Tem certeza que deseja remover ${m.name} da equipe?`;
     if (!window.confirm(confirmMessage)) return;
+
+    if (m.openVisits > 0) {
+      setError('Transfira os atendimentos abertos antes de remover o funcionário.');
+      return;
+    }
 
     acting.current = true;
     setBusy(true);
     setError('');
     setNotice('');
 
+    const reason = (cause: unknown) => (cause instanceof Error ? cause.message : 'erro desconhecido');
+    const steps: OutcomeStep[] = [];
+
     try {
-      // Se tiver convite pendente no Supabase, revoga
+      let canRemoveProfile = true;
       if (m.inviteId) {
-        await revokeInvite(slug, m.inviteId);
+        try {
+          await revokeInvite(slug, m.inviteId);
+          steps.push({ label: 'convite pendente revogado', status: 'ok' });
+        } catch (cause) {
+          canRemoveProfile = false;
+          steps.push({ label: 'revogação do convite', status: 'failed', detail: reason(cause) });
+        }
       }
 
-      // Se for membro ativo com atendimentos abertos
-      if (m.openVisits > 0) {
-        throw new Error('Transfira os atendimentos abertos antes de remover o funcionário.');
-      }
-
-      // Remove do armazenamento sincronizado
-      deleteStoredStaffProfile(slug, m.id);
       if (m.email) {
-        deleteStoredStaffProfile(slug, m.email.toLowerCase());
+        if (canRemoveProfile) {
+          try {
+            await staffProfileApi.remove(slug, m.email);
+            steps.push({ label: 'dados pessoais do perfil removidos', status: 'ok' });
+          } catch (cause) {
+            steps.push({ label: 'remoção dos dados pessoais', status: 'failed', detail: reason(cause) });
+          }
+        } else {
+          steps.push({ label: 'remoção dos dados pessoais', status: 'skipped' });
+        }
       }
-      setProfiles(getStoredStaffProfiles(slug));
 
-      const freshTeam = await getTeam(slug);
+      const reloaded = await reloadFromServer();
+      const outcome = summarizeOutcome(steps, reloaded);
       if (alive.current) {
-        setTeam(freshTeam);
-        setNotice(`Funcionário ${m.name} removido com sucesso.`);
-        if (editingId === m.id) handleResetForm();
-      }
-    } catch (err) {
-      if (alive.current) {
-        setError(
-          err instanceof Error ? err.message : 'Não foi possível remover o funcionário.',
-        );
+        if (outcome.kind === 'success') {
+          setNotice(`Funcionário ${m.name} removido com sucesso.`);
+          if (editingId === m.id) handleResetForm();
+          if (!reloaded) setError('Removido, mas não foi possível recarregar a lista do servidor. Atualize a página.');
+        } else {
+          setError(outcome.message);
+        }
       }
     } finally {
       acting.current = false;
@@ -773,6 +858,58 @@ function TeamContent({ slug }: { slug: string }) {
         </div>
       )}
 
+      {inviteLink && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="invite-link-title"
+        >
+          <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-zinc-900 p-6 shadow-xl space-y-4">
+            <h2 id="invite-link-title" className="text-base font-bold text-zinc-900 dark:text-white">
+              Convite gerado para {inviteLink.name}
+            </h2>
+            <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+              Nenhum e-mail de convite foi enviado automaticamente.
+            </p>
+            <p className="text-xs text-zinc-600 dark:text-zinc-300">
+              O sistema NÃO enviou o convite por e-mail nem SMS: você precisa compartilhar este link manualmente. Copie o link abaixo e encaminhe ao funcionário (WhatsApp, e-mail etc.). Ele deverá
+              criar a própria conta com o e-mail {inviteLink.email}, confirmar o e-mail se
+              solicitado e voltar ao link para aceitar o convite. Este link só é exibido agora;
+              se fechar esta janela, será necessário revogar e gerar outro convite.
+            </p>
+            <input
+              readOnly
+              value={inviteLink.url}
+              onFocus={(e) => e.currentTarget.select()}
+              aria-label="Link do convite"
+              className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white"
+            />
+            {inviteCopyStatus && (
+              <p className="text-xs text-zinc-600 dark:text-zinc-300" role="status">
+                {inviteCopyStatus}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => void handleCopyInvite()}
+                className="px-4 py-2 rounded-xl bg-[#610000] text-white text-xs font-bold cursor-pointer"
+              >
+                Copiar convite
+              </button>
+              <button
+                type="button"
+                onClick={closeInviteModal}
+                className="px-4 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs font-bold text-zinc-700 dark:text-zinc-200 cursor-pointer"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* =========================================================================
           LAYOUT EM 2 COLUNAS
           ========================================================================= */}
@@ -857,6 +994,7 @@ function TeamContent({ slug }: { slug: string }) {
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
+                      readOnly={!!editingId}
                       placeholder="exemplo@email.com"
                       className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-xs font-medium text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#610000]/20 focus:border-[#610000] transition-all"
                     />
@@ -1084,63 +1222,7 @@ function TeamContent({ slug }: { slug: string }) {
                   </div>
                 </div>
 
-                {/* 2. Senha temporária / PIN */}
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
-                    {editingId ? 'Nova senha / PIN (opcional)' : 'Senha temporária *'}
-                  </label>
-                  <div className="relative">
-                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-400">
-                      <svg
-                        className="w-4 h-4"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                      </svg>
-                    </span>
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder={editingId ? 'Deixe em branco para manter' : 'Mínimo de 6 caracteres'}
-                      minLength={editingId ? 0 : 6}
-                      className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-xs font-medium text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#610000]/20 focus:border-[#610000] transition-all"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
-                    >
-                      {showPassword ? (
-                        <svg
-                          className="w-4 h-4"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                        >
-                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                          <line x1="1" y1="1" x2="23" y2="23" />
-                        </svg>
-                      ) : (
-                        <svg
-                          className="w-4 h-4"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                        >
-                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                          <circle cx="12" cy="12" r="3" />
-                        </svg>
-                      )}
-                    </button>
-                  </div>
-                </div>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 self-end">Nenhuma senha é definida aqui: o funcionário cria a própria senha ao aceitar o convite.</p>
               </div>
 
               {/* Linha inferior: Toggle Ativo */}
@@ -1165,7 +1247,7 @@ function TeamContent({ slug }: { slug: string }) {
                     Ativo
                   </span>
                   <span className="block text-xs text-zinc-500 dark:text-zinc-400">
-                    O funcionário poderá acessar o sistema.
+                    Marca o perfil como ativo. O acesso ao sistema só existe depois que o funcionário aceitar o convite.
                   </span>
                 </div>
               </div>
@@ -1490,17 +1572,19 @@ function TeamContent({ slug }: { slug: string }) {
                         {/* Status Badge */}
                         <div
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                            m.active
+                            staffAccessState(m) === 'access_active'
                               ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60'
-                              : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200/60'
+                              : staffAccessState(m) !== 'access_inactive'
+                                ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200/60'
+                                : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200/60'
                           }`}
                         >
                           <span
                             className={`w-1.5 h-1.5 rounded-full ${
-                              m.active ? 'bg-emerald-500' : 'bg-rose-500'
+                              staffAccessState(m) === 'access_active' ? 'bg-emerald-500' : staffAccessState(m) === 'access_inactive' ? 'bg-rose-500' : 'bg-amber-500'
                             }`}
                           />
-                          <span>{m.active ? 'Ativo' : 'Inativo'}</span>
+                          <span>{STAFF_ACCESS_LABEL[staffAccessState(m)]}</span>
                         </div>
 
                         {/* Botão Editar */}

@@ -17,7 +17,8 @@ export interface PlatformRestaurant extends CreatedRestaurant {
   archivedAt: string | null;
   subscriptionPlan: SubscriptionPlan;
   monthlyPriceCents: number;
-  maxTables: number;
+  maxTables: number | null;
+  unlimitedTables: boolean;
   activeTablesCount: number;
   subscriptionStartedAt: string;
   subscriptionExpiresAt: string;
@@ -137,25 +138,33 @@ export async function listPlatformRestaurants(): Promise<
     const subscriptionPlan: SubscriptionPlan =
       rawPlan === 'pro' || rawPlan === 'premium' ? rawPlan : 'basic';
 
-    const rawMonthlyPrice = Number(details.monthlyPriceCents ?? details.monthly_price_cents ?? 9900);
+    const rawMonthlyPrice = Number(details.monthlyPriceCents ?? details.monthly_price_cents ?? 9990);
     const monthlyPriceCents =
       Number.isSafeInteger(rawMonthlyPrice) && rawMonthlyPrice >= 0
         ? rawMonthlyPrice
         : subscriptionPlan === 'pro'
-        ? 14900
+        ? 17990
         : subscriptionPlan === 'premium'
-        ? 19900
-        : 9900;
+        ? 27990
+        : 9990;
 
-    const rawMaxTables = Number(details.maxTables ?? details.max_tables ?? 10);
-    const maxTables =
-      Number.isSafeInteger(rawMaxTables) && rawMaxTables > 0
-        ? rawMaxTables
-        : subscriptionPlan === 'pro'
-        ? 25
-        : subscriptionPlan === 'premium'
-        ? 100
-        : 10;
+    const rawUnlimited = details.unlimitedTables ?? details.unlimited_tables;
+    const rawMaxTablesVal = details.maxTables ?? details.max_tables;
+    const unlimitedTables =
+      typeof rawUnlimited === 'boolean'
+        ? rawUnlimited
+        : rawMaxTablesVal === null && subscriptionPlan === 'premium';
+
+    const parsedMaxTables = Number(rawMaxTablesVal);
+    const maxTables: number | null = unlimitedTables
+      ? null
+      : Number.isSafeInteger(parsedMaxTables) && parsedMaxTables > 0
+      ? parsedMaxTables
+      : subscriptionPlan === 'pro'
+      ? 20
+      : subscriptionPlan === 'premium'
+      ? 100
+      : 5;
 
     const rawActiveTables = Number(details.activeTablesCount ?? details.active_tables_count ?? 0);
     const activeTablesCount =
@@ -199,6 +208,7 @@ export async function listPlatformRestaurants(): Promise<
       subscriptionPlan,
       monthlyPriceCents,
       maxTables,
+      unlimitedTables,
       activeTablesCount,
       subscriptionStartedAt,
       subscriptionExpiresAt,
@@ -390,7 +400,8 @@ export interface UpdatedSaasPlan {
   archivedAt: string | null;
   subscriptionPlan: SubscriptionPlan;
   monthlyPriceCents: number;
-  maxTables: number;
+  maxTables: number | null;
+  unlimitedTables: boolean;
   activeTablesCount: number;
   subscriptionStartedAt?: string;
   subscriptionExpiresAt?: string;
@@ -406,28 +417,41 @@ export async function updateRestaurantSaasPlan(
   maxTables?: number | null,
   billingCycleDays?: number | null,
   renewCycle?: boolean,
+  unlimitedTables?: boolean | null,
 ): Promise<UpdatedSaasPlan> {
-  const { data, error } = await supabase.rpc('update_restaurant_saas_plan', {
+  const rpcArgs: Record<string, unknown> = {
     p_restaurant_id: restaurantId,
     p_plan: plan,
     p_monthly_price_cents: monthlyPriceCents ?? null,
     p_max_tables: maxTables ?? null,
     p_billing_cycle_days: billingCycleDays ?? null,
     p_renew_cycle: Boolean(renewCycle),
-  });
+  };
+  if (typeof unlimitedTables === 'boolean') {
+    rpcArgs.p_unlimited_tables = unlimitedTables;
+  }
+
+  const { data, error } = await supabase.rpc('update_restaurant_saas_plan', rpcArgs);
 
   if (error) {
     // Fallback seguro direto na tabela restaurants pelo SuperAdmin
-    const defaultPrices: Record<SubscriptionPlan, number> = { basic: 9900, pro: 14900, premium: 19900 };
-    const defaultTables: Record<SubscriptionPlan, number> = { basic: 10, pro: 25, premium: 100 };
+    const defaultPrices: Record<SubscriptionPlan, number> = { basic: 9990, pro: 17990, premium: 27990 };
+    const defaultTables: Record<SubscriptionPlan, number | null> = { basic: 5, pro: 20, premium: null };
     const targetPrice = monthlyPriceCents ?? defaultPrices[plan];
-    const targetMaxTables = maxTables ?? defaultTables[plan];
+    const targetUnlimited =
+      typeof unlimitedTables === 'boolean'
+        ? unlimitedTables
+        : maxTables === null || maxTables === undefined
+        ? plan === 'premium'
+        : false;
+    const targetMaxTables = targetUnlimited ? null : (maxTables ?? defaultTables[plan] ?? 5);
     const targetCycleDays = billingCycleDays ?? 30;
 
     const updates: Record<string, unknown> = {
       subscription_plan: plan,
       monthly_price_cents: targetPrice,
       max_tables: targetMaxTables,
+      unlimited_tables: targetUnlimited,
       billing_cycle_days: targetCycleDays,
     };
 
@@ -442,7 +466,7 @@ export async function updateRestaurantSaasPlan(
       .from('restaurants')
       .update(updates)
       .eq('id', restaurantId)
-      .select('id, name, slug, active, archived_at, subscription_plan, monthly_price_cents, max_tables, billing_cycle_days, subscription_started_at, subscription_expires_at')
+      .select('id, name, slug, active, archived_at, subscription_plan, monthly_price_cents, max_tables, unlimited_tables, billing_cycle_days, subscription_started_at, subscription_expires_at')
       .single();
 
     if (directError) {
@@ -456,6 +480,7 @@ export async function updateRestaurantSaasPlan(
     const daysRemaining = Math.ceil((Date.parse(expiresAt) - Date.now()) / 86400000);
     const billingStatus: PlatformBillingStatus =
       daysRemaining <= -3 ? 'expired' : daysRemaining <= 0 ? 'grace_period' : 'active';
+    const resolvedUnlimited = Boolean(directData.unlimited_tables ?? targetUnlimited);
 
     return {
       id: String(directData.id),
@@ -465,7 +490,8 @@ export async function updateRestaurantSaasPlan(
       archivedAt: (directData.archived_at ?? null) as string | null,
       subscriptionPlan: plan,
       monthlyPriceCents: Number(directData.monthly_price_cents ?? targetPrice),
-      maxTables: Number(directData.max_tables ?? targetMaxTables),
+      maxTables: resolvedUnlimited ? null : Number(directData.max_tables ?? targetMaxTables ?? 5),
+      unlimitedTables: resolvedUnlimited,
       activeTablesCount: 0,
       subscriptionStartedAt: String(directData.subscription_started_at ?? new Date().toISOString()),
       subscriptionExpiresAt: expiresAt,
@@ -503,15 +529,28 @@ export async function updateRestaurantSaasPlan(
       ? 'grace_period'
       : 'active';
 
+  const rawUnlimited = details.unlimitedTables ?? details.unlimited_tables;
+  const rawMaxTablesVal = details.maxTables ?? details.max_tables;
+  const resolvedUnlimited =
+    typeof rawUnlimited === 'boolean'
+      ? rawUnlimited
+      : rawMaxTablesVal === null;
+  const parsedMaxTables = Number(rawMaxTablesVal);
+
   return {
     id: String(details.id),
     name: String(details.name),
     slug: String(details.slug),
-    active: Boolean(details.active),
+    active: Boolean(details.active ?? true),
     archivedAt: (details.archivedAt ?? details.archived_at ?? null) as string | null,
     subscriptionPlan,
-    monthlyPriceCents: Number(details.monthlyPriceCents ?? details.monthly_price_cents ?? 9900),
-    maxTables: Number(details.maxTables ?? details.max_tables ?? 10),
+    monthlyPriceCents: Number(details.monthlyPriceCents ?? details.monthly_price_cents ?? 9990),
+    maxTables: resolvedUnlimited
+      ? null
+      : Number.isSafeInteger(parsedMaxTables) && parsedMaxTables > 0
+      ? parsedMaxTables
+      : 5,
+    unlimitedTables: resolvedUnlimited,
     activeTablesCount: Number(details.activeTablesCount ?? details.active_tables_count ?? 0),
     subscriptionStartedAt: String(details.subscriptionStartedAt ?? details.subscription_started_at ?? new Date().toISOString()),
     subscriptionExpiresAt: expiresAt,
@@ -530,10 +569,13 @@ export interface PlatformBrandingSettings {
   updatedAt: string;
   basicPriceCents: number;
   basicMaxTables: number;
+  basicUnlimitedTables: boolean;
   proPriceCents: number;
   proMaxTables: number;
+  proUnlimitedTables: boolean;
   premiumPriceCents: number;
-  premiumMaxTables: number;
+  premiumMaxTables: number | null;
+  premiumUnlimitedTables: boolean;
 }
 
 export async function getPlatformBranding(): Promise<PlatformBrandingSettings> {
@@ -546,6 +588,7 @@ export async function getPlatformBranding(): Promise<PlatformBrandingSettings> {
       .maybeSingle();
 
     if (rowData) {
+      const premiumUnlimited = Boolean(rowData.premium_unlimited_tables ?? rowData.premium_max_tables === null);
       return {
         platformName: rowData.platform_name || 'Elozi',
         platformSubtitle: rowData.platform_subtitle || 'Administração da Plataforma',
@@ -553,12 +596,15 @@ export async function getPlatformBranding(): Promise<PlatformBrandingSettings> {
         superadminName: rowData.superadmin_name || 'SuperAdmin',
         superadminAvatarUrl: rowData.superadmin_avatar_url || null,
         updatedAt: rowData.updated_at || new Date().toISOString(),
-        basicPriceCents: Number(rowData.basic_price_cents ?? 9900),
-        basicMaxTables: Number(rowData.basic_max_tables ?? 10),
-        proPriceCents: Number(rowData.pro_price_cents ?? 14900),
-        proMaxTables: Number(rowData.pro_max_tables ?? 25),
-        premiumPriceCents: Number(rowData.premium_price_cents ?? 19900),
-        premiumMaxTables: Number(rowData.premium_max_tables ?? 100),
+        basicPriceCents: Number(rowData.basic_price_cents ?? 9990),
+        basicMaxTables: Number(rowData.basic_max_tables ?? 5),
+        basicUnlimitedTables: Boolean(rowData.basic_unlimited_tables ?? false),
+        proPriceCents: Number(rowData.pro_price_cents ?? 17990),
+        proMaxTables: Number(rowData.pro_max_tables ?? 20),
+        proUnlimitedTables: Boolean(rowData.pro_unlimited_tables ?? false),
+        premiumPriceCents: Number(rowData.premium_price_cents ?? 27990),
+        premiumMaxTables: premiumUnlimited ? null : Number(rowData.premium_max_tables ?? 100),
+        premiumUnlimitedTables: premiumUnlimited,
       };
     }
 
@@ -569,16 +615,27 @@ export async function getPlatformBranding(): Promise<PlatformBrandingSettings> {
       superadminName: 'SuperAdmin',
       superadminAvatarUrl: null,
       updatedAt: new Date().toISOString(),
-      basicPriceCents: 9900,
-      basicMaxTables: 10,
-      proPriceCents: 14900,
-      proMaxTables: 25,
-      premiumPriceCents: 19900,
-      premiumMaxTables: 100,
+      basicPriceCents: 9990,
+      basicMaxTables: 5,
+      basicUnlimitedTables: false,
+      proPriceCents: 17990,
+      proMaxTables: 20,
+      proUnlimitedTables: false,
+      premiumPriceCents: 27990,
+      premiumMaxTables: null,
+      premiumUnlimitedTables: true,
     };
   }
 
   const d = data as Record<string, unknown>;
+  const rawPremiumUnlimited = d.premiumUnlimitedTables ?? d.premium_unlimited_tables;
+  const rawPremiumMax = d.premiumMaxTables ?? d.premium_max_tables;
+  const premiumUnlimited =
+    typeof rawPremiumUnlimited === 'boolean'
+      ? rawPremiumUnlimited
+      : rawPremiumMax === null;
+  const parsedPremiumMax = Number(rawPremiumMax);
+
   return {
     platformName: String(d.platformName ?? d.platform_name ?? 'Elozi'),
     platformSubtitle: String(d.platformSubtitle ?? d.platform_subtitle ?? 'Administração da Plataforma'),
@@ -586,12 +643,19 @@ export async function getPlatformBranding(): Promise<PlatformBrandingSettings> {
     superadminName: String(d.superadminName ?? d.superadmin_name ?? 'SuperAdmin'),
     superadminAvatarUrl: (d.superadminAvatarUrl ?? d.superadmin_avatar_url ?? null) as string | null,
     updatedAt: String(d.updatedAt ?? d.updated_at ?? new Date().toISOString()),
-    basicPriceCents: Number(d.basicPriceCents ?? d.basic_price_cents ?? 9900),
-    basicMaxTables: Number(d.basicMaxTables ?? d.basic_max_tables ?? 10),
-    proPriceCents: Number(d.proPriceCents ?? d.pro_price_cents ?? 14900),
-    proMaxTables: Number(d.proMaxTables ?? d.pro_max_tables ?? 25),
-    premiumPriceCents: Number(d.premiumPriceCents ?? d.premium_price_cents ?? 19900),
-    premiumMaxTables: Number(d.premiumMaxTables ?? d.premium_max_tables ?? 100),
+    basicPriceCents: Number(d.basicPriceCents ?? d.basic_price_cents ?? 9990),
+    basicMaxTables: Number(d.basicMaxTables ?? d.basic_max_tables ?? 5),
+    basicUnlimitedTables: Boolean(d.basicUnlimitedTables ?? d.basic_unlimited_tables ?? false),
+    proPriceCents: Number(d.proPriceCents ?? d.pro_price_cents ?? 17990),
+    proMaxTables: Number(d.proMaxTables ?? d.pro_max_tables ?? 20),
+    proUnlimitedTables: Boolean(d.proUnlimitedTables ?? d.pro_unlimited_tables ?? false),
+    premiumPriceCents: Number(d.premiumPriceCents ?? d.premium_price_cents ?? 27990),
+    premiumMaxTables: premiumUnlimited
+      ? null
+      : Number.isSafeInteger(parsedPremiumMax) && parsedPremiumMax > 0
+      ? parsedPremiumMax
+      : 100,
+    premiumUnlimitedTables: premiumUnlimited,
   };
 }
 
@@ -637,6 +701,7 @@ export async function updatePlatformBranding(params: {
       throw serverError(error, 'Não foi possível atualizar as configurações da plataforma.');
     }
 
+    const premiumUnlimited = Boolean(updatedRow.premium_unlimited_tables ?? updatedRow.premium_max_tables === null);
     return {
       platformName: updatedRow.platform_name || 'Elozi',
       platformSubtitle: updatedRow.platform_subtitle || 'Administração da Plataforma',
@@ -644,16 +709,27 @@ export async function updatePlatformBranding(params: {
       superadminName: updatedRow.superadmin_name || 'SuperAdmin',
       superadminAvatarUrl: updatedRow.superadmin_avatar_url || null,
       updatedAt: updatedRow.updated_at || new Date().toISOString(),
-      basicPriceCents: Number(updatedRow.basic_price_cents ?? 9900),
-      basicMaxTables: Number(updatedRow.basic_max_tables ?? 10),
-      proPriceCents: Number(updatedRow.pro_price_cents ?? 14900),
-      proMaxTables: Number(updatedRow.pro_max_tables ?? 25),
-      premiumPriceCents: Number(updatedRow.premium_price_cents ?? 19900),
-      premiumMaxTables: Number(updatedRow.premium_max_tables ?? 100),
+      basicPriceCents: Number(updatedRow.basic_price_cents ?? 9990),
+      basicMaxTables: Number(updatedRow.basic_max_tables ?? 5),
+      basicUnlimitedTables: Boolean(updatedRow.basic_unlimited_tables ?? false),
+      proPriceCents: Number(updatedRow.pro_price_cents ?? 17990),
+      proMaxTables: Number(updatedRow.pro_max_tables ?? 20),
+      proUnlimitedTables: Boolean(updatedRow.pro_unlimited_tables ?? false),
+      premiumPriceCents: Number(updatedRow.premium_price_cents ?? 27990),
+      premiumMaxTables: premiumUnlimited ? null : Number(updatedRow.premium_max_tables ?? 100),
+      premiumUnlimitedTables: premiumUnlimited,
     };
   }
 
   const d = data as Record<string, unknown>;
+  const rawPremiumUnlimited = d.premiumUnlimitedTables ?? d.premium_unlimited_tables;
+  const rawPremiumMax = d.premiumMaxTables ?? d.premium_max_tables;
+  const premiumUnlimited =
+    typeof rawPremiumUnlimited === 'boolean'
+      ? rawPremiumUnlimited
+      : rawPremiumMax === null;
+  const parsedPremiumMax = Number(rawPremiumMax);
+
   return {
     platformName: String(d.platformName ?? d.platform_name ?? 'Elozi'),
     platformSubtitle: String(d.platformSubtitle ?? d.platform_subtitle ?? 'Administração da Plataforma'),
@@ -661,22 +737,32 @@ export async function updatePlatformBranding(params: {
     superadminName: String(d.superadminName ?? d.superadmin_name ?? 'SuperAdmin'),
     superadminAvatarUrl: (d.superadminAvatarUrl ?? d.superadmin_avatar_url ?? null) as string | null,
     updatedAt: String(d.updatedAt ?? d.updated_at ?? new Date().toISOString()),
-    basicPriceCents: Number(d.basicPriceCents ?? d.basic_price_cents ?? 9900),
-    basicMaxTables: Number(d.basicMaxTables ?? d.basic_max_tables ?? 10),
-    proPriceCents: Number(d.proPriceCents ?? d.pro_price_cents ?? 14900),
-    proMaxTables: Number(d.proMaxTables ?? d.pro_max_tables ?? 25),
-    premiumPriceCents: Number(d.premiumPriceCents ?? d.premium_price_cents ?? 19900),
-    premiumMaxTables: Number(d.premiumMaxTables ?? d.premium_max_tables ?? 100),
+    basicPriceCents: Number(d.basicPriceCents ?? d.basic_price_cents ?? 9990),
+    basicMaxTables: Number(d.basicMaxTables ?? d.basic_max_tables ?? 5),
+    basicUnlimitedTables: Boolean(d.basicUnlimitedTables ?? d.basic_unlimited_tables ?? false),
+    proPriceCents: Number(d.proPriceCents ?? d.pro_price_cents ?? 17990),
+    proMaxTables: Number(d.proMaxTables ?? d.pro_max_tables ?? 20),
+    proUnlimitedTables: Boolean(d.proUnlimitedTables ?? d.pro_unlimited_tables ?? false),
+    premiumPriceCents: Number(d.premiumPriceCents ?? d.premium_price_cents ?? 27990),
+    premiumMaxTables: premiumUnlimited
+      ? null
+      : Number.isSafeInteger(parsedPremiumMax) && parsedPremiumMax > 0
+      ? parsedPremiumMax
+      : 100,
+    premiumUnlimitedTables: premiumUnlimited,
   };
 }
 
 export interface PlanCatalogUpdateParams {
   basicPriceCents: number;
   basicMaxTables: number;
+  basicUnlimitedTables?: boolean;
   proPriceCents: number;
   proMaxTables: number;
+  proUnlimitedTables?: boolean;
   premiumPriceCents: number;
-  premiumMaxTables: number;
+  premiumMaxTables: number | null;
+  premiumUnlimitedTables?: boolean;
   syncExistingRestaurants?: boolean;
 }
 
@@ -684,17 +770,20 @@ export interface PlanCatalogUpdateResult {
   success: boolean;
   basicPriceCents: number;
   basicMaxTables: number;
+  basicUnlimitedTables: boolean;
   proPriceCents: number;
   proMaxTables: number;
+  proUnlimitedTables: boolean;
   premiumPriceCents: number;
-  premiumMaxTables: number;
+  premiumMaxTables: number | null;
+  premiumUnlimitedTables: boolean;
   syncedRestaurantsCount: number;
 }
 
 export async function updatePlatformPlanCatalog(
   params: PlanCatalogUpdateParams,
 ): Promise<PlanCatalogUpdateResult> {
-  const { data, error } = await supabase.rpc('update_platform_plan_catalog', {
+  const rpcPayload: Record<string, unknown> = {
     p_basic_price_cents: params.basicPriceCents,
     p_basic_max_tables: params.basicMaxTables,
     p_pro_price_cents: params.proPriceCents,
@@ -702,18 +791,33 @@ export async function updatePlatformPlanCatalog(
     p_premium_price_cents: params.premiumPriceCents,
     p_premium_max_tables: params.premiumMaxTables,
     p_sync_existing_restaurants: Boolean(params.syncExistingRestaurants),
-  });
+  };
+  if (typeof params.basicUnlimitedTables === 'boolean') {
+    rpcPayload.p_basic_unlimited_tables = params.basicUnlimitedTables;
+  }
+  if (typeof params.proUnlimitedTables === 'boolean') {
+    rpcPayload.p_pro_unlimited_tables = params.proUnlimitedTables;
+  }
+  if (typeof params.premiumUnlimitedTables === 'boolean') {
+    rpcPayload.p_premium_unlimited_tables = params.premiumUnlimitedTables;
+  }
+
+  const { data, error } = await supabase.rpc('update_platform_plan_catalog', rpcPayload);
 
   if (error) {
+    const premiumUnlimited = Boolean(params.premiumUnlimitedTables);
     const { error: directError } = await supabase
       .from('platform_settings')
       .update({
         basic_price_cents: params.basicPriceCents,
         basic_max_tables: params.basicMaxTables,
+        basic_unlimited_tables: Boolean(params.basicUnlimitedTables),
         pro_price_cents: params.proPriceCents,
         pro_max_tables: params.proMaxTables,
+        pro_unlimited_tables: Boolean(params.proUnlimitedTables),
         premium_price_cents: params.premiumPriceCents,
-        premium_max_tables: params.premiumMaxTables,
+        premium_max_tables: premiumUnlimited ? null : params.premiumMaxTables,
+        premium_unlimited_tables: premiumUnlimited,
         updated_at: new Date().toISOString(),
       })
       .eq('id', 'default');
@@ -724,9 +828,9 @@ export async function updatePlatformPlanCatalog(
 
     let syncedCount = 0;
     if (params.syncExistingRestaurants) {
-      const { data: bData } = await supabase.from('restaurants').update({ monthly_price_cents: params.basicPriceCents, max_tables: params.basicMaxTables }).eq('subscription_plan', 'basic').select('id');
-      const { data: pData } = await supabase.from('restaurants').update({ monthly_price_cents: params.proPriceCents, max_tables: params.proMaxTables }).eq('subscription_plan', 'pro').select('id');
-      const { data: prData } = await supabase.from('restaurants').update({ monthly_price_cents: params.premiumPriceCents, max_tables: params.premiumMaxTables }).eq('subscription_plan', 'premium').select('id');
+      const { data: bData } = await supabase.from('restaurants').update({ monthly_price_cents: params.basicPriceCents, max_tables: params.basicMaxTables, unlimited_tables: false }).eq('subscription_plan', 'basic').select('id');
+      const { data: pData } = await supabase.from('restaurants').update({ monthly_price_cents: params.proPriceCents, max_tables: params.proMaxTables, unlimited_tables: false }).eq('subscription_plan', 'pro').select('id');
+      const { data: prData } = await supabase.from('restaurants').update({ monthly_price_cents: params.premiumPriceCents, max_tables: premiumUnlimited ? null : params.premiumMaxTables, unlimited_tables: premiumUnlimited }).eq('subscription_plan', 'premium').select('id');
       syncedCount = (bData?.length ?? 0) + (pData?.length ?? 0) + (prData?.length ?? 0);
     }
 
@@ -734,23 +838,38 @@ export async function updatePlatformPlanCatalog(
       success: true,
       basicPriceCents: params.basicPriceCents,
       basicMaxTables: params.basicMaxTables,
+      basicUnlimitedTables: Boolean(params.basicUnlimitedTables),
       proPriceCents: params.proPriceCents,
       proMaxTables: params.proMaxTables,
+      proUnlimitedTables: Boolean(params.proUnlimitedTables),
       premiumPriceCents: params.premiumPriceCents,
-      premiumMaxTables: params.premiumMaxTables,
+      premiumMaxTables: premiumUnlimited ? null : params.premiumMaxTables,
+      premiumUnlimitedTables: premiumUnlimited,
       syncedRestaurantsCount: syncedCount,
     };
   }
 
   const d = data as Record<string, unknown>;
+  const rawPremiumUnlimited = d.premiumUnlimitedTables ?? d.premium_unlimited_tables;
+  const rawPremiumMax = d.premiumMaxTables ?? d.premium_max_tables;
+  const resolvedPremiumUnlimited =
+    typeof rawPremiumUnlimited === 'boolean'
+      ? rawPremiumUnlimited
+      : rawPremiumMax === null;
+
   return {
     success: true,
-    basicPriceCents: Number(d.basicPriceCents ?? params.basicPriceCents),
-    basicMaxTables: Number(d.basicMaxTables ?? params.basicMaxTables),
-    proPriceCents: Number(d.proPriceCents ?? params.proPriceCents),
-    proMaxTables: Number(d.proMaxTables ?? params.proMaxTables),
-    premiumPriceCents: Number(d.premiumPriceCents ?? params.premiumPriceCents),
-    premiumMaxTables: Number(d.premiumMaxTables ?? params.premiumMaxTables),
+    basicPriceCents: Number(d.basicPriceCents ?? d.basic_price_cents ?? params.basicPriceCents),
+    basicMaxTables: Number(d.basicMaxTables ?? d.basic_max_tables ?? params.basicMaxTables),
+    basicUnlimitedTables: Boolean(d.basicUnlimitedTables ?? d.basic_unlimited_tables ?? false),
+    proPriceCents: Number(d.proPriceCents ?? d.pro_price_cents ?? params.proPriceCents),
+    proMaxTables: Number(d.proMaxTables ?? d.pro_max_tables ?? params.proMaxTables),
+    proUnlimitedTables: Boolean(d.proUnlimitedTables ?? d.pro_unlimited_tables ?? false),
+    premiumPriceCents: Number(d.premiumPriceCents ?? d.premium_price_cents ?? params.premiumPriceCents),
+    premiumMaxTables: resolvedPremiumUnlimited
+      ? null
+      : Number(rawPremiumMax ?? params.premiumMaxTables ?? 100),
+    premiumUnlimitedTables: resolvedPremiumUnlimited,
     syncedRestaurantsCount: Number(d.syncedRestaurantsCount ?? 0),
   };
 }

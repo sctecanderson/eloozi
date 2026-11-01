@@ -1,6 +1,12 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { supabase } from '../../lib/supabase';
+import { updateAuthenticatedUserPassword } from './staffAuth';
+import {
+  getStaffInvitationErrorMessage,
+  MIN_NEW_PASSWORD_LENGTH,
+  validateNewPassword,
+} from './staffAuthErrors';
 
 export function ResetPasswordPage() {
   const navigate = useNavigate();
@@ -11,6 +17,7 @@ export function ResetPasswordPage() {
   const [hasSession, setHasSession] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const acting = useRef(false);
 
   useEffect(() => {
     let mounted = true;
@@ -21,7 +28,7 @@ export function ResetPasswordPage() {
         if (sessionErr) throw sessionErr;
 
         if (mounted) {
-          if (data.session?.user) {
+          if (data.session?.user && !data.session.user.is_anonymous) {
             setHasSession(true);
           }
         }
@@ -59,37 +66,35 @@ export function ResetPasswordPage() {
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (acting.current || busy) return;
 
-    if (password.length < 6) {
-      setError('A nova senha deve ter no mínimo 6 caracteres.');
+    const check = validateNewPassword(password, confirmPassword);
+    if (!check.valid) {
+      setError(check.error || 'Verifique a nova senha informada.');
       return;
     }
 
-    if (password !== confirmPassword) {
-      setError('As senhas digitadas não coincidem.');
-      return;
-    }
-
+    acting.current = true;
     setBusy(true);
     setError('');
 
     try {
-      const { error: updateErr } = await supabase.auth.updateUser({
-        password,
+      const res = await updateAuthenticatedUserPassword({
+        newPassword: password,
+        confirmPassword,
       });
 
-      if (updateErr) throw updateErr;
+      if (res.requiresCurrentPassword) {
+        throw new Error('Link de recuperação expirado. Solicite um novo link de redefinição de senha.');
+      }
 
       setSuccess(true);
       setPassword('');
       setConfirmPassword('');
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Não foi possível redefinir sua senha. Tente novamente.',
-      );
+      setError(getStaffInvitationErrorMessage(err));
     } finally {
+      acting.current = false;
       setBusy(false);
     }
   }
@@ -180,10 +185,11 @@ export function ResetPasswordPage() {
                 id="new-password"
                 type="password"
                 required
-                minLength={6}
+                minLength={MIN_NEW_PASSWORD_LENGTH}
+                autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="No mínimo 6 caracteres"
+                placeholder={`No mínimo ${MIN_NEW_PASSWORD_LENGTH} caracteres`}
                 className="w-full min-h-11 rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 px-3.5 text-sm text-stone-900 dark:text-stone-100 placeholder:text-stone-400 focus:outline-hidden focus:ring-2 focus:ring-[var(--brand)]"
               />
             </div>
@@ -199,7 +205,8 @@ export function ResetPasswordPage() {
                 id="confirm-password"
                 type="password"
                 required
-                minLength={6}
+                minLength={MIN_NEW_PASSWORD_LENGTH}
+                autoComplete="new-password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Repita a nova senha"
@@ -215,7 +222,7 @@ export function ResetPasswordPage() {
 
             <button
               type="submit"
-              disabled={busy || password.length < 6 || password !== confirmPassword}
+              disabled={busy || password.length < MIN_NEW_PASSWORD_LENGTH || password !== confirmPassword}
               className="w-full min-h-11 rounded-xl bg-[var(--brand)] text-white font-semibold text-sm hover:brightness-105 transition-all shadow-xs disabled:opacity-50"
             >
               {busy ? 'Salvando nova senha…' : 'Redefinir senha'}

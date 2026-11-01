@@ -1,3 +1,4 @@
+import { visibleContactUrls } from "../restaurants/contactChannels";
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { useRestaurant } from '../restaurants/RestaurantProvider';
@@ -237,28 +238,13 @@ export function HomePage() {
     }
   })().trim();
 
-  const instagramUrl = rawInstagram
-    ? rawInstagram.startsWith("http")
-      ? rawInstagram
-      : `https://instagram.com/${rawInstagram.replace(/^@/, "").replace(/^\/+/, "")}`
-    : null;
-
-  const whatsappUrl = rawWhatsapp
-    ? rawWhatsapp.startsWith("http")
-      ? rawWhatsapp
-      : `https://wa.me/${rawWhatsapp.replace(/\D/g, "")}`
-    : null;
-
-  const facebookUrl = rawFacebook
-    ? rawFacebook.startsWith("http")
-      ? rawFacebook
-      : rawFacebook.startsWith("/")
-      ? `https://facebook.com${rawFacebook}`
-      : rawFacebook.includes(".")
-      ? `https://${rawFacebook}`
-      : `https://facebook.com/${rawFacebook}`
-    : null;
-
+  // A saved server configuration is authoritative, including disabled/empty channels.
+  const channels = restaurant.contactChannels ?? {
+    instagram: { value: rawInstagram, enabled: true },
+    whatsapp: { value: rawWhatsapp, enabled: true },
+    facebook: { value: rawFacebook, enabled: true },
+  };
+  const { instagram: instagramUrl, whatsapp: whatsappUrl, facebook: facebookUrl } = visibleContactUrls(channels);
   const hasReview = Boolean(restaurant.googleReviewUrl && restaurant.googleReviewUrl.trim().length > 0);
   const hasWifi = Boolean(showWifi && (wifiSsid || wifiPassword));
   const hasSocials = Boolean(instagramUrl || whatsappUrl || facebookUrl);

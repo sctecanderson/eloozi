@@ -1,3 +1,4 @@
+import { TrialBanner } from "../billing/TrialBanner";
 import { useState, useEffect, useRef } from "react";
 import {
   Link,
@@ -424,6 +425,7 @@ export function AdminLayout() {
         }}
       >
         <AdminTopbar restaurant={r} />
+        <TrialBanner />
 
         {/* Avisos de Faturamento / Assinatura */}
         {isExpiringSoon && !isGracePeriod && !isSevereOverdue && (

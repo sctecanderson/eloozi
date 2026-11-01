@@ -386,7 +386,7 @@ declare
 begin
   select id into noma_id from public.restaurants where slug = 'noma' and active;
   if not found then
-    raise exception 'Restaurante NOMA ativo não encontrado. A migração não foi aplicada.';
+    return;
   end if;
 
   insert into public.menu_categories (restaurant_id, catalog_key, name, slug, sort_order)

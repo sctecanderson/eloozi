@@ -1,0 +1,16 @@
+// Verifies recorded executions and snapshots. Does not rerun browser, SQL or remote calls.
+import fs from 'node:fs';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';
+const read=n=>JSON.parse(fs.readFileSync('docs/downgrade-integrated-'+n+'.json','utf8'));
+const results=read('results');assert.equal(results.passed,true);assert.equal(results.checks.length,56);assert.equal(results.allGatewayRequestsMocked,true);assert.equal(results.directContractDateUpdates,0);
+const remote=read('remote-readonly');assert.equal(remote.authorizedProject,'rzhtndpselxsxgomclzo');assert.equal(remote.remoteMutations,0);assert.equal(remote.remotePaymentCalls,0);assert.equal(remote.asaasRuntimeSandboxProved,false);assert.ok(remote.checkoutHandlerMatchesDeployed&&remote.webhookHandlerMatchesDeployed);
+assert.equal(read('targets').frontendConfigMatchesTest,true);
+for(const [cycle,target,amount] of [['monthly','basic',remote.catalogObserved.basic_price_cents],['yearly','pro',remote.catalogObserved.pro_price_cents*11]]){
+ const r=read(cycle);assert.equal(r.after.restaurant.subscription_plan,target);assert.equal(r.after.cycles.length,r.before.cycles.length+1);assert.deepEqual(r.before.restaurant,r.pending.restaurant);assert.deepEqual(r.before.tables,r.pending.tables);assert.deepEqual(r.before.cycles,r.pending.cycles);assert.equal(r.after.receipts,1);assert.equal(r.after.cycles.at(-1).contracted_price_cents,amount);assert.equal(r.modules.inventory,false);assert.equal(r.modules.finance,false);
+}
+const comparison=read('browser-comparison');assert.ok(comparison.pendingPreservedAllRestaurantFields&&comparison.pendingPreservedEveryTableAndCycle);assert.equal(comparison.afterPlan,'basic');assert.equal(comparison.afterActiveTables,5);assert.equal(comparison.preservedTableRecords,8);assert.equal(comparison.finalCycles,2);assert.equal(comparison.paidDurationHours,720);
+const observations=read('browser-observations');assert.equal(observations.length,14);for(const row of observations){assert.ok(fs.statSync(row.file).size>1000);assert.ok(row.scrollWidth<=row.clientWidth);}
+const initial=observations.find(r=>r.phase==='confirmed-local'),fixed=observations.find(r=>r.phase==='final-confirmed-no-stale-alert');assert.ok(initial.dialog.includes('Pagamento ainda não confirmado')&&initial.dialog.includes('Pagamento confirmado'));assert.ok(fixed.dialog.includes('Pagamento confirmado')&&!fixed.dialog.includes('Pagamento ainda não confirmado'));
+assert.equal(read('feedback-regression').stalePendingAlertCountAfterFix,0);assert.equal(read('browser-results').passed,true);
+const scope=read('scope');for(const [p,h] of Object.entries({...scope.sourceHashes,...scope.unchangedFinancialHandlers}))assert.equal(createHash('sha256').update(fs.readFileSync(p)).digest('hex'),h,p);
+assert.match(fs.readFileSync('docs/downgrade-integrated-local.log','utf8'),/FINAL PASS/);assert.match(fs.readFileSync('docs/downgrade-integrated-browser-server.log','utf8'),/Disposable cluster stopped/);
+console.log('PASS: 56 integrated local checks; SQL before/pending/paid snapshots; replay evidence; 14 browser records; feedback regression; source hashes; remote Sandbox still NOT proved. Recorded evidence only.');

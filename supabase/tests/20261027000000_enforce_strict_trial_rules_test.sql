@@ -109,9 +109,9 @@ commit;
 -- ----------------------------------------------------------------------------
 \ir ../migrations/20261007173000_create_restaurant_base.sql
 
-insert into public.restaurants (slug, name, subtitle, active)
-values ('noma', 'NOMA', 'Cozinha Contemporânea', true)
-on conflict (slug) do nothing;
+-- (Seed de 'noma' removido: migrations agora instalam em bancos limpos sem exigir dados de teste)
+-- insert into public.restaurants ...
+-- on conflict (slug) do nothing;
 
 \ir ../migrations/20261007174500_create_table_visits.sql
 \ir ../migrations/20261007175000_create_guest_sessions.sql

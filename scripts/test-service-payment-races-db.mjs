@@ -1,0 +1,38 @@
+// Cluster PostgreSQL descartável. Usa somente loopback; encerra cluster e remove a pasta temporária.
+import fs from 'node:fs'; import path from 'node:path'; import os from 'node:os';
+import {spawn,spawnSync} from 'node:child_process'; import assert from 'node:assert/strict';
+const root=path.resolve(import.meta.dirname,'..'),bin='D:/pgSQL/bin',port=55494;
+const work=fs.mkdtempSync(path.join(os.tmpdir(),'eloozi-payment-race-')),data=path.join(work,'data');
+const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.toUpperCase().startsWith('PG')));env.PGOPTIONS='-c client_min_messages=warning -c timezone=UTC';
+const conn=['-X','-h','127.0.0.1','-p',String(port),'-U','postgres','-d','postgres','-v','ON_ERROR_STOP=1'];let started=false;
+function run(exe,args,input){const r=spawnSync(path.join(bin,exe+'.exe'),args,{input,encoding:'utf8',windowsHide:true,env,maxBuffer:30*1024*1024,...(exe==='pg_ctl'?{stdio:'ignore'}:{})});if(r.error||r.status!==0)throw Error(`${exe} ${r.status}: ${r.error??''}\n${r.stdout??''}\n${r.stderr??''}`);return(r.stdout??'').trim();}
+const sql=s=>run('psql',[...conn,'-At'],s),json=s=>JSON.parse(sql(s).split(/\r?\n/).filter(x=>x.startsWith('{')).at(-1));
+function independent(command,name){const c=spawn(path.join(bin,'psql.exe'),[...conn,'-At','-c',command],{windowsHide:true,env});let out='',err='';c.stdout.on('data',x=>out+=x);c.stderr.on('data',x=>err+=x);const done=new Promise((ok,no)=>{c.on('error',no);c.on('close',n=>n===0?ok(out.trim()):no(Error(`${name}: ${n}\n${out}\n${err}`)))});return{done,name};}
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+try{
+ console.log(`PostgreSQL ${run('postgres',['--version'])}; loopback:${port}; ${work}`);
+ run('initdb',['-D',data,'-U','postgres','-A','trust','--encoding=UTF8','--no-locale']);fs.appendFileSync(path.join(data,'postgresql.conf'),`\nlisten_addresses='127.0.0.1'\nport=${port}\nmax_connections=24\n`);run('pg_ctl',['-D',data,'-l',path.join(work,'server.log'),'-w','start']);started=true;
+ const file=p=>sql(fs.readFileSync(path.join(root,p),'utf8'));file('supabase/tests/etapa3_bootstrap.sql');
+ for(const m of fs.readdirSync(path.join(root,'supabase/migrations')).filter(x=>x.endsWith('.sql')).sort()){if(m==='20261008141500_create_table_tab_consumption.sql')file('supabase/seeds/demo_restaurants.sql');file('supabase/migrations/'+m);}
+ // Run the unchanged regression fixture; only its final transaction terminator is changed in memory.
+ const fixture=fs.readFileSync(path.join(root,'supabase/tests/service_calls_and_group_payment_test.sql'),'utf8');assert.match(fixture,/rollback;\s*$/i);sql(fixture.replace(/rollback;\s*$/i,'commit;'));
+ const uid='a6000000-0000-4000-8000-000000000001', ids=['f6000000-0000-4000-8000-000000000001','f6000000-0000-4000-8000-000000000002'], pay='e6000000-0000-4000-8000-000000000001';
+ const auth=`set role authenticated;select set_config('request.jwt.claim.sub','${uid}',false);select set_config('request.jwt.claims','{"role":"authenticated","sub":"${uid}"}',false);`;
+ const quote=json(`${auth} select public.preview_table_tabs_payment('callpay-a',array['${ids[0]}','${ids[1]}']::uuid[],false);`);const token=quote.previewToken;assert.ok(token);
+ const call=`${auth} select public.close_table_tabs('callpay-a',array['${ids[0]}','${ids[1]}']::uuid[],false,'${pay}','${token}');`;
+ const first=independent(`begin;set application_name='payment_race_first';${call}select pg_sleep(2);commit;`,'primeira confirmação');
+ let ready=false;for(let i=0;i<100;i++){if(sql("select count(*) from pg_stat_activity where application_name='payment_race_first' and wait_event='PgSleep'")==='1'){ready=true;break;}await wait(30);}assert.ok(ready,'primeira sessão segura locks');
+ const second=independent(`set application_name='payment_race_second';${call}`,'segunda confirmação');let blocked=false;for(let i=0;i<100;i++){if(sql("select count(*) from pg_stat_activity where application_name='payment_race_second' and wait_event_type='Lock' and cardinality(pg_blocking_pids(pid))>0")==='1'){blocked=true;break;}await wait(30);}assert.ok(blocked,'segunda sessão bloqueada pela primeira');
+ const [out1,out2]=await Promise.all([first.done,second.done]);console.log('PASS duas sessões psql independentes; bloqueio observado');assert.ok(out1.includes('paymentId')&&out2.includes('paymentId'));
+ assert.equal(sql(`select count(*) from attendance_private.tab_payments where id='${pay}'`),'1');assert.equal(sql(`select count(*) from public.table_tabs where id=any(array['${ids[0]}','${ids[1]}']::uuid[]) and status='closed'`),'2');console.log('PASS recibo idempotente único; cada comanda fechada uma vez');
+ // Prepare two more tabs through the production RPCs, with committed fixture data.
+ const visit=sql(`select table_visit_id from public.table_tabs where id='${ids[0]}'`);const extra=['f6000000-0000-4000-8000-000000000004','f6000000-0000-4000-8000-000000000005'];
+ for(let i=0;i<2;i++)sql(`${auth} select public.create_table_tab('callpay-a','${visit}','Rollback ${i}','${extra[i]}'); select public.add_table_tab_item('callpay-a','${extra[i]}','d6000000-0000-4000-8000-000000000001',1,gen_random_uuid());`);
+ const preview=json(`${auth} select public.preview_table_tabs_payment('callpay-a',array['${extra[0]}','${extra[1]}']::uuid[],false);`);
+ const snapshot=()=>sql(`select jsonb_build_object('tabs',(select jsonb_agg(to_jsonb(t) order by id) from public.table_tabs t where id=any(array['${extra[0]}','${extra[1]}']::uuid[])),'items',(select jsonb_agg(to_jsonb(i) order by id) from public.table_tab_items i where table_tab_id=any(array['${extra[0]}','${extra[1]}']::uuid[])),'invoices',(select jsonb_agg(to_jsonb(f) order by id) from public.subscription_invoices f where restaurant_id='b6000000-0000-4000-8000-000000000001'),'cycles',(select coalesce(jsonb_agg(to_jsonb(c) order by id),'[]') from subscription_quote_private.cycles c where restaurant_id='b6000000-0000-4000-8000-000000000001'),'receipts',(select jsonb_agg(to_jsonb(r) order by id) from attendance_private.tab_payments r where restaurant_id='b6000000-0000-4000-8000-000000000001'),'visit',(select to_jsonb(v) from public.table_visits v where id='${visit}'))`);
+ const before=snapshot();sql(`create function public.test_fail_second_close() returns trigger language plpgsql as $$begin if new.id='${extra[1]}' and old.status='open' and new.status='closed' then raise exception 'injected local rollback fault';end if;return new;end$$;create trigger test_fail_second_close before update of status on public.table_tabs for each row execute function public.test_fail_second_close();`);
+ const fail=spawnSync(path.join(bin,'psql.exe'),[...conn,'-At','-c',`begin;${call.replace(ids[0],extra[0]).replace(ids[1],extra[1]).replace(pay, 'e6000000-0000-4000-8000-000000000009').replace(token,preview.previewToken)};commit;`],{encoding:'utf8',windowsHide:true,env});
+ assert.notEqual(fail.status,0,'trigger should abort the close transaction');assert.match((fail.stdout??'')+(fail.stderr??''),/injected local rollback fault/);
+ const after=snapshot();assert.equal(after,before,'failure must restore complete business snapshot');console.log('PASS local fault after first close started; full snapshot unchanged');
+ sql('drop trigger test_fail_second_close on public.table_tabs;drop function public.test_fail_second_close();');
+}catch(e){console.error(e);process.exitCode=1;}finally{if(started){try{run('pg_ctl',['-D',data,'-m','fast','-w','stop']);console.log('PASS cluster stopped');}catch(e){console.error(e);process.exitCode=1;}}try{fs.rmSync(work,{recursive:true,force:true});}catch(e){console.error('temporary directory cleanup failed',e);process.exitCode=1;}}

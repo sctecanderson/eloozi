@@ -387,9 +387,187 @@ grant execute on function public.attach_subscription_invoice_external_reference(
 grant execute on function public.expire_subscription_invoice_after_reconciliation(uuid, text) to service_role;
 
 -- ----------------------------------------------------------------------------
--- 5. BLINDAGEM DE public.confirm_subscription_invoice_payment
+-- 4.9. INFRAESTRUTURA DURÁVEL: WEBHOOK INBOX (billing_private)
 -- ----------------------------------------------------------------------------
+create schema if not exists billing_private;
+
+revoke all on schema billing_private from public, anon, authenticated;
+grant usage on schema billing_private to service_role;
+
+create table if not exists billing_private.webhook_inbox (
+  id uuid primary key default gen_random_uuid(),
+  provider text not null default 'asaas',
+  event_id text not null,
+  event_type text not null,
+  payload jsonb not null,
+  received_at timestamptz not null default clock_timestamp(),
+  status text not null check (status in ('received', 'processing', 'processed', 'failed', 'review_required', 'quarantined')),
+  claim_id uuid,
+  claimed_at timestamptz,
+  lease_expires_at timestamptz,
+  attempt_count integer not null default 0,
+  next_retry_at timestamptz,
+  processed_at timestamptz,
+  disposition text check (disposition in ('confirmed', 'review_required', 'already_paid', 'rejected')),
+  last_error text,
+  created_at timestamptz not null default clock_timestamp(),
+
+  constraint uq_webhook_inbox_provider_event unique (provider, event_id),
+  constraint check_event_id_not_empty check (length(btrim(event_id)) > 0)
+);
+
+alter table billing_private.webhook_inbox enable row level security;
+revoke all on table billing_private.webhook_inbox from public, anon, authenticated;
+grant all on table billing_private.webhook_inbox to service_role;
+
+-- ----------------------------------------------------------------------------
+-- 5. PONTE SEGURA PARA O WEBHOOK v7 ATIVO: confirm_subscription_invoice_payment(uuid, text)
+-- ----------------------------------------------------------------------------
+-- Preserva a sobrecarga legada sem mutação financeira direta na fatura.
+-- Se payment.id estiver ausente (prefixo asaas_pay_ ou nulo), isola o evento em quarentena.
+-- Se fatura for desconhecida, falha fechado levantando exceção (resulta em HTTP 500 no v7).
 drop function if exists public.confirm_subscription_invoice_payment(uuid, text);
+
+create or replace function public.confirm_subscription_invoice_payment(
+  p_invoice_id uuid,
+  p_external_reference text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_ext text := nullif(btrim(coalesce(p_external_reference, '')), '');
+  v_is_fallback boolean := false;
+  v_inbox_id uuid;
+begin
+  perform public.assert_trusted_billing_server();
+
+  if p_invoice_id is null then
+    raise exception 'ID da fatura é obrigatório.' using errcode = '22023';
+  end if;
+
+  -- Se a fatura for inexistente, grava em quarentena e responde HTTP 200 à v7.
+  -- Isso evita 15 retentativas inúteis do Asaas que pausariam a fila da conta.
+  if not exists (select 1 from public.subscription_invoices where id = p_invoice_id) then
+    insert into billing_private.webhook_inbox (
+      provider,
+      event_id,
+      event_type,
+      payload,
+      status,
+      disposition,
+      last_error
+    ) values (
+      'asaas',
+      'quarantine:v7:unknown_invoice:' || p_invoice_id::text,
+      'PAYMENT_RECEIVED',
+      jsonb_build_object(
+        'source', 'v7_bridge',
+        'invoice_id', p_invoice_id,
+        'external_reference', v_ext,
+        'quarantine_reason', 'unknown_invoice'
+      ),
+      'quarantined',
+      'rejected',
+      'Fatura ' || p_invoice_id::text || ' inexistente no banco local.'
+    )
+    on conflict on constraint uq_webhook_inbox_provider_event do nothing
+    returning id into v_inbox_id;
+
+    return jsonb_build_object(
+      'bridged', true,
+      'quarantined', true,
+      'disposition', 'rejected',
+      'reason', 'unknown_invoice',
+      'inbox_id', v_inbox_id,
+      'idempotent', v_inbox_id is null,
+      'invoice_id', p_invoice_id,
+      'external_reference', v_ext
+    );
+  end if;
+
+  -- Detecta se payment.id estava ausente na v7 (passando fallback 'asaas_pay_<invoiceId>' ou nulo)
+  v_is_fallback := (v_ext is null) or (v_ext = 'asaas_pay_' || p_invoice_id::text) or (v_ext like 'asaas_pay_%');
+
+  if v_is_fallback then
+    -- Grava em quarentena sem consultar Asaas e sem tentar quitar
+    insert into billing_private.webhook_inbox (
+      provider,
+      event_id,
+      event_type,
+      payload,
+      status,
+      disposition,
+      last_error
+    ) values (
+      'asaas',
+      'quarantine:v7:no_payment_id:' || p_invoice_id::text,
+      'PAYMENT_RECEIVED',
+      jsonb_build_object(
+        'source', 'v7_bridge',
+        'invoice_id', p_invoice_id,
+        'external_reference', coalesce(v_ext, 'asaas_pay_' || p_invoice_id::text),
+        'quarantine_reason', 'missing_payment_id'
+      ),
+      'quarantined',
+      'rejected',
+      'payment.id ausente no payload (fallback asaas_pay_<invoiceId> detectado na v7)'
+    )
+    on conflict on constraint uq_webhook_inbox_provider_event do nothing
+    returning id into v_inbox_id;
+
+    return jsonb_build_object(
+      'bridged', true,
+      'quarantined', true,
+      'disposition', 'rejected',
+      'inbox_id', v_inbox_id,
+      'idempotent', v_inbox_id is null,
+      'invoice_id', p_invoice_id,
+      'external_reference', coalesce(v_ext, 'asaas_pay_' || p_invoice_id::text)
+    );
+  end if;
+
+  -- Fluxo normal de pagamento com payment.id legítimo: grava como 'received' na Inbox
+  insert into billing_private.webhook_inbox (
+    provider,
+    event_id,
+    event_type,
+    payload,
+    status
+  ) values (
+    'asaas',
+    'bridge:v7:' || v_ext,
+    'PAYMENT_RECEIVED',
+    jsonb_build_object(
+      'source', 'v7_bridge',
+      'invoice_id', p_invoice_id,
+      'external_reference', v_ext
+    ),
+    'received'
+  )
+  on conflict on constraint uq_webhook_inbox_provider_event do nothing
+  returning id into v_inbox_id;
+
+  return jsonb_build_object(
+    'bridged', true,
+    'quarantined', false,
+    'status', 'received',
+    'inbox_id', v_inbox_id,
+    'idempotent', v_inbox_id is null,
+    'invoice_id', p_invoice_id,
+    'external_reference', v_ext
+  );
+end;
+$$;
+
+revoke all on function public.confirm_subscription_invoice_payment(uuid, text) from public, anon, authenticated;
+grant execute on function public.confirm_subscription_invoice_payment(uuid, text) to service_role;
+
+-- ----------------------------------------------------------------------------
+-- 5.1. FUNÇÃO CANÔNICA DE PAGAMENTO: confirm_subscription_invoice_payment(uuid, text, integer, uuid)
+-- ----------------------------------------------------------------------------
 drop function if exists public.confirm_subscription_invoice_payment(uuid, text, integer, uuid);
 
 create or replace function public.confirm_subscription_invoice_payment(

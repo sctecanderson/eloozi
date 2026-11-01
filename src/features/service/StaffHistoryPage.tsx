@@ -436,7 +436,7 @@ export function StaffHistoryPage() {
             >
               <div className="inline-flex items-center gap-1.5">
                 <svg
-                  className="w-4 h-4 text-zinc-500"
+                  className="w-4 h-4 text-zinc-500 dark:text-zinc-300"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -646,7 +646,7 @@ export function StaffHistoryPage() {
       {loading ? (
         <div className="py-12 text-center space-y-3">
           <div className="w-8 h-8 border-3 border-[#7C2D12] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs text-zinc-500 font-medium">Carregando histórico de atendimentos...</p>
+          <p className="text-xs text-zinc-500 font-medium dark:text-zinc-300">Carregando histórico de atendimentos...</p>
         </div>
       ) : error ? (
         <div className="rounded-2xl border border-red-200 dark:border-red-900/60 bg-red-50/50 dark:bg-red-950/20 p-5 text-center space-y-3">
@@ -771,7 +771,7 @@ export function StaffHistoryPage() {
                     {/* Faixa destacada de tempos */}
                     <div className="bg-[#FAF4EE] dark:bg-zinc-800/60 p-3 rounded-xl border border-amber-900/5 dark:border-zinc-700/40 flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2">
-                        <svg className="w-4 h-4 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                        <svg className="w-4 h-4 text-zinc-500 dark:text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                           <circle cx="12" cy="12" r="10" />
                           <polyline points="12 6 12 12 16 14" />
                         </svg>
@@ -802,7 +802,7 @@ export function StaffHistoryPage() {
                       <div className="flex flex-wrap items-center gap-1.5 text-xs">
                         {/* Qtd itens */}
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-stone-100 dark:bg-zinc-800 text-stone-700 dark:text-zinc-300 font-semibold">
-                          <svg className="w-3.5 h-3.5 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                          <svg className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                             <path d="M18 2v20" />
                             <path d="M6 2v20" />
                             <path d="M2 7h20" />
@@ -825,7 +825,7 @@ export function StaffHistoryPage() {
 
                         {/* Taxa de serviço snapshot */}
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-stone-100 dark:bg-zinc-800 text-stone-700 dark:text-zinc-300 font-semibold">
-                          <svg className="w-3.5 h-3.5 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                          <svg className="w-3.5 h-3.5 text-zinc-500 dark:text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                             <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
                             <line x1="7" y1="7" x2="7.01" y2="7" />
                           </svg>
@@ -863,7 +863,7 @@ export function StaffHistoryPage() {
                 onClick={() => setVisibleCount((prev) => prev + 10)}
                 className="w-full py-3 rounded-2xl border border-stone-300 dark:border-zinc-700 text-stone-800 dark:text-zinc-200 hover:bg-stone-100 dark:hover:bg-zinc-800 text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-[0.99]"
               >
-                <svg className="w-4 h-4 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                <svg className="w-4 h-4 text-zinc-500 dark:text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                   <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
                 </svg>
                 <span>Carregar mais atendimentos</span>
@@ -909,7 +909,7 @@ export function StaffHistoryPage() {
               <button
                 type="button"
                 onClick={() => setModalRecord(null)}
-                className="w-8 h-8 rounded-full bg-stone-100 dark:bg-zinc-800 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 flex items-center justify-center cursor-pointer transition-colors"
+                className="w-8 h-8 rounded-full bg-stone-100 dark:bg-zinc-800 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 flex items-center justify-center cursor-pointer transition-colors dark:text-zinc-300"
                 aria-label="Fechar resumo"
               >
                 ✕
@@ -949,7 +949,7 @@ export function StaffHistoryPage() {
 
             {/* Lista de Itens Consumidos */}
             <div className="space-y-2">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-500">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-300">
                 Itens Consumidos ({modalRecord.items.length})
               </h4>
               {modalRecord.items.length === 0 ? (

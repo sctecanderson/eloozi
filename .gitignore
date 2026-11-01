@@ -20,3 +20,10 @@ __pycache__/
 /RELATORIO_FINAL_RESERVAS.md
 /RELATORIO_VALIDACAO_BANCO_ISOLADO.md
 /eloozi_reservas*.zip
+
+# Pacotes de entrega
+/artifacts/
+*.zip
+
+# Listagem gerada
+/filelist.txt

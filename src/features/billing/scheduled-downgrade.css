@@ -1,0 +1,16 @@
+.scheduled-downgrade { padding:20px; border:1px solid var(--plan-line,#ddd); border-radius:16px; background:var(--plan-surface,#fff); color:var(--plan-text,#222); min-width:0; overflow-wrap:anywhere; scroll-margin-top:90px; }
+.scheduled-downgrade h2 { font-size:18px; font-weight:750; margin:0 0 12px; }
+.scheduled-downgrade p { font-size:13px; line-height:1.6; margin:8px 0; }
+.scheduled-downgrade .scheduled-secondary { color:var(--plan-muted,#526071); }
+.scheduled-downgrade [role=alert] { border-left:3px solid #a60013; padding-left:10px; font-weight:600; }
+.scheduled-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; }
+.scheduled-actions button { min-height:44px; padding:10px 16px; border:1px solid #a60013; border-radius:10px; background:#fff; color:#76000a; font-size:13px; font-weight:650; cursor:pointer; }
+.scheduled-actions button:first-child { background:#610000; color:#fff; }
+.scheduled-actions button:focus-visible { outline:3px solid #b9001c; outline-offset:3px; }
+.scheduled-actions button:disabled { opacity:.55; cursor:not-allowed; }
+.dark .scheduled-downgrade { background:#1c1c20; color:#f4f4f5; border-color:#52525b; }
+.dark .scheduled-downgrade .scheduled-secondary { color:#c4c4ce; }
+.dark .scheduled-actions button { background:#27272a; color:#fff; border-color:#dd8992; }
+.dark .scheduled-actions button:first-child { background:#610000; }
+.dark .scheduled-actions button:focus-visible { outline-color:#ffc2c8; }
+@media(max-width:600px){.scheduled-downgrade{padding:16px}.scheduled-actions{flex-direction:column}.scheduled-actions button{width:100%;white-space:normal}}

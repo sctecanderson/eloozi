@@ -1,3 +1,4 @@
+import { useModuleAccess } from "../restaurants/ModuleAccess";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { supabase } from "../../lib/supabase";
@@ -366,20 +367,24 @@ export function CatalogEditor({
     })(),
   });
 
+  const {data: moduleAccess} = useModuleAccess(restaurantId);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [activeSection, setActiveSection] = useState<
     "basic" | "media" | "price" | "availability" | "details"
   >("basic");
 
   useEffect(() => {
-    if (isProduct && restaurantId) {
+    let live = true;
+    setInventoryItems([]);
+    if (isProduct && restaurantId && moduleAccess?.inventory) {
       fetchInventory(restaurantId)
-        .then(setInventoryItems)
+        .then(items => { if (live) setInventoryItems(items); })
         .catch((err) =>
           console.error("Erro ao carregar estoque para vinculo:", err),
         );
     }
-  }, [isProduct, restaurantId]);
+    return () => { live = false; };
+  }, [isProduct, restaurantId, moduleAccess?.inventory]);
 
   const [photos, setPhotos] = useState<DraftPhoto[]>(() =>
     [...(product?.images ?? [])].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -688,9 +693,7 @@ export function CatalogEditor({
               prep_time_min_minutes: prepMin,
               prep_time_max_minutes: prepMax,
               preparation_station: draft.preparationStation,
-              inventory_item_id: draft.inventoryItemId.trim()
-                ? draft.inventoryItemId.trim()
-                : null,
+              ...(moduleAccess?.inventory ? {inventory_item_id: draft.inventoryItemId.trim() || null} : {}),
               badge_text: draft.badgeText.trim() ? draft.badgeText.trim() : null,
               badge_color: draft.badgeText.trim() ? (draft.badgeColor || "#D97706") : null,
             }
@@ -2130,6 +2133,7 @@ export function CatalogEditor({
                           Vincular ao estoque
                         </label>
                         <select
+                          disabled={!moduleAccess?.inventory}
                           value={draft.inventoryItemId}
                           onChange={(e) => setDraft({ ...draft, inventoryItemId: e.target.value })}
                           className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3.5 py-2.5 text-sm text-zinc-900 dark:text-white cursor-pointer"

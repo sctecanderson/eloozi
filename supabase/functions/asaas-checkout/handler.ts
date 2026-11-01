@@ -10,6 +10,8 @@ export interface CheckoutHandlerEnv {
   supabaseServiceRoleKey: string;
   asaasApiKey: string;
   asaasBaseUrl: string;
+  /** Blocks new invoice issuance while leaving payment verification enabled. */
+  billingIssuancePaused?: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   createSupabaseClient: (url: string, key: string, options?: any) => any;
   fetchFn?: typeof fetch;
@@ -44,6 +46,36 @@ function isConfirmedAsaasStatus(status: unknown): boolean {
 
 function expectedBillingTypeForMethod(method: unknown): string {
   return method === "pix" ? "PIX" : "CREDIT_CARD";
+}
+
+function isMissingRpcSignature(error: any, functionName: string): boolean {
+  if (!error) return false;
+  if (error.code === "PGRST202" || error.code === "42883") return true;
+  const message = String(error.message ?? "").toLowerCase();
+  return message.includes(functionName.toLowerCase()) &&
+    (message.includes("could not find the function") || message.includes("does not exist"));
+}
+
+async function confirmSubscriptionPayment(
+  adminClient: any,
+  invoice: { id: string; restaurant_id: string },
+  externalReference: string,
+  paidAmountCents: number,
+): Promise<{ data: any; error: any }> {
+  const fn = "confirm_subscription_invoice_payment";
+  const current = await adminClient.rpc(fn, {
+    p_invoice_id: invoice.id,
+    p_external_reference: externalReference,
+    p_paid_amount_cents: paidAmountCents,
+    p_restaurant_id: invoice.restaurant_id,
+  });
+  if (!isMissingRpcSignature(current?.error, fn)) return current;
+  // During the database transition the older trusted-server RPC remains valid.
+  // Never fall back for authorization, validation, network, or execution errors.
+  return adminClient.rpc(fn, {
+    p_invoice_id: invoice.id,
+    p_external_reference: externalReference,
+  });
 }
 
 async function isUserAuthorizedForRestaurant(
@@ -172,6 +204,7 @@ interface PixContext {
   restaurantId: string;
   user: any;
   targetPlan: string;
+  quoteToken?: string | null;
   billingCycle: string;
   amountCents: number;
   valueReais: number;
@@ -205,8 +238,9 @@ async function acquirePixInvoice(ctx: PixContext): Promise<any | null> {
     p_card_brand: null,
     p_card_last4: null,
     p_created_by: ctx.user.id,
+    p_quote_token: ctx.quoteToken ?? null,
   });
-  if (error || !data?.invoice) return null;
+  if (error || !data?.invoice) throw new Error(error?.message || "Não foi possível reservar a cobrança.");
   return data.invoice;
 }
 
@@ -292,6 +326,7 @@ async function handleIssuedPixInvoice(
       p_restaurant_id: invoice.restaurant_id,
     });
     if (rpcErr) return jsonResponse({ error: rpcErr.message || "Falha ao confirmar fatura." }, 422);
+    if (rpcResult?.requires_review) return jsonResponse({error: rpcResult.reason, payment_received: true, requires_review: true}, 409);
     return jsonResponse({
       success: true,
       invoice_id: invoice.id,
@@ -536,15 +571,11 @@ export async function handleAsaasCheckoutRequest(
   const fetchImpl = env.fetchFn ?? fetch;
   const nowFn = env.nowFn ?? (() => Date.now());
   const ASAAS_API_KEY = (env.asaasApiKey ?? "").trim();
-  const ASAAS_BASE_URL = (env.asaasBaseUrl || "https://api.asaas.com/v3").trim().replace(/\/+$/, "");
+  const ASAAS_BASE_URL = (env.asaasBaseUrl ?? "").trim().replace(/\/+$/, "");
 
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return jsonResponse({ error: "Não autenticado." }, 401);
-
-    if (!ASAAS_API_KEY) {
-      return jsonResponse({ error: "Gateway Asaas não configurado no servidor (ASAAS_API_KEY ausente)." }, 500);
-    }
 
     const userClient = env.createSupabaseClient(env.supabaseUrl, env.supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } },
@@ -558,6 +589,21 @@ export async function handleAsaasCheckoutRequest(
     const adminClient = env.createSupabaseClient(env.supabaseUrl, env.supabaseServiceRoleKey);
     const body = await req.json();
     const action = typeof body?.action === "string" ? body.action.trim() : "checkout";
+
+    if (action !== "verify_payment" && env.billingIssuancePaused === true) {
+      return jsonResponse({
+        error: "A emissão de novas cobranças está pausada temporariamente.",
+        billing_paused: true,
+        retryable: true,
+      }, 503);
+    }
+
+    if (!ASAAS_API_KEY) {
+      return jsonResponse({ error: "Gateway Asaas não configurado no servidor (ASAAS_API_KEY ausente)." }, 500);
+    }
+    if (!ASAAS_BASE_URL) {
+      return jsonResponse({ error: "Gateway Asaas não configurado no servidor (ASAAS_BASE_URL ausente)." }, 500);
+    }
 
     // =========================================================================
     // AÇÃO 1: VERIFICAÇÃO DIRETA DE PAGAMENTO NO ASAAS ("Validar pagamento")
@@ -605,6 +651,13 @@ export async function handleAsaasCheckoutRequest(
           p_claim_id: null,
         });
         if (attachErr || !attachData || attachData.attached !== true) {
+          if (isMissingRpcSignature(attachErr, "attach_subscription_invoice_external_reference")) {
+            return jsonResponse({
+              error: "O pagamento foi verificado e será reconciliado quando a atualização do servidor terminar.",
+              payment_received: true,
+              retryable: true,
+            }, 503);
+          }
           return jsonResponse({ error: "Não foi possível vincular a referência externa reconciliada da fatura." }, 500);
         }
         invoice.external_reference = externalReference;
@@ -650,12 +703,10 @@ export async function handleAsaasCheckoutRequest(
         });
       }
 
-      const { data: rpcResult, error: rpcErr } = await adminClient.rpc("confirm_subscription_invoice_payment", {
-        p_invoice_id: invoice.id,
-        p_external_reference: String(paymentData.id).trim(),
-        p_paid_amount_cents: asaasAmountCents,
-        p_restaurant_id: invoice.restaurant_id,
-      });
+      const { data: rpcResult, error: rpcErr } = await confirmSubscriptionPayment(
+        adminClient, invoice, String(paymentData.id).trim(), asaasAmountCents,
+      );
+      if (rpcResult?.requires_review) return jsonResponse({error: rpcResult.reason, payment_received: true, requires_review: true}, 409);
       if (rpcErr || !rpcResult?.status || rpcResult.status !== "paid") {
         return jsonResponse({ error: rpcErr?.message || "Falha ao confirmar fatura no servidor." }, 422);
       }
@@ -671,6 +722,7 @@ export async function handleAsaasCheckoutRequest(
         already_paid: Boolean(rpcResult?.already_paid),
         subscription_expires_at: rpcResult?.subscription_expires_at ?? null,
         max_tables: rpcResult?.max_tables ?? null,
+        unlimited_tables: Boolean(rpcResult?.unlimited_tables),
       });
     }
 
@@ -684,6 +736,7 @@ export async function handleAsaasCheckoutRequest(
       paymentMethod = "pix",
       cardData,
       payerInfo,
+      quoteToken,
     } = body;
 
     if (!restaurantId || !targetPlan) {
@@ -724,31 +777,38 @@ export async function handleAsaasCheckoutRequest(
     }
 
     let monthlyEquivCents = 0;
-    let maxTables = 0;
+    let maxTables: number | null = null;
+    let unlimitedTables = false;
     let planTitle = "";
     if (targetPlan === "basic") {
       monthlyEquivCents = Number(settings.basic_price_cents);
-      maxTables = Number(settings.basic_max_tables);
+      unlimitedTables = settings.basic_unlimited_tables === true;
+      maxTables = unlimitedTables ? null : Number(settings.basic_max_tables);
       planTitle = "Plano Básico";
     } else if (targetPlan === "pro") {
       monthlyEquivCents = Number(settings.pro_price_cents);
-      maxTables = Number(settings.pro_max_tables);
+      unlimitedTables = settings.pro_unlimited_tables === true;
+      maxTables = unlimitedTables ? null : Number(settings.pro_max_tables);
       planTitle = "Plano Profissional";
     } else if (targetPlan === "premium") {
       monthlyEquivCents = Number(settings.premium_price_cents);
-      maxTables = Number(settings.premium_max_tables);
-      planTitle = "Plano Premium Enterprise";
+      unlimitedTables = settings.premium_unlimited_tables === true;
+      maxTables = unlimitedTables ? null : Number(settings.premium_max_tables);
+      planTitle = "Plano Premium";
     }
 
-    if (!Number.isFinite(monthlyEquivCents) || monthlyEquivCents <= 0 || !Number.isFinite(maxTables) || maxTables <= 0) {
+    const hasValidPrice = Number.isFinite(monthlyEquivCents) && monthlyEquivCents > 0;
+    const hasValidCapacity = unlimitedTables || (maxTables !== null && Number.isFinite(maxTables) && maxTables > 0);
+    if (!hasValidPrice || !hasValidCapacity) {
       return jsonResponse(
         { error: "Configuração de preço ou limite de mesas inválida em platform_settings. Cobrança cancelada por segurança." },
         500,
       );
     }
 
-    const amountCents = billingCycle === "yearly" ? monthlyEquivCents * 10 : monthlyEquivCents;
-    const valueReais = Number((amountCents / 100).toFixed(2));
+    // Anual equivale a 11 mensalidades em pagamento único para 12 meses de acesso
+    let amountCents = billingCycle === "yearly" ? monthlyEquivCents * 11 : monthlyEquivCents;
+    let valueReais = Number((amountCents / 100).toFixed(2));
     const cleanCpfCnpj = (payerInfo?.cpfCnpj || "").replace(/\D/g, "");
     if (cleanCpfCnpj.length !== 11 && cleanCpfCnpj.length !== 14) {
       return jsonResponse(
@@ -773,6 +833,7 @@ export async function handleAsaasCheckoutRequest(
         restaurantId,
         user,
         targetPlan,
+        quoteToken,
         billingCycle,
         amountCents,
         valueReais,
@@ -785,6 +846,9 @@ export async function handleAsaasCheckoutRequest(
       };
       const invoice = await acquirePixInvoice(ctx);
       if (!invoice) return jsonResponse({ error: "Erro ao reservar fatura de assinatura no banco de dados." }, 500);
+      // Reservation is authoritative, including an immutable same-cycle upgrade difference.
+      ctx.amountCents = Number(invoice.amount_cents);
+      ctx.valueReais = Number((ctx.amountCents / 100).toFixed(2));
       return await processPixInvoice(ctx, invoice, 0);
     }
 
@@ -803,7 +867,7 @@ export async function handleAsaasCheckoutRequest(
       .order("created_at", { ascending: false })
       .limit(1);
 
-    if (latestPaid?.[0]) {
+    if (latestPaid?.[0] && restaurant.contract_rights_model !== 'commercial_v1') {
       return jsonResponse({
         success: true,
         invoice_id: latestPaid[0].id,
@@ -829,12 +893,15 @@ export async function handleAsaasCheckoutRequest(
         p_card_brand: cardData?.card_brand || null,
         p_card_last4: cardData?.card_last4 || null,
         p_created_by: user.id,
+        p_quote_token: typeof quoteToken === 'string' ? quoteToken : null,
       },
     );
     if (reserveErr || !reservedData?.invoice) {
       return jsonResponse({ error: reserveErr?.message || "Erro ao reservar fatura de assinatura no banco de dados." }, 500);
     }
     const invoice = reservedData.invoice;
+    amountCents = Number(invoice.amount_cents);
+    valueReais = Number((amountCents / 100).toFixed(2));
 
     // Se a fatura foi marcada como paid (por ex. chamada concorrente acabou de confirmar):
     if (invoice.status === "paid") {
@@ -858,12 +925,10 @@ export async function handleAsaasCheckoutRequest(
       if (!getRes.ok) return reconciliationResponse(invoice.id);
       const pay = getRes.payment;
       if (isConfirmedAsaasStatus(pay.status)) {
-        const { data: confData, error: confErr } = await adminClient.rpc("confirm_subscription_invoice_payment", {
-          p_invoice_id: invoice.id,
-          p_external_reference: existingCardExt,
-          p_paid_amount_cents: toCents(pay.value),
-          p_restaurant_id: restaurantId,
-        });
+        const { data: confData, error: confErr } = await confirmSubscriptionPayment(
+          adminClient, invoice, existingCardExt, toCents(pay.value),
+        );
+        if (confData?.requires_review) return jsonResponse({error: confData.reason, payment_received: true, requires_review: true}, 409);
         if (confErr || !confData?.status || confData.status !== "paid") {
           return reconciliationResponse(invoice.id);
         }
@@ -878,6 +943,7 @@ export async function handleAsaasCheckoutRequest(
           already_paid: Boolean(confData.already_paid),
           subscription_expires_at: confData.subscription_expires_at ?? null,
           max_tables: confData.max_tables ?? maxTables,
+          unlimited_tables: Boolean(confData.unlimited_tables ?? unlimitedTables),
           asaas_payment_id: existingCardExt,
         });
       }
@@ -909,13 +975,11 @@ export async function handleAsaasCheckoutRequest(
         }
 
         if (isConfirmedAsaasStatus(search.payment.status)) {
-          const { data: confData, error: confErr } = await adminClient.rpc("confirm_subscription_invoice_payment", {
-            p_invoice_id: invoice.id,
-            p_external_reference: paymentId,
-            p_paid_amount_cents: toCents(search.payment.value),
-            p_restaurant_id: restaurantId,
-          });
-          if (confErr || !confData?.status || confData.status !== "paid") {
+          const { data: confData, error: confErr } = await confirmSubscriptionPayment(
+            adminClient, invoice, paymentId, toCents(search.payment.value),
+          );
+          if (confData?.requires_review) return jsonResponse({error: confData.reason, payment_received: true, requires_review: true}, 409);
+        if (confErr || !confData?.status || confData.status !== "paid") {
             // Falha ao confirmar ou resultado inconsistente: preserva fatura e exige reconciliação segura
             return reconciliationResponse(invoice.id);
           }
@@ -930,6 +994,7 @@ export async function handleAsaasCheckoutRequest(
             already_paid: Boolean(confData.already_paid),
             subscription_expires_at: confData.subscription_expires_at ?? null,
             max_tables: confData.max_tables ?? maxTables,
+            unlimited_tables: Boolean(confData.unlimited_tables ?? unlimitedTables),
             asaas_payment_id: paymentId,
           });
         }
@@ -1075,12 +1140,10 @@ export async function handleAsaasCheckoutRequest(
       });
     }
 
-    const { data: confirmData, error: confirmErr } = await adminClient.rpc("confirm_subscription_invoice_payment", {
-      p_invoice_id: invoice.id,
-      p_external_reference: cardPaymentId,
-      p_paid_amount_cents: confirmedCents,
-      p_restaurant_id: restaurantId,
-    });
+    const { data: confirmData, error: confirmErr } = await confirmSubscriptionPayment(
+      adminClient, invoice, cardPaymentId, confirmedCents,
+    );
+    if (confirmData?.requires_review) return jsonResponse({error: confirmData.reason, payment_received: true, requires_review: true}, 409);
     if (confirmErr || !confirmData?.status || confirmData.status !== "paid") {
       // Cobrança confirmada no Asaas mas RPC de ativação falhou ou retornou resultado inconsistente:
       // Preserva a fatura e retorna resposta de reconciliação, sem emitir nova cobrança
@@ -1112,6 +1175,7 @@ export async function handleAsaasCheckoutRequest(
       status: "paid",
       subscription_expires_at: confirmData?.subscription_expires_at ?? null,
       max_tables: confirmData?.max_tables ?? maxTables,
+      unlimited_tables: Boolean(confirmData?.unlimited_tables ?? unlimitedTables),
       asaas_payment_id: cardPaymentId,
     });
   } catch (err: unknown) {

@@ -7,11 +7,12 @@ export type InvoiceStatus = 'pending' | 'paid' | 'failed' | 'expired' | 'refunde
 export type RestaurantBillingStatus = 'active' | 'grace_period' | 'expired';
 
 export interface PlanCatalogItem {
-  plan_id: SubscriptionPlanId;
+  plan_id?: SubscriptionPlanId;
   name: string;
   monthly_price_cents: number;
   yearly_price_cents: number;
-  max_tables: number;
+  max_tables: number | null;
+  unlimited_tables?: boolean;
   features: string[];
 }
 
@@ -52,7 +53,8 @@ export interface RestaurantBillingSummary {
     subscription_started_at: string;
     subscription_expires_at: string;
     billing_cycle_days: number;
-    max_tables: number;
+    max_tables: number | null;
+    unlimited_tables?: boolean;
     monthly_price_cents: number;
     active: boolean;
     billing_status: RestaurantBillingStatus;
@@ -84,7 +86,8 @@ export interface CheckoutResult {
   pix_qr_code_image?: string;
   pix_expires_at?: string;
   subscription_expires_at?: string;
-  max_tables?: number;
+  max_tables?: number | null;
+  unlimited_tables?: boolean;
 }
 
 async function extractFunctionErrorMessage(
@@ -135,6 +138,7 @@ export async function fetchRestaurantBillingSummary(
 export const fetchBillingSummary = fetchRestaurantBillingSummary;
 
 export async function createSubscriptionCheckout(params: {
+  quoteToken?: string;
   restaurantId: string;
   targetPlan: SubscriptionPlanId;
   billingCycle: BillingCycle;
@@ -168,6 +172,7 @@ export async function createSubscriptionCheckout(params: {
       action: 'checkout',
       restaurantId: params.restaurantId,
       targetPlan: params.targetPlan,
+      quoteToken: params.quoteToken,
       billingCycle: params.billingCycle,
       paymentMethod: params.paymentMethod,
       cardData: params.cardData || null,
@@ -203,7 +208,8 @@ export async function createSubscriptionCheckout(params: {
     pix_qr_code_image: fnData.pix_qr_code_image,
     pix_expires_at: fnData.pix_expires_at,
     subscription_expires_at: fnData.subscription_expires_at,
-    max_tables: fnData.max_tables,
+    max_tables: fnData.max_tables ?? null,
+    unlimited_tables: Boolean(fnData.unlimited_tables),
   };
 }
 
@@ -257,7 +263,8 @@ export async function confirmSubscriptionInvoice(
     status: fnData.status,
     already_paid: Boolean(fnData.already_paid),
     subscription_expires_at: fnData.subscription_expires_at,
-    max_tables: fnData.max_tables,
+    max_tables: fnData.max_tables ?? null,
+    unlimited_tables: Boolean(fnData.unlimited_tables),
   };
 }
 
@@ -282,6 +289,183 @@ export function formatCurrencyBRL(cents: number): string {
     style: 'currency',
     currency: 'BRL',
   }).format((cents || 0) / 100);
+}
+
+export interface ResolvedCatalogPlanView {
+  planId: SubscriptionPlanId;
+  valid: boolean;
+  canCheckout: boolean;
+  validationMessage: string | null;
+  monthlyPriceCents: number | null;
+  yearlyPriceCents: number | null;
+  yearlyMonthlyEquivalentCents: number | null;
+  maxTables: number | null;
+  unlimitedTables: boolean;
+  primaryPriceLabel: string;
+  primaryPeriodSuffix: string;
+  secondaryBillingLabel: string | null;
+  tablesBenefitLabel: string;
+  comparisonTablesLabel: string;
+  yearlySavingsCents: number;
+  yearlyFreeMonthsEquivalent: number | null;
+  yearlySavingsBadgeLabel: string | null;
+}
+
+export interface ResolvedCatalogView {
+  plans: Record<SubscriptionPlanId, ResolvedCatalogPlanView>;
+  hasAnyInvalidPlan: boolean;
+  globalWarningMessage: string | null;
+  yearlyToggleBadgeLabel: string | null;
+}
+
+function isValidPriceCents(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) && value >= 0;
+}
+
+function isValidMaxTables(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) && value > 0;
+}
+
+export function resolvePlanCatalogItemView(
+  planId: SubscriptionPlanId,
+  rawItem: Partial<PlanCatalogItem> | null | undefined,
+  cycle: BillingCycle,
+): ResolvedCatalogPlanView {
+  const hasMonthlyPrice = isValidPriceCents(rawItem?.monthly_price_cents);
+  const hasYearlyPrice = isValidPriceCents(rawItem?.yearly_price_cents);
+  const isExplicitUnlimited =
+    rawItem?.unlimited_tables === true &&
+    (rawItem?.max_tables === null || rawItem?.max_tables === undefined);
+  const hasFiniteMaxTables = rawItem?.unlimited_tables !== true && isValidMaxTables(rawItem?.max_tables);
+  const hasValidCapacity = isExplicitUnlimited || hasFiniteMaxTables;
+
+  const monthlyPriceCents = hasMonthlyPrice ? rawItem!.monthly_price_cents! : null;
+  const yearlyPriceCents = hasYearlyPrice ? rawItem!.yearly_price_cents! : null;
+  const maxTables = hasFiniteMaxTables ? rawItem!.max_tables! : null;
+  const unlimitedTables = isExplicitUnlimited;
+
+  const valid = hasMonthlyPrice && hasYearlyPrice && hasValidCapacity;
+  const canCheckout = valid;
+
+  let validationMessage: string | null = null;
+  if (!valid) {
+    validationMessage =
+      'Dados deste plano indisponíveis ou incompletos no catálogo do servidor. Contratação temporariamente bloqueada.';
+  }
+
+  const yearlyMonthlyEquivalentCents =
+    yearlyPriceCents !== null ? Math.round(yearlyPriceCents / 12) : null;
+
+  let primaryPriceLabel = 'Indisponível';
+  let primaryPeriodSuffix = '';
+  let secondaryBillingLabel: string | null = null;
+
+  if (cycle === 'monthly') {
+    if (monthlyPriceCents !== null) {
+      primaryPriceLabel = formatCurrencyBRL(monthlyPriceCents);
+      primaryPeriodSuffix = '/mês';
+      if (yearlyPriceCents !== null) {
+        secondaryBillingLabel = `Ou ${formatCurrencyBRL(yearlyPriceCents)}/ano no ciclo anual`;
+      }
+    }
+  } else {
+    if (yearlyPriceCents !== null && yearlyMonthlyEquivalentCents !== null) {
+      primaryPriceLabel = formatCurrencyBRL(yearlyMonthlyEquivalentCents);
+      primaryPeriodSuffix = '/mês (equivalente)';
+      secondaryBillingLabel = `Total cobrado no ano: ${formatCurrencyBRL(yearlyPriceCents)}`;
+    }
+  }
+
+  let yearlySavingsCents = 0;
+  let yearlyFreeMonthsEquivalent: number | null = null;
+  let yearlySavingsBadgeLabel: string | null = null;
+
+  if (monthlyPriceCents !== null && yearlyPriceCents !== null && monthlyPriceCents > 0) {
+    const annualAtMonthlyRate = monthlyPriceCents * 12;
+    if (yearlyPriceCents < annualAtMonthlyRate) {
+      yearlySavingsCents = annualAtMonthlyRate - yearlyPriceCents;
+      const exactFreeMonths = yearlySavingsCents / monthlyPriceCents;
+      if (Math.abs(exactFreeMonths - Math.round(exactFreeMonths)) < 1e-6 && Math.round(exactFreeMonths) >= 1) {
+        const months = Math.round(exactFreeMonths);
+        yearlyFreeMonthsEquivalent = months;
+        yearlySavingsBadgeLabel = months === 1 ? '1 MÊS GRÁTIS' : `${months} MESES GRÁTIS`;
+      } else {
+        const pct = Math.round((yearlySavingsCents / annualAtMonthlyRate) * 100);
+        if (pct > 0) {
+          yearlySavingsBadgeLabel = `ECONOMIZE ${pct}%`;
+        }
+      }
+    }
+  }
+
+  const tablesBenefitLabel = unlimitedTables
+    ? 'Mesas simultâneas ilimitadas'
+    : maxTables !== null
+      ? `Até ${maxTables} ${maxTables === 1 ? 'mesa simultânea' : 'mesas simultâneas'}`
+      : 'Limite de mesas indisponível no catálogo';
+
+  const comparisonTablesLabel = unlimitedTables
+    ? 'Ilimitadas'
+    : maxTables !== null
+      ? `Até ${maxTables} mesas`
+      : 'Indisponível';
+
+  return {
+    planId,
+    valid,
+    canCheckout,
+    validationMessage,
+    monthlyPriceCents,
+    yearlyPriceCents,
+    yearlyMonthlyEquivalentCents,
+    maxTables,
+    unlimitedTables,
+    primaryPriceLabel,
+    primaryPeriodSuffix,
+    secondaryBillingLabel,
+    tablesBenefitLabel,
+    comparisonTablesLabel,
+    yearlySavingsCents,
+    yearlyFreeMonthsEquivalent,
+    yearlySavingsBadgeLabel,
+  };
+}
+
+export function resolveSubscriptionCatalogView(
+  catalog: Partial<Record<SubscriptionPlanId, Partial<PlanCatalogItem> | null>> | null | undefined,
+  cycle: BillingCycle,
+): ResolvedCatalogView {
+  const basic = resolvePlanCatalogItemView('basic', catalog?.basic, cycle);
+  const pro = resolvePlanCatalogItemView('pro', catalog?.pro, cycle);
+  const premium = resolvePlanCatalogItemView('premium', catalog?.premium, cycle);
+
+  const allPlans = [basic, pro, premium];
+  const hasAnyInvalidPlan = allPlans.some((p) => !p.valid);
+
+  const globalWarningMessage = hasAnyInvalidPlan
+    ? 'Algumas informações do catálogo de planos não puderam ser validadas no servidor. Os planos afetados estão bloqueados para contratação até a normalização.'
+    : null;
+
+  let yearlyToggleBadgeLabel: string | null = null;
+  if (allPlans.every((p) => p.valid && p.yearlySavingsCents > 0)) {
+    const firstFreeMonths = basic.yearlyFreeMonthsEquivalent;
+    if (
+      firstFreeMonths !== null &&
+      allPlans.every((p) => p.yearlyFreeMonthsEquivalent === firstFreeMonths)
+    ) {
+      yearlyToggleBadgeLabel =
+        firstFreeMonths === 1 ? '1 MÊS GRÁTIS' : `${firstFreeMonths} MESES GRÁTIS`;
+    } else {
+      yearlyToggleBadgeLabel = 'DESCONTO ANUAL';
+    }
+  }
+
+  return {
+    plans: { basic, pro, premium },
+    hasAnyInvalidPlan,
+    globalWarningMessage,
+    yearlyToggleBadgeLabel,
+  };
 }
 
 export function detectCardBrand(cardNumber: string): string {

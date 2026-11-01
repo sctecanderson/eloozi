@@ -14,6 +14,7 @@ export function ChamadosPage() {
     deliverOrder,
     attendWaiter,
     attendBill,
+    completeService,
   } = useStaffChamados();
 
   const [activeCategory, setActiveCategory] = useState<'all' | ChamadoCategory>('all');
@@ -299,6 +300,7 @@ export function ChamadosPage() {
               onDeliver={deliverOrder}
               onAttendWaiter={attendWaiter}
               onAttendBill={attendBill}
+              onComplete={completeService}
             />
           ))}
         </div>
@@ -314,6 +316,7 @@ interface ChamadoCardProps {
   onDeliver: (id: string) => Promise<boolean>;
   onAttendWaiter: (id: string) => Promise<boolean>;
   onAttendBill: (id: string) => Promise<boolean>;
+  onComplete: (id: string) => Promise<boolean>;
 }
 
 function ChamadoCard({
@@ -323,6 +326,7 @@ function ChamadoCard({
   onDeliver,
   onAttendWaiter,
   onAttendBill,
+  onComplete,
 }: ChamadoCardProps) {
   const isReady = item.category === 'ready_order';
   const isWaiter = item.category === 'waiter_call';
@@ -332,6 +336,15 @@ function ChamadoCard({
     <article
       className="bg-white dark:bg-zinc-900 rounded-3xl p-4 border border-amber-900/10 dark:border-zinc-800 shadow-sm space-y-3 transition-all hover:shadow-md"
     >
+      {item.status === 'attended' && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs text-zinc-600 dark:text-zinc-300">Chamado aceito. Conclua após atender o cliente.</span>
+          <button type="button" disabled={isBusy} onClick={() => void onComplete(item.id)}
+            className="rounded-xl bg-[#4A1505] px-4 py-2 text-xs font-bold text-white disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2">
+            {isBusy ? 'Concluindo…' : 'Concluir atendimento'}
+          </button>
+        </div>
+      )}
       {/* Linha Superior: Ícone da Mesa + Título + Status Badge */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
@@ -396,7 +409,7 @@ function ChamadoCard({
                 isReady ? 'bg-emerald-500' : isBill ? 'bg-amber-500' : 'bg-rose-500 animate-pulse'
               }`}
             />
-            {isReady ? 'Pronto' : isBill ? 'Aguardando conta' : 'Chamando'}
+            {isReady ? 'Pronto' : item.status === 'attended' ? 'Em atendimento' : isBill ? 'Aguardando conta' : 'Chamando'}
           </span>
         </div>
       </div>
@@ -405,7 +418,7 @@ function ChamadoCard({
       <div className="flex items-center justify-between text-xs text-zinc-600 dark:text-zinc-400 pt-1 border-t border-amber-900/5 dark:border-zinc-800/80">
         <div className="flex items-center gap-3">
           {isReady && item.preparationStation && (
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-zinc-500">
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-300">
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M6 13.87A4 4 0 0 1 7.41 6a5.11 5.11 0 0 1 1.05-1.54 5 5 0 0 1 7.08 0A5.11 5.11 0 0 1 16.59 6 4 4 0 0 1 18 13.87V21H6Z" />
                 <line x1="6" y1="17" x2="18" y2="17" />
@@ -424,8 +437,8 @@ function ChamadoCard({
             </span>
           )}
 
-          {isWaiter && (
-            <span className="text-[11px] text-zinc-500">
+          {isWaiter && item.status !== 'attended' && (
+            <span className="text-[11px] text-zinc-500 dark:text-zinc-300">
               Solicitado pelo cliente
             </span>
           )}
@@ -473,7 +486,7 @@ function ChamadoCard({
           </button>
         )}
 
-        {isBill && (
+        {isBill && item.status !== 'attended' && (
           <button
             type="button"
             disabled={isBusy}
