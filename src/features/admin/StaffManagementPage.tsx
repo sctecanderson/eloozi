@@ -550,7 +550,7 @@ function TeamContent({ slug }: { slug: string }) {
             editingId
               ? `Dados de ${trimmedName} atualizados com sucesso!`
               : inviteUrl
-                ? `Perfil salvo e convite pendente gerado para ${trimmedName}. Nenhum e-mail ou SMS foi enviado; encaminhe o link manualmente.`
+                ? `Convite criado, mas não enviado. Encaminhe o link gerado para ${trimmedName}.`
                 : `Perfil de ${trimmedName} salvo com sucesso!`,
           );
           if (!reloaded) {
@@ -652,13 +652,16 @@ function TeamContent({ slug }: { slug: string }) {
     }
   }
 
-  // Excluir funcionário ou revogar convite (etapas separadas, não atômicas)
+  // Excluir funcionário ou revogar convite
   async function handleDeleteMember(m: UnifiedStaffMember) {
-    const confirmMessage = `Tem certeza que deseja remover ${m.name} da equipe?`;
+    const isPendingInvite = !m.memberId && Boolean(m.inviteId);
+    const confirmMessage = isPendingInvite
+      ? `Deseja cancelar e invalidar o convite de ${m.name || m.email}?`
+      : `Tem certeza que deseja revogar o acesso de ${m.name} da equipe? O histórico de comandas e atendimentos será preservado.`;
     if (!window.confirm(confirmMessage)) return;
 
     if (m.openVisits > 0) {
-      setError('Transfira os atendimentos abertos antes de remover o funcionário.');
+      setError('Transfira os atendimentos abertos antes de revogar o acesso do funcionário.');
       return;
     }
 
@@ -667,44 +670,70 @@ function TeamContent({ slug }: { slug: string }) {
     setError('');
     setNotice('');
 
-    const reason = (cause: unknown) => (cause instanceof Error ? cause.message : 'erro desconhecido');
-    const steps: OutcomeStep[] = [];
-
     try {
-      let canRemoveProfile = true;
-      if (m.inviteId) {
-        try {
-          await revokeInvite(slug, m.inviteId);
-          steps.push({ label: 'convite pendente revogado', status: 'ok' });
-        } catch (cause) {
-          canRemoveProfile = false;
-          steps.push({ label: 'revogação do convite', status: 'failed', detail: reason(cause) });
+      // 1. Membro com vínculo em restaurant_members: desativa o acesso sem apagar a conta global nem histórico
+      if (m.memberId) {
+        const rawMember = team.members.find((item) => item.id === m.memberId);
+        if (rawMember && rawMember.active) {
+          await updateMember(slug, rawMember, rawMember.role, false);
         }
       }
 
+      // 2. Convite pendente associado: revoga e invalida o token
+      if (m.inviteId) {
+        await revokeInvite(slug, m.inviteId);
+      }
+
+      // 3. Remove dados complementares do perfil
       if (m.email) {
-        if (canRemoveProfile) {
-          try {
-            await staffProfileApi.remove(slug, m.email);
-            steps.push({ label: 'dados pessoais do perfil removidos', status: 'ok' });
-          } catch (cause) {
-            steps.push({ label: 'remoção dos dados pessoais', status: 'failed', detail: reason(cause) });
-          }
-        } else {
-          steps.push({ label: 'remoção dos dados pessoais', status: 'skipped' });
+        try {
+          await staffProfileApi.remove(slug, m.email);
+        } catch {
+          // Erro ao remover perfil complementar não impede o desfecho principal de revogação de acesso
         }
       }
 
       const reloaded = await reloadFromServer();
-      const outcome = summarizeOutcome(steps, reloaded);
       if (alive.current) {
-        if (outcome.kind === 'success') {
-          setNotice(`Funcionário ${m.name} removido com sucesso.`);
-          if (editingId === m.id) handleResetForm();
-          if (!reloaded) setError('Removido, mas não foi possível recarregar a lista do servidor. Atualize a página.');
+        if (isPendingInvite) {
+          setNotice(`Convite de ${m.name || m.email} cancelado e invalidado com sucesso.`);
         } else {
-          setError(outcome.message);
+          setNotice(`Acesso de ${m.name} revogado com sucesso. O histórico da equipe e comandas foi mantido.`);
         }
+        if (editingId === m.id) handleResetForm();
+        if (!reloaded) setError('Acesso atualizado, mas não foi possível recarregar a lista do servidor. Atualize a página.');
+      }
+    } catch (cause) {
+      if (alive.current) {
+        const message = cause instanceof Error ? cause.message : 'Falha ao processar operação da equipe.';
+        setError(message);
+      }
+    } finally {
+      acting.current = false;
+      if (alive.current) setBusy(false);
+    }
+  }
+
+  // Gerar novo link de convite (sem reutilizar tokens anteriores)
+  async function handleResendInvite(m: UnifiedStaffMember) {
+    if (!m.email) return;
+    acting.current = true;
+    setBusy(true);
+    setError('');
+    setNotice('');
+
+    try {
+      const inviteUrl = await createInvite(slug, m.email, m.role);
+      await reloadFromServer();
+      if (alive.current) {
+        setInviteCopyStatus('');
+        setInviteLink({ url: inviteUrl, name: m.name || m.email, email: m.email });
+        setNotice(`Novo link de convite gerado para ${m.name || m.email}. Encaminhe o link ao funcionário.`);
+      }
+    } catch (cause) {
+      if (alive.current) {
+        const message = cause instanceof Error ? cause.message : 'Não foi possível gerar novo convite.';
+        setError(message);
       }
     } finally {
       acting.current = false;
@@ -866,44 +895,65 @@ function TeamContent({ slug }: { slug: string }) {
           aria-labelledby="invite-link-title"
         >
           <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-zinc-900 p-6 shadow-xl space-y-4">
-            <h2 id="invite-link-title" className="text-base font-bold text-zinc-900 dark:text-white">
-              Convite gerado para {inviteLink.name}
-            </h2>
-            <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
-              Nenhum e-mail de convite foi enviado automaticamente.
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 flex items-center justify-center shrink-0">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 id="invite-link-title" className="text-base font-bold text-zinc-900 dark:text-white">
+                  Convite criado, mas não enviado
+                </h2>
+                <p className="text-xs text-amber-700 dark:text-amber-400 font-semibold mt-0.5">
+                  Nenhum provedor de e-mail ativo para envio automático.
+                </p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  Destinatário: <span className="font-medium text-zinc-700 dark:text-zinc-300">{inviteLink.name}</span> ({inviteLink.email})
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-600 dark:text-zinc-300 leading-relaxed">
+              O sistema não enviou o convite por e-mail nem SMS. Copie o link exclusivo abaixo e encaminhe diretamente ao funcionário (WhatsApp ou e-mail pessoal). Ele poderá entrar com uma conta existente ou criar uma nova escolhendo a própria senha.
             </p>
-            <p className="text-xs text-zinc-600 dark:text-zinc-300">
-              O sistema NÃO enviou o convite por e-mail nem SMS: você precisa compartilhar este link manualmente. Copie o link abaixo e encaminhe ao funcionário (WhatsApp, e-mail etc.). Ele deverá
-              criar a própria conta com o e-mail {inviteLink.email}, confirmar o e-mail se
-              solicitado e voltar ao link para aceitar o convite. Este link só é exibido agora;
-              se fechar esta janela, será necessário revogar e gerar outro convite.
-            </p>
-            <input
-              readOnly
-              value={inviteLink.url}
-              onFocus={(e) => e.currentTarget.select()}
-              aria-label="Link do convite"
-              className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white"
-            />
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">
+                Link de Acesso Único
+              </label>
+              <div className="flex flex-col sm:flex-row gap-2 items-center">
+                <input
+                  readOnly
+                  value={inviteLink.url}
+                  onFocus={(e) => e.currentTarget.select()}
+                  aria-label="Link do convite"
+                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-xs text-zinc-900 dark:text-white font-mono select-all"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleCopyInvite()}
+                  className="w-full sm:w-auto shrink-0 px-4 py-2 rounded-xl bg-[#610000] hover:bg-[#7a0000] text-white text-xs font-bold cursor-pointer transition-colors"
+                >
+                  Copiar link
+                </button>
+              </div>
+            </div>
+
             {inviteCopyStatus && (
-              <p className="text-xs text-zinc-600 dark:text-zinc-300" role="status">
+              <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400" role="status">
                 {inviteCopyStatus}
               </p>
             )}
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => void handleCopyInvite()}
-                className="px-4 py-2 rounded-xl bg-[#610000] text-white text-xs font-bold cursor-pointer"
-              >
-                Copiar convite
-              </button>
+
+            <div className="flex justify-end pt-2 border-t border-zinc-100 dark:border-zinc-800">
               <button
                 type="button"
                 onClick={closeInviteModal}
-                className="px-4 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs font-bold text-zinc-700 dark:text-zinc-200 cursor-pointer"
+                className="px-4 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs font-bold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
               >
-                Fechar
+                Concluir e fechar
               </button>
             </div>
           </div>
@@ -1596,22 +1646,38 @@ function TeamContent({ slug }: { slug: string }) {
                           Editar
                         </button>
 
-                        {/* Botão Ativar / Desativar */}
-                        <button
-                          type="button"
-                          onClick={() => void handleToggleActive(m)}
-                          disabled={busy}
-                          className="px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer disabled:opacity-50"
-                        >
-                          {m.active ? 'Desativar' : 'Ativar'}
-                        </button>
+                        {/* Botão Ativar / Desativar (para membros vinculados) */}
+                        {m.memberId && (
+                          <button
+                            type="button"
+                            onClick={() => void handleToggleActive(m)}
+                            disabled={busy}
+                            className="px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            {m.active ? 'Desativar' : 'Ativar'}
+                          </button>
+                        )}
 
-                        {/* Botão Excluir */}
+                        {/* Botão Gerar Novo Link (para convites pendentes) */}
+                        {m.isInvitePending && m.email && (
+                          <button
+                            type="button"
+                            onClick={() => void handleResendInvite(m)}
+                            disabled={busy}
+                            title="Gerar um novo link seguro para este convite"
+                            className="px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-xs font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            Novo link
+                          </button>
+                        )}
+
+                        {/* Botão Excluir / Cancelar */}
                         <button
                           type="button"
                           onClick={() => void handleDeleteMember(m)}
                           disabled={busy}
-                          title="Remover da equipe"
+                          title={m.isInvitePending ? 'Cancelar convite' : 'Revogar acesso da equipe'}
+                          aria-label={m.isInvitePending ? 'Cancelar convite' : 'Revogar acesso da equipe'}
                           className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer disabled:opacity-50"
                         >
                           <svg

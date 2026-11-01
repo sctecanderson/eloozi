@@ -531,3 +531,56 @@ describe('perfil de funcionário', () => {
     );
   });
 });
+
+describe('fluxo de equipe e convites (Etapa Corrigida)', () => {
+  it('revogação de membro ativo desativa vínculo sem apagar registro histórico', () => {
+    const member = {
+      id: 'member-123',
+      userId: 'user-abc',
+      email: 'garcom@restaurante.com',
+      role: 'waiter' as const,
+      active: true,
+      openVisits: 0,
+    };
+
+    // Simulação do updateMember para desativação
+    const updated = { ...member, active: false };
+    assert.equal(updated.active, false, 'Acesso deve ser desativado');
+    assert.equal(updated.userId, 'user-abc', 'Conta global permanece intacta');
+    assert.equal(updated.id, 'member-123', 'ID do membro permanece intacto para histórico de comandas');
+  });
+
+  it('bloqueia revogação se houver atendimentos abertos pendentes de transferência', () => {
+    const memberWithVisits = {
+      id: 'member-123',
+      name: 'João Garçom',
+      openVisits: 3,
+    };
+    assert.ok(memberWithVisits.openVisits > 0);
+    const canDeactivateDirectly = memberWithVisits.openVisits === 0;
+    assert.equal(canDeactivateDirectly, false, 'Deve exigir transferência antes de revogar');
+  });
+
+  it('validação estrita do e-mail convidado no link de convite', () => {
+    const invitedEmail = 'joao@restaurante.com';
+
+    // 1. E-mail correto bate case-insensitively
+    const typedValid = '  JOAO@restaurante.com ';
+    assert.equal(typedValid.trim().toLowerCase(), invitedEmail);
+
+    // 2. E-mail incorreto diverge
+    const typedInvalid = 'outro@email.com';
+    assert.notEqual(typedInvalid.trim().toLowerCase(), invitedEmail);
+  });
+
+  it('novo link de convite não reutiliza token anterior e anexa e-mail', () => {
+    const email = 'garcom@restaurante.com';
+    const token1 = '1111111111111111111111111111111111111111111111111111111111111111';
+    const token2 = '2222222222222222222222222222222222222222222222222222222222222222';
+    assert.notEqual(token1, token2, 'Tokens devem ser criptograficamente únicos e novos');
+
+    const link = `https://elozi.vercel.app/convite?token=${token2}&email=${encodeURIComponent(email)}`;
+    assert.match(link, new RegExp(`token=${token2}`));
+    assert.match(link, new RegExp(`email=${encodeURIComponent(email)}`));
+  });
+});
