@@ -2619,7 +2619,8 @@ footer a {
 .product-meta-row {
     display: flex;
     align-items: center;
-    gap: 16px;
+    flex-wrap: wrap;
+    gap: 10px 16px;
     font-size: 13px;
     font-weight: 600;
     color: var(--ink, #2b1d17);
@@ -2628,7 +2629,8 @@ footer a {
 .product-meta-item {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
+    white-space: nowrap;
 }
 
 .product-meta-item svg {
@@ -3281,15 +3283,15 @@ footer a {
     transform: translateX(-50%);
     width: min(calc(100% - 36px), 440px);
     height: 64px;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    display: flex;
     align-items: center;
+    justify-content: space-around;
     background: rgba(255, 252, 248, 0.96);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     border: 1px solid rgba(220, 204, 188, 0.85);
     border-radius: 999px;
-    padding: 4px 10px;
+    padding: 4px 8px;
     box-shadow: 0 10px 30px rgba(35, 21, 14, 0.16);
     z-index: 50;
 }
@@ -3309,7 +3311,9 @@ footer a {
     font-size: 10px;
     font-weight: 600;
     cursor: pointer;
-    padding: 6px 0;
+    padding: 6px 2px;
+    flex: 1 1 0;
+    min-width: 0;
     border-radius: 999px;
     transition: color 0.15s ease;
 }

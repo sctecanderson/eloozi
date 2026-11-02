@@ -1697,7 +1697,7 @@ function TeamContent({ slug }: { slug: string }) {
                       </div>
 
                       {/* Status e Ações */}
-                      <div className="flex items-center gap-3 self-end md:self-center shrink-0">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3 self-start md:self-center shrink-0">
                         {/* Status Badge */}
                         <div
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
@@ -1729,7 +1729,7 @@ function TeamContent({ slug }: { slug: string }) {
                             Histórico preservado
                           </span>
                         ) : (
-                          <>
+                          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                             {/* Botão Editar */}
                             <button
                               type="button"
@@ -1784,7 +1784,7 @@ function TeamContent({ slug }: { slug: string }) {
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                               </svg>
                             </button>
-                          </>
+                          </div>
                         )}
                       </div>
                     </div>

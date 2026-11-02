@@ -1,6 +1,17 @@
 {
   "rewrites": [
     {
+      "source": "/:restaurantSlug/produto/:productSlug",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": "(?i).*(bot|crawler|spider|whatsapp|facebookexternalhit|facebot|twitterbot|telegrambot|slackbot|discordbot|applebot|linkedin|skypeuripreview|meta-externalagent|curl|wget).*"
+        }
+      ],
+      "destination": "/api/product-preview?restaurantSlug=:restaurantSlug&productSlug=:productSlug"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
@@ -24,6 +35,14 @@
         {
           "key": "Referrer-Policy",
           "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains; preload"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
         }
       ]
     }

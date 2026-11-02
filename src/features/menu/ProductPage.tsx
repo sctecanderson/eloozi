@@ -73,6 +73,16 @@ export function ProductPage() {
   const catalog = usePublicMenu();
   const product = catalog.menu?.products.find((item) => item.slug === productSlug);
 
+  useEffect(() => {
+    if (!product) return;
+    const prevTitle = document.title;
+    const restName = restaurant?.name ? ` | ${restaurant.name}` : '';
+    document.title = `${product.name}${restName}`;
+    return () => {
+      document.title = prevTitle;
+    };
+  }, [product, restaurant?.name]);
+
   const handleDirectOrder = async () => {
     if (!product || !table.tableId || orderBusy || product.isOutOfStock) return;
     setOrderBusy(true);

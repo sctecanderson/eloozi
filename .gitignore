@@ -19,3 +19,11 @@ __pycache__/
 /RELATORIO_FINAL_RESERVAS.md
 /RELATORIO_VALIDACAO_BANCO_ISOLADO.md
 /eloozi_reservas*.zip
+# Certificados e chaves privadas locais
+*.pem
+*.key
+*.pfx
+.vercel
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
