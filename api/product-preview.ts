@@ -50,21 +50,36 @@ export default async function handler(request: Request): Promise<Response> {
     ? `${origin}/${encodeURIComponent(restaurantSlug)}/produto/${encodeURIComponent(productSlug)}`
     : origin;
 
-  const supabaseUrl =
-    process.env.VITE_SUPABASE_URL ||
-    process.env.SUPABASE_URL ||
-    'https://llhujxzefujdsthpezag.supabase.co';
-  const supabaseKey =
+  // Usa exclusivamente variáveis de ambiente configuradas na Vercel
+  const rawSupabaseUrl = (process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '').trim();
+  const supabaseKey = (
     process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
     process.env.SUPABASE_ANON_KEY ||
-    '';
+    ''
+  ).trim();
+
+  let isValidSupabaseUrl = false;
+  if (rawSupabaseUrl) {
+    try {
+      const parsed = new URL(rawSupabaseUrl);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        isValidSupabaseUrl = Boolean(parsed.hostname);
+      }
+    } catch {
+      isValidSupabaseUrl = false;
+    }
+  }
+
+  const isConfigured = isValidSupabaseUrl && Boolean(supabaseKey);
 
   let productName = 'Prato no Cardápio';
   let restaurantName = 'Elozi';
   let description = 'Confira os detalhes e faça seu pedido pelo cardápio digital.';
   let imageUrl = `${origin}/landing/preview-cardapio.png`;
 
-  if (restaurantSlug && productSlug && supabaseUrl && supabaseKey) {
+  // Se configuração estiver ausente, inválida ou incompleta, não faz chamadas externas e usa fallback
+  if (restaurantSlug && productSlug && isConfigured) {
+    const supabaseUrl = rawSupabaseUrl;
     try {
       const [restRes, menuRes] = await Promise.all([
         fetch(`${supabaseUrl}/rest/v1/rpc/get_public_restaurant`, {

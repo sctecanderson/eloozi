@@ -104,7 +104,6 @@ test('Product Open Graph Preview Handler', async (t) => {
 
   await t.test('Produto 2: Búrguer da casa no NOMA (via pathname original preservado)', async () => {
     setupMockFetch();
-    // Simula a requisição recebida com o pathname original /noma/produto/burguer-da-casa
     const req = new Request('https://elozi.vercel.app/noma/produto/burguer-da-casa', {
       headers: { host: 'elozi.vercel.app', 'x-forwarded-proto': 'https' },
     });
@@ -155,6 +154,54 @@ test('Product Open Graph Preview Handler', async (t) => {
     assert.match(html, /preview-cardapio\.png/);
     assert.doesNotMatch(html, /mock-key/);
     assert.doesNotMatch(html, /service_role/);
+  });
+
+  await t.test('Sem variáveis de ambiente: não chama fetch e retorna fallback genérico seguro', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return new Response('Not found', { status: 404 });
+    };
+
+    delete process.env.VITE_SUPABASE_URL;
+    delete process.env.SUPABASE_URL;
+    delete process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+    delete process.env.SUPABASE_ANON_KEY;
+
+    const req = new Request('https://elozi.vercel.app/api/product-preview?restaurantSlug=noma&productSlug=risoto-de-cogumelos', {
+      headers: { host: 'elozi.vercel.app', 'x-forwarded-proto': 'https' },
+    });
+
+    const res = await handler(req);
+    assert.equal(res.status, 200);
+    assert.equal(fetchCalled, false, 'Fetch não deve ser chamado quando variáveis de ambiente estiverem ausentes');
+
+    const html = await res.text();
+    assert.match(html, /<meta property="og:title" content="Prato no Cardápio \| Elozi"/);
+    assert.match(html, /preview-cardapio\.png/);
+  });
+
+  await t.test('Variável de ambiente com URL malformatada: não chama fetch e retorna fallback genérico seguro', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return new Response('Not found', { status: 404 });
+    };
+
+    process.env.VITE_SUPABASE_URL = 'http-nao-valido';
+    process.env.VITE_SUPABASE_PUBLISHABLE_KEY = 'mock-key';
+
+    const req = new Request('https://elozi.vercel.app/api/product-preview?restaurantSlug=noma&productSlug=risoto-de-cogumelos', {
+      headers: { host: 'elozi.vercel.app', 'x-forwarded-proto': 'https' },
+    });
+
+    const res = await handler(req);
+    assert.equal(res.status, 200);
+    assert.equal(fetchCalled, false, 'Fetch não deve ser chamado quando a URL for inválida');
+
+    const html = await res.text();
+    assert.match(html, /<meta property="og:title" content="Prato no Cardápio \| Elozi"/);
+    assert.match(html, /preview-cardapio\.png/);
   });
 
   await t.test('index.html contém referências canônicas ao favicon e apple-touch-icon', () => {
