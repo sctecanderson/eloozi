@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRestaurant } from '../restaurants/RestaurantProvider';
 import { supabase } from '../../lib/supabase';
+import { optimizeImage } from '../admin/imageOptimization';
 import {
   fetchInventory,
   createInventoryItem,
@@ -435,32 +436,28 @@ export function InventoryPage() {
     setImageUploadError(null);
 
     try {
-      const ext = file.name.split('.').pop() || 'webp';
-      const storagePath = `${restaurant.id}/inventory/${selectedImageItem.id}_${Date.now()}.${ext}`;
+      const optimized = await optimizeImage(file, {
+        kind: 'product',
+        maxSide: 1200,
+        targetMaxBytes: 250 * 1024,
+        forceWebP: true,
+        maxOutputBytes: 2 * 1024 * 1024,
+      });
+      const photoId = crypto.randomUUID();
+      // Caminho compatível com a política RLS do bucket menu-images: UUID/products/UUID/UUID.webp
+      const storagePath = `${restaurant.id}/products/${selectedImageItem.id}/${photoId}.webp`;
       const { error: uploadErr } = await supabase.storage
         .from('menu-images')
-        .upload(storagePath, file, { contentType: file.type, upsert: true });
+        .upload(storagePath, optimized.file, { contentType: 'image/webp', upsert: true });
 
       if (!uploadErr) {
         const { data } = supabase.storage.from('menu-images').getPublicUrl(storagePath);
         setTempImageUrl(data.publicUrl);
       } else {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          if (event.target?.result) {
-            setTempImageUrl(event.target.result as string);
-          }
-        };
-        reader.readAsDataURL(file);
+        setTempImageUrl(optimized.previewUrl);
       }
-    } catch {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setTempImageUrl(event.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
+    } catch (err) {
+      setImageUploadError(err instanceof Error ? err.message : 'Erro ao processar imagem.');
     } finally {
       setImageUploadBusy(false);
     }
