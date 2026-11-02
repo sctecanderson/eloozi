@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRestaurant } from '../restaurants/RestaurantProvider';
 import { supabase } from '../../lib/supabase';
+import { optimizeImage } from '../admin/imageOptimization';
 import {
   fetchInventory,
   createInventoryItem,
@@ -435,11 +436,16 @@ export function InventoryPage() {
     setImageUploadError(null);
 
     try {
-      const ext = file.name.split('.').pop() || 'webp';
+      const optimized = await optimizeImage(file, {
+        kind: 'product',
+        maxSide: 1200,
+        targetMaxBytes: 250 * 1024,
+      });
+      const ext = optimized.extension || 'webp';
       const storagePath = `${restaurant.id}/inventory/${selectedImageItem.id}_${Date.now()}.${ext}`;
       const { error: uploadErr } = await supabase.storage
         .from('menu-images')
-        .upload(storagePath, file, { contentType: file.type, upsert: true });
+        .upload(storagePath, optimized.file, { contentType: optimized.mimeType, upsert: true });
 
       if (!uploadErr) {
         const { data } = supabase.storage.from('menu-images').getPublicUrl(storagePath);

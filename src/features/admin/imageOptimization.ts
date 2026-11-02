@@ -7,8 +7,9 @@
  * - Converte para WebP quando suportado, com alvo de 150–350 KB mantendo alta fidelidade visual.
  * - Nunca gera arquivo maior que o original (se o comprimido for maior, preserva o original).
  * - Preserva transparência (PNG/WebP).
- * - Não converte silenciosamente arquivos SVG ou GIFs animados (mantém integridade).
- * - Rejeita arquivos corrompidos ou formatos incompatíveis com erro claro em português.
+ * - Arquivos SVG e GIFs animados respeitam estritamente limites de entrada e formatos permitidos,
+ *   sendo preservados sem conversão destrutiva quando aprovados.
+ * - Rejeita arquivos corrompidos, vazios, que excedam os limites de tamanho ou formatos incompatíveis com erro claro em português.
  */
 
 export interface OptimizeImageOptions {
@@ -18,6 +19,8 @@ export interface OptimizeImageOptions {
   targetMaxBytes?: number;
   initialQuality?: number;
   preserveTransparency?: boolean;
+  maxInputBytes?: number;
+  allowedMimes?: string[];
 }
 
 export interface OptimizedImageResult {
@@ -33,15 +36,16 @@ export interface OptimizedImageResult {
   savingsPercent: number;
 }
 
-const DEFAULT_MAX_SIDE: Record<NonNullable<OptimizeImageOptions['kind']>, number> = {
+export const DEFAULT_MAX_SIDE: Record<NonNullable<OptimizeImageOptions['kind']>, number> = {
   product: 1600,
   logo: 400,
   avatar: 400,
   cover: 1400,
 };
 
-const TARGET_MIN_BYTES = 150 * 1024; // ~150 KB
-const TARGET_MAX_BYTES = 350 * 1024; // ~350 KB
+export const DEFAULT_MAX_INPUT_BYTES = 10 * 1024 * 1024; // 10 MB
+export const TARGET_MIN_BYTES = 150 * 1024; // ~150 KB
+export const TARGET_MAX_BYTES = 350 * 1024; // ~350 KB
 
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -70,12 +74,63 @@ export async function optimizeImage(
   file: File,
   options: OptimizeImageOptions = {}
 ): Promise<OptimizedImageResult> {
-  if (!file || !file.size) {
+  // 1. Validação estrita de presença e arquivo não-vazio
+  if (!file || typeof file.size !== 'number') {
     throw new Error('Arquivo de imagem inválido ou vazio.');
   }
 
-  // 1. Preservar SVGs sem conversão gráfica para manter a renderização vetorial cristalina
-  if (isSvgFile(file)) {
+  if (file.size <= 0) {
+    throw new Error('O arquivo de imagem selecionado está vazio (0 bytes).');
+  }
+
+  // 2. Validação estrita de teto de entrada (NENHUM arquivo, inclusive SVG, GIF ou original mantido, pode contornar)
+  const maxInput = options.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+  if (file.size > maxInput) {
+    throw new Error(
+      `A imagem excede o limite permitido de ${formatFileSize(maxInput)} (tamanho atual: ${formatFileSize(file.size)}).`
+    );
+  }
+
+  const kind = options.kind || 'product';
+  const defaultAllowedMimes = [
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/avif',
+    'image/svg+xml',
+    'image/gif',
+  ];
+  const allowedMimes = options.allowedMimes ?? defaultAllowedMimes;
+  const isSvg = isSvgFile(file);
+  const isGif = isGifFile(file);
+
+  // 3. Validação de formato permitido
+  if (isSvg && !allowedMimes.includes('image/svg+xml')) {
+    throw new Error('Imagens em formato vetorial SVG não são permitidas para este campo.');
+  }
+  if (isGif && !allowedMimes.includes('image/gif')) {
+    throw new Error('Imagens animadas em GIF não são permitidas para este campo.');
+  }
+  if (!isSvg && !isGif) {
+    const fileMime = file.type || '';
+    if (!fileMime || !allowedMimes.includes(fileMime)) {
+      throw new Error('Formato de imagem não suportado. Use JPG, PNG ou WebP.');
+    }
+  }
+
+  // 4. Preservar SVGs sem conversão gráfica, validando segurança do conteúdo
+  if (isSvg) {
+    try {
+      if (typeof file.text === 'function') {
+        const text = await file.text();
+        if (/<script[\s>]/i.test(text) || /javascript:/i.test(text)) {
+          throw new Error('Arquivo SVG rejeitado: contém scripts potencialmente inseguros.');
+        }
+      }
+    } catch (cause) {
+      if (cause instanceof Error && cause.message.includes('rejeitado')) throw cause;
+    }
+
     return {
       file,
       previewUrl: URL.createObjectURL(file),
@@ -90,8 +145,8 @@ export async function optimizeImage(
     };
   }
 
-  // 2. Preservar GIFs animados sem alteração por Canvas para evitar perda de quadros de animação
-  if (isGifFile(file)) {
+  // 5. Preservar GIFs animados sem alteração por Canvas para evitar perda de quadros
+  if (isGif) {
     return {
       file,
       previewUrl: URL.createObjectURL(file),
@@ -106,18 +161,11 @@ export async function optimizeImage(
     };
   }
 
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
-  if (!allowedTypes.includes(file.type)) {
-    throw new Error('Formato de imagem não suportado. Use JPG, PNG ou WebP.');
-  }
-
-  const kind = options.kind || 'product';
   const maxSide = options.maxSide || DEFAULT_MAX_SIDE[kind];
   const targetMax = options.targetMaxBytes || TARGET_MAX_BYTES;
-  const targetMin = options.targetMinBytes || TARGET_MIN_BYTES;
   const baseQuality = options.initialQuality ?? (kind === 'logo' || kind === 'avatar' ? 0.90 : 0.82);
 
-  // 3. Decodificar a imagem de forma segura
+  // 6. Decodificar a imagem de forma segura
   let bitmap: ImageBitmap | HTMLImageElement;
   let objectUrl: string | null = null;
 
@@ -154,14 +202,14 @@ export async function optimizeImage(
       throw new Error('A resolução da imagem é excessiva. Use uma imagem com menos de 40 megapixels.');
     }
 
-    // 4. Calcular redimensionamento: NÃO ampliar imagens menores!
+    // 7. Calcular redimensionamento: NÃO ampliar imagens menores!
     const longestSide = Math.max(origWidth, origHeight);
-    const scale = longestSide > maxSide ? maxSide / longestSide : 1; // Nunca amplia se scale > 1
+    const scale = longestSide > maxSide ? maxSide / longestSide : 1; // Nunca amplia se scale >= 1
 
     const finalWidth = Math.max(1, Math.round(origWidth * scale));
     const finalHeight = Math.max(1, Math.round(origHeight * scale));
 
-    // 5. Renderizar no Canvas
+    // 8. Renderizar no Canvas
     const canvas = document.createElement('canvas');
     canvas.width = finalWidth;
     canvas.height = finalHeight;
@@ -175,7 +223,7 @@ export async function optimizeImage(
     ctx.clearRect(0, 0, finalWidth, finalHeight);
     ctx.drawImage(bitmap, 0, 0, finalWidth, finalHeight);
 
-    // 6. Testar suporte ao WebP e tentar atingir a faixa alvo (150–350 KB)
+    // 9. Testar suporte ao WebP e tentar atingir a faixa alvo (150–350 KB)
     let bestBlob: Blob | null = null;
     let selectedQuality = baseQuality;
 
@@ -213,7 +261,7 @@ export async function optimizeImage(
       }
     }
 
-    // 7. REGRA CRÍTICA: Nunca gerar arquivo maior que o original!
+    // 10. REGRA CRÍTICA: Nunca gerar arquivo maior que o original!
     let finalFile: Blob | File;
     let finalSize: number;
     let isOptimized = true;
@@ -222,7 +270,8 @@ export async function optimizeImage(
       finalFile = bestBlob;
       finalSize = bestBlob.size;
     } else {
-      // O original já é mais leve ou a conversão aumentou o tamanho
+      // O original já é mais leve ou a conversão aumentou o tamanho.
+      // O original já foi validado contra limites de tamanho, formato e dimensões.
       finalFile = file;
       finalSize = file.size;
       outputMime = file.type;

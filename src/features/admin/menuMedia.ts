@@ -1,6 +1,6 @@
 import { supabase } from '../../lib/supabase';
 import type { ProductImage, ProductVideo } from '../../types/menu';
-import { optimizeImage } from './imageOptimization';
+import { optimizeImage, type OptimizeImageOptions } from './imageOptimization';
 
 export interface AdminImage extends ProductImage {
   storagePath?: string;
@@ -30,8 +30,36 @@ export const MAX_PHOTOS = 6;
 export const MAX_IMAGE_INPUT = 10 * 1024 * 1024;
 export const MAX_VIDEO_SIZE = 20 * 1024 * 1024; // Limite de 20 MB para vídeos
 
-export async function preparePhoto(file: File, alt: string): Promise<DraftPhoto> {
-  if (!['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'].includes(file.type)) {
+export const MAX_VIDEO_DURATION_SECONDS = 10.5;
+
+export interface VideoDurationValidation {
+  valid: boolean;
+  error?: string;
+}
+
+export function validateVideoDuration(duration: unknown): VideoDurationValidation {
+  if (typeof duration !== 'number' || Number.isNaN(duration) || !Number.isFinite(duration) || duration <= 0) {
+    return {
+      valid: false,
+      error: 'Não foi possível identificar a duração do vídeo. Verifique se o arquivo não está corrompido.',
+    };
+  }
+  if (duration > MAX_VIDEO_DURATION_SECONDS) {
+    return {
+      valid: false,
+      error: `O vídeo deve ter no máximo 10 segundos (duração atual: ${duration.toFixed(1).replace('.', ',')}s). Encurte o vídeo antes de enviar.`,
+    };
+  }
+  return { valid: true };
+}
+
+export async function preparePhoto(
+  file: File,
+  alt: string,
+  kind: OptimizeImageOptions['kind'] = 'product'
+): Promise<DraftPhoto> {
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+  if (!allowedTypes.includes(file.type)) {
     throw new Error('Use uma foto JPG, PNG ou WebP.');
   }
   if (!file.size || file.size > MAX_IMAGE_INPUT) {
@@ -39,11 +67,9 @@ export async function preparePhoto(file: File, alt: string): Promise<DraftPhoto>
   }
 
   const result = await optimizeImage(file, {
-    kind: 'product',
-    maxSide: 1600,
-    targetMinBytes: 150 * 1024,
-    targetMaxBytes: 350 * 1024,
-    initialQuality: 0.82,
+    kind,
+    maxInputBytes: MAX_IMAGE_INPUT,
+    allowedMimes: allowedTypes,
   });
 
   return {
@@ -101,15 +127,9 @@ export async function prepareVideo(file: File): Promise<DraftVideo> {
       video.src = previewUrl;
     });
 
-    if (!Number.isFinite(duration) || duration <= 0) {
-      throw new Error('Não foi possível identificar a duração do vídeo. Verifique se o arquivo não está corrompido.');
-    }
-
-    // Regra estrita: Máximo 10 segundos (com tolerância de 0.5s para arredondamento de containers de vídeo)
-    if (duration > 10.5) {
-      throw new Error(
-        `O vídeo deve ter no máximo 10 segundos (duração atual: ${Math.round(duration)}s). Encurte o vídeo antes de enviar.`
-      );
+    const check = validateVideoDuration(duration);
+    if (!check.valid) {
+      throw new Error(check.error);
     }
 
     return {

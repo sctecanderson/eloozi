@@ -43,10 +43,12 @@ export function KdsPage() {
     isKitchenOrBar: boolean;
     isAdmin: boolean;
     cargoLabel: string;
+    canAccessService: boolean;
   }>({
     isKitchenOrBar: false,
     isAdmin: true,
     cargoLabel: '',
+    canAccessService: false,
   });
 
   useEffect(() => {
@@ -57,14 +59,16 @@ export function KdsPage() {
         if (!user) return;
         const access = await getStaffAccess(slug);
         let cargo = '';
+        let permissions: string[] | undefined;
         if (user.email) {
           try {
             const profiles = await staffProfileApi.list(slug);
             const userProfile = profiles.find(
               (p) => p.email.toLowerCase() === user.email?.toLowerCase()
             );
-            if (userProfile?.cargo) {
-              cargo = userProfile.cargo;
+            if (userProfile) {
+              cargo = userProfile.cargo || '';
+              permissions = userProfile.permissions;
             }
           } catch {}
         }
@@ -74,11 +78,27 @@ export function KdsPage() {
           (access?.role === 'waiter');
         const isAdmin = Boolean(access?.role === 'admin') && !isKitchenOrBar;
 
+        // Permissão real para acessar a rota de Atendimento & Comandas (/:slug/equipe / Mesas)
+        // Só é permitido se o usuário for admin ou se suas permissões reais incluírem 'mesas'
+        let canAccessService = false;
+        if (access?.role === 'admin') {
+          canAccessService = true;
+        } else if (permissions && Array.isArray(permissions)) {
+          canAccessService = permissions.includes('mesas');
+        } else {
+          // Fallback seguro: cargos de salão (Garçom/Atendente/Caixa) possuem acesso a mesas por padrão,
+          // enquanto Cozinha, Bar e Estoquista NÃO possuem acesso a 'mesas' a menos que explicitamente concedido
+          const lower = cargo.toLowerCase();
+          const isSalonRole = lower.includes('garçom') || lower.includes('garcom') || lower.includes('atendente') || lower.includes('caixa');
+          canAccessService = isSalonRole;
+        }
+
         if (isMounted) {
           setStaffRoleState({
             isKitchenOrBar,
             isAdmin,
             cargoLabel: cargo || (access?.role === 'admin' ? 'Gerente' : 'Cozinha / Bar'),
+            canAccessService,
           });
         }
       } catch {}
@@ -830,24 +850,28 @@ export function KdsPage() {
                 </div>
 
                 <p className="text-xs text-zinc-600 dark:text-zinc-300 leading-relaxed">
-                  Deseja sair da esteira de pedidos? Escolha para onde deseja ir ou encerre sua sessão neste dispositivo:
+                  {staffRoleState.canAccessService
+                    ? 'Deseja sair da esteira de pedidos? Escolha para onde deseja ir ou encerre sua sessão neste dispositivo:'
+                    : 'Deseja sair da esteira de pedidos? Encerre sua sessão neste dispositivo ou permaneça na produção:'}
                 </p>
 
                 <div className="flex flex-col gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (document.fullscreenElement) {
-                        try { await document.exitFullscreen(); } catch {}
-                      }
-                      setIsExitModalOpen(false);
-                      navigate(`/${slug}/equipe`);
-                    }}
-                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white px-4 py-2.5 text-xs font-bold shadow-xs transition-colors cursor-pointer"
-                  >
-                    <span>Ir para Atendimento & Comandas</span>
-                    <span aria-hidden="true">→</span>
-                  </button>
+                  {staffRoleState.canAccessService && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (document.fullscreenElement) {
+                          try { await document.exitFullscreen(); } catch {}
+                        }
+                        setIsExitModalOpen(false);
+                        navigate(`/${slug}/equipe`);
+                      }}
+                      className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white px-4 py-2.5 text-xs font-bold shadow-xs transition-colors cursor-pointer"
+                    >
+                      <span>Ir para Atendimento & Comandas</span>
+                      <span aria-hidden="true">→</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -861,7 +885,11 @@ export function KdsPage() {
                       } catch {}
                       navigate(`/${slug}/acesso`, { replace: true });
                     }}
-                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 px-4 py-2 text-xs font-semibold transition-colors cursor-pointer"
+                    className={`w-full flex items-center justify-center gap-2 rounded-xl ${
+                      staffRoleState.canAccessService
+                        ? 'border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300'
+                        : 'bg-rose-600 hover:bg-rose-700 text-white shadow-xs'
+                    } px-4 py-2.5 text-xs font-semibold transition-colors cursor-pointer`}
                   >
                     <span>Encerrar Sessão (Logout)</span>
                   </button>

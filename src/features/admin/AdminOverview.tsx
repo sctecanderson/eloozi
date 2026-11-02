@@ -132,7 +132,7 @@ export function AdminOverview() {
       reader.readAsDataURL(file);
 
       // 2. Upload para o Supabase Storage (sem alterar a identidade/logo do cardápio público)
-      const draftPhoto = await preparePhoto(file, `${r.name}-dashboard-logo`);
+      const draftPhoto = await preparePhoto(file, `${r.name}-dashboard-logo`, 'logo');
       const uploadedMedia = await uploadIdentity(
         draftPhoto,
         r.id,
@@ -267,7 +267,7 @@ export function AdminOverview() {
 
     // 2. Upload para o Supabase Storage (sem alterar a capa do cardápio público)
     try {
-      const draftPhoto = await preparePhoto(croppedFile, `${r.name}-dashboard-banner`);
+      const draftPhoto = await preparePhoto(croppedFile, `${r.name}-dashboard-banner`, 'cover');
       const uploaded = await uploadIdentity(
         draftPhoto,
         r.id,

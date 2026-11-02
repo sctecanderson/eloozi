@@ -325,7 +325,8 @@ export function IdentityPage() {
     try {
       const prepared = await preparePhoto(
         file,
-        key === "logo" ? "Logo do restaurante" : "Capa do restaurante"
+        key === "logo" ? "Logo do restaurante" : "Capa do restaurante",
+        key === "logo" ? "logo" : "cover"
       );
       if (!mounted.current) {
         release(prepared);

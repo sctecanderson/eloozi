@@ -5,6 +5,7 @@ import { supabase } from "../../lib/supabase";
 import { priceToCents, saveCatalogEntry, slugify } from "./adminCatalog";
 import type { AdminCategory, AdminProduct } from "./adminCatalog";
 import { MAX_PHOTOS, preparePhoto, prepareVideo, uploadMenuMedia } from "./menuMedia";
+import { optimizeImage } from "./imageOptimization";
 import type { DraftPhoto, DraftVideo } from "./menuMedia";
 import { fetchInventory } from "../inventory/inventoryService";
 import type { InventoryItem } from "../inventory/inventoryService";
@@ -742,8 +743,19 @@ export function CatalogEditor({
             // Caminho compatível com a política de storage RLS: UUID/products/UUID/UUID.webp
             const path = `${restaurantId}/products/${id}/${photoId}.webp`;
             const bucket = supabase.storage.from("menu-images");
-            const { error: upErr } = await bucket.upload(path, categoryImageFile, {
-              contentType: "image/webp",
+
+            const fileToOptimize = categoryImageFile instanceof File
+              ? categoryImageFile
+              : new File([categoryImageFile], `${photoId}.webp`, { type: 'image/webp' });
+
+            const optimized = await optimizeImage(fileToOptimize, {
+              kind: 'avatar',
+              maxSide: 400,
+              targetMaxBytes: 150 * 1024,
+            });
+
+            const { error: upErr } = await bucket.upload(path, optimized.file, {
+              contentType: optimized.mimeType,
               cacheControl: "31536000",
               upsert: true,
             });
