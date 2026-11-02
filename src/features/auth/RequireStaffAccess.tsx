@@ -42,19 +42,6 @@ function StaffGate({
 }: RequireStaffAccessProps & {
   restaurantSlug: string;
 }) {
-  if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mockPix') === 'true') {
-    return (
-      <Outlet
-        context={{
-          restaurantId: 'efcb9f44-c33b-47ec-8125-b20e57b9fd1e',
-          memberId: 'mock-admin',
-          userId: 'mock-admin-user',
-          role: 'admin',
-          displayName: 'Administrador',
-        }}
-      />
-    );
-  }
   const [state, setState] = useState<AccessState>({
     status: 'loading',
   });

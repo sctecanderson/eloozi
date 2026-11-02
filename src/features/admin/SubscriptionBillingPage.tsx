@@ -121,7 +121,11 @@ export function SubscriptionBillingPage() {
   const [termsModalOpen, setTermsModalOpen] = useState<boolean>(false);
 
   const loadData = async () => {
-    const isMock = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mockPix') === 'true';
+    const isLocalDevMock =
+      Boolean(import.meta.env.DEV) &&
+      typeof window !== 'undefined' &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+      new URLSearchParams(window.location.search).get('mockPix') === 'true';
     try {
       setLoading(true);
       setError(null);
@@ -129,7 +133,7 @@ export function SubscriptionBillingPage() {
       setData(res);setPlanChange(scheduled);
       void reload().catch(() => { /* Provider retries its read refresh. */ });
     } catch (err: unknown) {
-      if (isMock) {
+      if (isLocalDevMock) {
         setData({
           restaurant: {
             id: r.id,
@@ -191,7 +195,12 @@ export function SubscriptionBillingPage() {
 
   useEffect(() => {
     void loadData();
-    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mockPix') === 'true') {
+    if (
+      Boolean(import.meta.env.DEV) &&
+      typeof window !== 'undefined' &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+      new URLSearchParams(window.location.search).get('mockPix') === 'true'
+    ) {
       setCheckoutModal({
         open: true,
         planId: 'premium',
@@ -384,6 +393,13 @@ export function SubscriptionBillingPage() {
   };
 
   const handleVerifyPixPayment = async (invoiceId: string) => {
+    if (invoiceId.startsWith('inv-mock') || invoiceId.includes('mock')) {
+      setFeedback({
+        type: 'error',
+        message: 'Fatura simulada de ambiente de teste não pode ser validada no gateway.',
+      });
+      return;
+    }
     try {
       setCheckingPayment(true);
       const res = await confirmSubscriptionInvoice(invoiceId, { restaurantId: r.id });
@@ -422,6 +438,14 @@ export function SubscriptionBillingPage() {
 
   const handleProcessCardPayment = async (methodType: 'credit_card' | 'debit_card') => {
     if (!checkoutModal) return;
+
+    if (transitionQuote?.quote_token?.startsWith('mock-')) {
+      setFeedback({
+        type: 'error',
+        message: 'Orçamento simulado de ambiente de teste não realiza chamadas ao gateway.',
+      });
+      return;
+    }
 
     try {
       setCheckoutBusy(true);
