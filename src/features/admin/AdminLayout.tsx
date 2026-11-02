@@ -133,6 +133,27 @@ export function AdminLayout() {
       return false;
     }
   });
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+
+  // Fechar drawer mobile ao navegar para outra rota
+  useEffect(() => {
+    setMobileDrawerOpen(false);
+  }, [location.pathname]);
+
+  // Fechar drawer ao pressionar Escape
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setMobileDrawerOpen(false);
+      }
+    }
+    if (mobileDrawerOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [mobileDrawerOpen]);
 
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => {
@@ -424,7 +445,233 @@ export function AdminLayout() {
           backgroundColor: isDark ? '#121212' : '#F8F9FA',
         }}
       >
-        <AdminTopbar restaurant={r} />
+        <AdminTopbar restaurant={r} onOpenMobileMenu={() => setMobileDrawerOpen(true)} />
+
+        {/* DRAWER LATERAL MOBILE (abaixo de 768px) */}
+        {mobileDrawerOpen && (
+          <div
+            className="fixed inset-0 z-50 md:hidden flex"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Menu de navegação"
+          >
+            {/* Backdrop escurecido */}
+            <div
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
+              onClick={() => setMobileDrawerOpen(false)}
+              aria-hidden="true"
+            />
+
+            {/* Conteúdo do Drawer */}
+            <div
+              className="relative w-[280px] max-w-[85vw] h-full flex flex-col z-10 shadow-2xl p-4 overflow-y-auto"
+              style={{
+                backgroundColor: isDark ? '#18181b' : '#610000',
+              }}
+            >
+              {/* Topo do Drawer: Logo + Botão Fechar */}
+              <div className="flex items-center justify-between gap-3 mb-6 pb-3 border-b border-white/10">
+                <Link
+                  to={`/${r.slug}/admin`}
+                  onClick={() => setMobileDrawerOpen(false)}
+                  className="inline-flex items-center min-w-0 flex-1 overflow-hidden"
+                  title="Painel Elozi"
+                >
+                  <img
+                    src="/landing/Eloozi.png"
+                    alt="Elozi"
+                    className="h-7 w-auto object-contain brightness-0 invert"
+                  />
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setMobileDrawerOpen(false)}
+                  className="p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+                  aria-label="Fechar menu"
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Itens de Navegação com rótulos completos */}
+              <nav aria-label="Navegação móvel" className="flex flex-col gap-1.5 flex-1">
+                {links.map(([path, label, icon]) => {
+                  if (path === "financeiro") {
+                    const isMainFinanceActive = isFinanceRoute && !isFechamentoActive;
+                    return (
+                      <div key={path} className="flex flex-col gap-1">
+                        <div className="flex items-center">
+                          <NavLink
+                            end
+                            to={`/${r.slug}/admin/financeiro`}
+                            title={label}
+                            onClick={() => {
+                              setFinanceExpanded(true);
+                              setMobileDrawerOpen(false);
+                            }}
+                            className={
+                              `flex items-center gap-3 min-h-[42px] px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all flex-1 ${
+                                isMainFinanceActive
+                                  ? isDark
+                                    ? '!bg-zinc-800 !text-white !font-bold shadow-xs !shadow-none [&>svg]:!text-white'
+                                    : '!bg-white !text-[#610000] !font-bold shadow-sm !shadow-none [&>svg]:!text-[#610000]'
+                                  : isDark
+                                    ? '!text-zinc-400 hover:!text-white hover:!bg-zinc-800/60 [&>svg]:!text-zinc-400 hover:[&>svg]:!text-white'
+                                    : '!text-white/85 hover:!text-white hover:!bg-white/10 [&>svg]:!text-white/85 hover:[&>svg]:!text-white'
+                              }`
+                            }
+                          >
+                            <AdminIcon
+                              name={icon}
+                              style={{
+                                color: isMainFinanceActive
+                                  ? (!isDark ? '#610000' : '#ffffff')
+                                  : (isDark ? '#a1a1aa' : 'rgba(255,255,255,0.85)'),
+                              }}
+                            />
+                            <span className="truncate flex-1">{label}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setFinanceExpanded((prev) => !prev);
+                              }}
+                              className="p-1 rounded-md hover:bg-black/10 dark:hover:bg-white/10 text-current transition-transform cursor-pointer"
+                              aria-label={financeExpanded ? "Recolher opções" : "Expandir opções"}
+                            >
+                              <svg
+                                className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                                  financeExpanded ? "rotate-180" : ""
+                                }`}
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <polyline points="6 9 12 15 18 9" />
+                              </svg>
+                            </button>
+                          </NavLink>
+                        </div>
+
+                        {financeExpanded && (
+                          <NavLink
+                            to={`/${r.slug}/admin/financeiro?tab=fechamento`}
+                            title="Fechamento de caixa"
+                            onClick={() => setMobileDrawerOpen(false)}
+                            className={
+                              `flex items-center gap-2 py-2 pr-3 pl-10 rounded-xl text-xs font-semibold transition-all ${
+                                isFechamentoActive
+                                  ? isDark
+                                    ? '!bg-zinc-800 !text-white !font-bold shadow-xs'
+                                    : '!bg-white !text-[#610000] !font-bold shadow-sm'
+                                  : isDark
+                                    ? '!text-zinc-400 hover:!text-white hover:!bg-zinc-800/50'
+                                    : '!text-white/80 hover:!text-white hover:!bg-white/10'
+                              }`
+                            }
+                          >
+                            <span className="text-[13px] font-bold leading-none">+</span>
+                            <span className="truncate">Fechamento de caixa</span>
+                          </NavLink>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <NavLink
+                      end
+                      key={path}
+                      to={`/${r.slug}/admin${path ? `/${path}` : ""}`}
+                      title={label}
+                      onClick={() => setMobileDrawerOpen(false)}
+                      className={({ isActive }) =>
+                        `flex items-center gap-3 min-h-[42px] px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                          isActive
+                            ? isDark
+                              ? '!bg-zinc-800 !text-white !font-bold shadow-xs !shadow-none [&>svg]:!text-white'
+                              : '!bg-white !text-[#610000] !font-bold shadow-sm !shadow-none [&>svg]:!text-[#610000]'
+                            : isDark
+                              ? '!text-zinc-400 hover:!text-white hover:!bg-zinc-800/60 [&>svg]:!text-zinc-400 hover:[&>svg]:!text-white'
+                              : '!text-white/85 hover:!text-white hover:!bg-white/10 [&>svg]:!text-white/85 hover:[&>svg]:!text-white'
+                        }`
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          <AdminIcon
+                            name={icon}
+                            style={{
+                              color: isActive ? (!isDark ? '#610000' : '#ffffff') : (isDark ? '#a1a1aa' : 'rgba(255,255,255,0.85)'),
+                            }}
+                          />
+                          <span className="truncate">{label}</span>
+                        </>
+                      )}
+                    </NavLink>
+                  );
+                })}
+              </nav>
+
+              {/* Rodapé do Drawer: Links rápidos e Perfil do Restaurante */}
+              <div className="mt-auto pt-4 border-t border-white/10 flex flex-col gap-2">
+                <Link
+                  to={`/${r.slug}/equipe`}
+                  onClick={() => setMobileDrawerOpen(false)}
+                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                    isDark
+                      ? 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+                      : 'text-white/90 hover:bg-white/15 hover:text-white'
+                  }`}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  </svg>
+                  <span>Ir para Atendimento</span>
+                </Link>
+                <Link
+                  to={`/${r.slug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setMobileDrawerOpen(false)}
+                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                    isDark
+                      ? 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+                      : 'text-white/90 hover:bg-white/15 hover:text-white'
+                  }`}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                    <polyline points="15 3 21 3 21 9" />
+                    <line x1="10" y1="14" x2="21" y2="3" />
+                  </svg>
+                  <span>Ver Cardápio Público</span>
+                </Link>
+                <div className="flex items-center gap-2.5 pt-2 px-1">
+                  <div className="w-7 h-7 rounded-lg bg-white/20 flex items-center justify-center shrink-0 overflow-hidden text-xs font-bold uppercase text-white">
+                    {logoUrl ? (
+                      <img src={logoUrl} alt={r.name} className="w-7 h-7 rounded-lg object-cover" />
+                    ) : (
+                      <span>{r.name.slice(0, 2)}</span>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-white truncate leading-tight">{r.name}</p>
+                    <span className="text-[10px] text-white/70 block truncate">Restaurante</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <TrialBanner />
 
         {/* Avisos de Faturamento / Assinatura */}

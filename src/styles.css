@@ -1108,135 +1108,73 @@ footer a {
     }
 }
 
-@media(max-width:760px) {
+@media(max-width:768px) {
     .admin-app {
-        display: block
+        display: block;
+        width: 100%;
+        min-width: 0;
+        overflow-x: hidden;
     }
 
     .admin-sidebar {
-        position: static;
-        height: auto;
-        padding: 18px 16px;
-        border-right: 0;
-        border-bottom: 1px solid #e9e0d7
-    }
-
-    .admin-logo {
-        font-size: 24px;
-        margin: 0 0 16px;
-        text-align: left
-    }
-
-    .admin-logo img {
-        max-width: 160px;
-        height: 50px;
-        object-position: left
-    }
-
-    .admin-sidebar nav {
-        flex-direction: row;
-        overflow-x: auto;
-        gap: 8px;
-        padding-bottom: 8px
-    }
-
-    .admin-sidebar nav a {
-        white-space: nowrap;
-        min-height: 44px;
-        font-size: 13px;
-        padding: 10px 12px;
-        border: 1px solid #e9e0d7
-    }
-
-    .admin-sidebar nav a.active {
-        box-shadow: none
-    }
-
-    .admin-sidebar nav a svg {
-        width: 18px;
-        height: 18px
-    }
-
-    .admin-exit {
-        display: none
+        display: none;
     }
 
     .admin-workspace {
-        padding: 0 16px 32px
+        padding: 0 12px 28px;
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
     }
 
     .admin-topbar {
-        min-height: 60px;
-        margin-bottom: 20px;
-        font-size: 12px
-    }
-
-    .admin-topbar>span:first-child {
-        display: none
-    }
-
-    .admin-profile svg {
-        padding: 7px;
-        width: 18px;
-        height: 18px
+        min-height: 56px;
+        margin-bottom: 16px;
+        font-size: 12px;
     }
 
     .admin-card {
-        padding: 18px
+        padding: 16px;
     }
 
     .admin-grid-2 {
-        grid-template-columns: 1fr
+        grid-template-columns: 1fr;
     }
 
     .admin-table-grid {
-        grid-template-columns: 1fr
+        grid-template-columns: 1fr;
     }
 
     .admin-button {
-        padding: 10px 14px
+        padding: 10px 14px;
     }
 
     .admin-page-heading {
-        gap: 14px
+        gap: 12px;
     }
 
     .admin-page-heading .admin-actions {
-        width: 100%
+        width: 100%;
     }
 
     .admin-page-heading .admin-actions button {
-        flex: 1
+        flex: 1;
     }
 
     .identity-colors {
-        grid-template-columns: 1fr
+        grid-template-columns: 1fr;
     }
 
     .identity-colors input[type=color] {
-        width: 56px
+        width: 56px;
     }
 
     .tables-toolbar>input {
-        max-width: none
-    }
-
-    .admin-sidebar .admin-exit {
-        display: flex;
-        margin-top: 8px;
-        border: 0;
-        padding: 8px;
-        min-height: 44px;
-        align-self: flex-end
-    }
-
-    .admin-sidebar .admin-exit svg {
-        width: 18px;
-        height: 18px
+        max-width: none;
     }
 
     .admin-stack {
-        gap: 16px
+        gap: 16px;
     }
 }
 
