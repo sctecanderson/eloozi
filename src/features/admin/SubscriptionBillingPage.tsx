@@ -1030,11 +1030,24 @@ export function SubscriptionBillingPage() {
           MODAL DE CHECKOUT TRANSPARENTE (PIX, CRÉDITO E DÉBITO)
           ========================================================================= */}
       {checkoutModal?.open && (
-        <CheckoutShell plan={checkoutModal.planId} onClose={handleCloseCheckout}>
-          <p className="checkout-subtitle">{PLAN_TITLES[checkoutModal.planId]} · Ciclo {checkoutModal.cycle==='yearly'?'Anual':'Mensal'}</p>
-          {feedback?.type==='error'&&<p role="alert" className={feedback.type==='error'?'rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:bg-red-950 dark:text-red-100':'rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100'}>{feedback.message}</p>}
-            {/* Sucesso */}
-            {transitionQuote && !checkoutSuccess && <CheckoutFinancialSummary
+        <CheckoutShell
+          plan={checkoutModal.planId}
+          cycle={checkoutModal.cycle}
+          onClose={handleCloseCheckout}
+        >
+          {feedback?.type === 'error' && (
+            <p
+              role="alert"
+              className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:bg-red-950 dark:text-red-100 mb-3"
+            >
+              {feedback.message}
+            </p>
+          )}
+
+          {/* Resumo Financeiro com destaque para valor e períodos */}
+          {transitionQuote && !checkoutSuccess && (
+            <CheckoutFinancialSummary
+              targetPlanName={PLAN_TITLES[checkoutModal.planId]}
               totalLabel="Valor a pagar agora"
               periodLabel={checkoutPeriodLabel(r.effectiveSubscription)}
               price={formatCurrencyBRL(transitionQuote.full_amount_cents)}
@@ -1042,244 +1055,377 @@ export function SubscriptionBillingPage() {
               difference={formatCurrencyBRL(transitionQuote.amount_to_charge_cents)}
               start={new Date(transitionQuote.effective_at).toLocaleString('pt-BR')}
               end={new Date(transitionQuote.expires_at).toLocaleString('pt-BR')}
-            />}
-            {!transitionQuote&&!checkoutSuccess&&checkoutPlanView?.valid&&<CheckoutFinancialSummary
-              price={formatCurrencyBRL(pixPending?.amountCents??(checkoutModal.cycle==='yearly'?checkoutPlanView.yearlyPriceCents!:checkoutPlanView.monthlyPriceCents!))}
-              difference={formatCurrencyBRL(pixPending?.amountCents??(checkoutModal.cycle==='yearly'?checkoutPlanView.yearlyPriceCents!:checkoutPlanView.monthlyPriceCents!))}
-              totalLabel="Valor a pagar agora"/>}
-            {!checkoutSuccess&&r.effectiveSubscription?.known_trial&&r.effectiveSubscription.trial_active&&r.effectiveSubscription.original_trial_end&&<p className="checkout-trial-info">Durante o teste, sua capacidade continua ilimitada até {new Date(r.effectiveSubscription.original_trial_end).toLocaleString('pt-BR')}. O período pago começa após o prazo gratuito.</p>}
-            {checkoutSuccess ? (
-              <div className="text-center py-6 space-y-4">
-                <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center">
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                </div>
-                <h4 className="text-lg font-extrabold text-zinc-900 dark:text-white">
-                  Pagamento confirmado
-                </h4>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-sm mx-auto">
-                  {r.effectiveSubscription?.trial_active && r.effectiveSubscription.original_trial_end ? <>
+              trialActive={Boolean(r.effectiveSubscription?.known_trial && r.effectiveSubscription.trial_active)}
+              trialEnd={
+                r.effectiveSubscription?.original_trial_end
+                  ? new Date(r.effectiveSubscription.original_trial_end).toLocaleString('pt-BR')
+                  : undefined
+              }
+            />
+          )}
+
+          {!transitionQuote && !checkoutSuccess && checkoutPlanView?.valid && (
+            <CheckoutFinancialSummary
+              targetPlanName={PLAN_TITLES[checkoutModal.planId]}
+              price={formatCurrencyBRL(
+                pixPending?.amountCents ??
+                  (checkoutModal.cycle === 'yearly'
+                    ? checkoutPlanView.yearlyPriceCents!
+                    : checkoutPlanView.monthlyPriceCents!)
+              )}
+              difference={formatCurrencyBRL(
+                pixPending?.amountCents ??
+                  (checkoutModal.cycle === 'yearly'
+                    ? checkoutPlanView.yearlyPriceCents!
+                    : checkoutPlanView.monthlyPriceCents!)
+              )}
+              totalLabel="Valor a pagar agora"
+              trialActive={Boolean(r.effectiveSubscription?.known_trial && r.effectiveSubscription.trial_active)}
+              trialEnd={
+                r.effectiveSubscription?.original_trial_end
+                  ? new Date(r.effectiveSubscription.original_trial_end).toLocaleString('pt-BR')
+                  : undefined
+              }
+            />
+          )}
+
+          {checkoutSuccess ? (
+            <div className="text-center py-6 space-y-4">
+              <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </div>
+              <h4 className="text-lg font-extrabold text-zinc-900 dark:text-white">
+                Pagamento confirmado
+              </h4>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-sm mx-auto">
+                {r.effectiveSubscription?.trial_active && r.effectiveSubscription.original_trial_end ? (
+                  <>
                     Contratação do <strong>{PLAN_TITLES[checkoutSuccess.planId]}</strong> confirmada.
                     O período pago começa em {new Date(r.effectiveSubscription.original_trial_end).toLocaleString('pt-BR')}.
                     Até lá, sua experiência continua Premium, com mesas ilimitadas.
-                  </> : <>                  Sua assinatura do <strong>{PLAN_TITLES[checkoutSuccess.planId]}</strong> foi ativada. Sua capacidade agora é de{' '}
-                  <strong>
-                    {checkoutSuccess.unlimitedTables
-                      ? 'mesas simultâneas ilimitadas'
-                      : `${checkoutSuccess.maxTables} mesas simultâneas`}
-                  </strong>
-                  .
-                  </>}
-                </p>
+                  </>
+                ) : (
+                  <>
+                    Sua assinatura do <strong>{PLAN_TITLES[checkoutSuccess.planId]}</strong> foi ativada. Sua capacidade agora é de{' '}
+                    <strong>
+                      {checkoutSuccess.unlimitedTables
+                        ? 'mesas simultâneas ilimitadas'
+                        : `${checkoutSuccess.maxTables} mesas simultâneas`}
+                    </strong>
+                    .
+                  </>
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={handleCloseCheckout}
+                className="px-6 py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white text-xs font-bold transition-all shadow-md cursor-pointer"
+              >
+                Voltar ao Painel
+              </button>
+            </div>
+          ) : pixPending ? (
+            /* PIX data comes exclusively from the existing server response. */
+            <div className="checkout-pix-container">
+              <div className="checkout-pix">
+                <div className="checkout-pix-grid">
+                  <div className="checkout-pix-info">
+                    <div className="checkout-pix-badge">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M12.001 2.29l4.5 4.5-4.5 4.5-4.5-4.5 4.5-4.5zm-5.657 5.657l4.5 4.5-4.5 4.5-4.5-4.5 4.5-4.5zm11.314 0l4.5 4.5-4.5 4.5-4.5-4.5 4.5-4.5zm-5.657 5.657l4.5 4.5-4.5 4.5-4.5-4.5 4.5-4.5z"/>
+                      </svg>
+                      <span>PIX</span>
+                    </div>
+                    <h3>Pague via PIX</h3>
+                    <p>Escaneie o QR Code no app do seu banco ou use o código Copia e Cola.</p>
+                    <div className="checkout-pix-amount">
+                      <small>Valor a pagar</small>
+                      <strong>{formatCurrencyBRL(pixPending.amountCents)}</strong>
+                    </div>
+                  </div>
+                  <div className="checkout-qr">
+                    {pixPending.image ? (
+                      <img src={pixPending.image} alt="QR Code PIX da cobrança" width="154" height="154" />
+                    ) : (
+                      <QRCodeSVG value={pixPending.payload} size={154} level="M" />
+                    )}
+                  </div>
+                </div>
+                <div className="checkout-code">
+                  <div className="checkout-code-field">
+                    <label htmlFor="checkout-pix-code">Código PIX (Copia e Cola)</label>
+                    <input id="checkout-pix-code" type="text" readOnly value={pixPending.payload} />
+                  </div>
+                  <button
+                    type="button"
+                    className="checkout-copy-btn"
+                    onClick={() => void copyToClipboard(pixPending.payload)}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                    <span>{copiedPix ? 'Copiado!' : 'Copiar'}</span>
+                  </button>
+                </div>
+                <p role="status" className="sr-only">{copiedPix ? 'Código PIX copiado.' : ''}</p>
+              </div>
+              <button
+                type="button"
+                className="checkout-consult"
+                disabled={checkingPayment}
+                onClick={() => void handleVerifyPixPayment(pixPending.invoiceId)}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                <span>{checkingPayment ? 'Consultando pagamento…' : 'Já realizei o pagamento (Confirmar)'}</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="5" y1="12" x2="19" y2="12"/>
+                  <polyline points="12 5 19 12 12 19"/>
+                </svg>
+              </button>
+            </div>
+          ) : (
+            /* Formulário com Abas PIX e Cartão */
+            <div className="space-y-4">
+              <div className="flex border-b border-zinc-200 dark:border-zinc-800">
                 <button
                   type="button"
-                  onClick={handleCloseCheckout}
-                  className="px-6 py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white text-xs font-bold transition-all shadow-md cursor-pointer"
+                  onClick={() => setActiveTab('pix')}
+                  className={`flex-1 py-2 text-xs font-bold border-b-2 cursor-pointer transition-all ${
+                    activeTab === 'pix' ? 'border-[#610000] text-[#610000] dark:border-red-400 dark:text-red-300' : 'border-transparent text-zinc-400'
+                  }`}
                 >
-                  Voltar ao Painel
+                  PIX Instantâneo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('credit_card')}
+                  className={`flex-1 py-2 text-xs font-bold border-b-2 cursor-pointer transition-all ${
+                    activeTab === 'credit_card' ? 'border-[#610000] text-[#610000] dark:border-red-400 dark:text-red-300' : 'border-transparent text-zinc-400'
+                  }`}
+                >
+                  Cartão de Crédito
                 </button>
               </div>
-            ) : pixPending ? (
-              /* PIX data comes exclusively from the existing server response. */
-              <div>
-                <div className="checkout-pix">
-                  <div className="checkout-pix-grid"><div><h3>Pague via PIX</h3><p>Escaneie o QR Code no app do seu banco ou use o código Copia e Cola.</p><p><strong>{formatCurrencyBRL(pixPending.amountCents)}</strong></p></div><div className="checkout-qr">
-                    {pixPending.image?<img src={pixPending.image} alt="QR Code PIX da cobrança" width="192" height="192"/>:<QRCodeSVG value={pixPending.payload} size={192} level="M"/>}
-                  </div></div>
-                  <div className="checkout-code"><div><label htmlFor="checkout-pix-code">Código PIX (Copia e Cola)</label><input id="checkout-pix-code" type="text" readOnly value={pixPending.payload}/></div><button type="button" onClick={()=>void copyToClipboard(pixPending.payload)}>{copiedPix?'Copiado!':'Copiar'}</button></div>
-                  <p role="status" className="sr-only">{copiedPix?'Código PIX copiado.':''}</p>
-                </div>
-                <button type="button" className="checkout-consult" disabled={checkingPayment} onClick={()=>void handleVerifyPixPayment(pixPending.invoiceId)}>{checkingPayment?'Consultando pagamento…':'Já realizei o pagamento · Consultar'}</button>
-              </div>
-            ) : (
-              /* Formulário com Abas PIX e Cartão */
-              <div className="space-y-4">
-                <div className="flex border-b border-zinc-200 dark:border-zinc-800">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('pix')}
-                    className={`flex-1 py-2 text-xs font-bold border-b-2 cursor-pointer transition-all ${
-                      activeTab === 'pix' ? 'border-[#610000] text-[#610000] dark:border-red-400 dark:text-red-300' : 'border-transparent text-zinc-400'
-                    }`}
-                  >
-                    PIX Instantâneo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('credit_card')}
-                    className={`flex-1 py-2 text-xs font-bold border-b-2 cursor-pointer transition-all ${
-                      activeTab === 'credit_card' ? 'border-[#610000] text-[#610000] dark:border-red-400 dark:text-red-300' : 'border-transparent text-zinc-400'
-                    }`}
-                  >
-                    Cartão de Crédito
-                  </button>
-                </div>
 
-                {activeTab === 'pix' && (
-                  <div className="space-y-3 pt-2">
-                    <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl text-xs text-zinc-500">
-                      A contratação será concluída após a confirmação do pagamento.
-                    </div>
+              {activeTab === 'pix' && (
+                <div className="space-y-3 pt-2">
+                  <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl text-xs text-zinc-500">
+                    A contratação será concluída após a confirmação do pagamento.
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                      CPF ou CNPJ do pagador: *
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                      value={payerCpfCnpj}
+                      onChange={(e) => setPayerCpfCnpj(formatCpfCnpj(e.target.value))}
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={checkoutBusy}
+                    onClick={() => void handleProcessPix()}
+                    className="w-full py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white font-bold text-xs cursor-pointer shadow-md transition-colors"
+                  >
+                    {checkoutBusy ? 'Gerando QR Code PIX…' : transitionQuote ? 'Gerar PIX da diferença' : 'Gerar PIX e Pagar Agora'}
+                  </button>
+                </div>
+              )}
+
+              {activeTab === 'credit_card' && (
+                <div className="space-y-3 pt-2">
+                  {savedCards.length > 0 && (
                     <div>
                       <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                        CPF ou CNPJ do pagador: *
+                        Cartão para cobrança:
                       </label>
-                      <input
-                        type="text"
-                        placeholder="000.000.000-00 ou 00.000.000/0000-00"
-                        value={payerCpfCnpj}
-                        onChange={(e) => setPayerCpfCnpj(formatCpfCnpj(e.target.value))}
-                        className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
-                      />
+                      <select
+                        value={selectedSavedCardId}
+                        onChange={(e) => setSelectedSavedCardId(e.target.value)}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800"
+                      >
+                        <option value="new">+ Usar um novo cartão</option>
+                        {savedCards.map((sc) => (
+                          <option key={sc.id} value={sc.id}>
+                            {sc.card_brand?.toUpperCase()} •••• {sc.card_last4} (Exp: {sc.exp_month}/{sc.exp_year})
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                    <button
-                      type="button"
-                      disabled={checkoutBusy}
-                      onClick={() => void handleProcessPix()}
-                      className="w-full py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white font-bold text-xs cursor-pointer shadow-md transition-colors"
-                    >
-                      {checkoutBusy ? 'Gerando QR Code PIX…' : transitionQuote ? 'Gerar PIX da diferença' : 'Gerar PIX e Pagar Agora'}
-                    </button>
-                  </div>
-                )}
+                  )}
 
-                {activeTab === 'credit_card' && (
-                  <div className="space-y-3 pt-2">
-                    {savedCards.length > 0 && (
+                  {selectedSavedCardId === 'new' && (
+                    <>
                       <div>
                         <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                          Cartão para cobrança:
+                          CPF ou CNPJ do titular: *
                         </label>
-                        <select
-                          value={selectedSavedCardId}
-                          onChange={(e) => setSelectedSavedCardId(e.target.value)}
-                          className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800"
-                        >
-                          <option value="new">+ Usar um novo cartão</option>
-                          {savedCards.map((sc) => (
-                            <option key={sc.id} value={sc.id}>
-                              {sc.card_brand?.toUpperCase()} •••• {sc.card_last4} (Exp: {sc.exp_month}/{sc.exp_year})
-                            </option>
-                          ))}
-                        </select>
+                        <input
+                          type="text"
+                          placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                          value={payerCpfCnpj}
+                          onChange={(e) => setPayerCpfCnpj(formatCpfCnpj(e.target.value))}
+                          className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                        />
                       </div>
-                    )}
-
-                    {selectedSavedCardId === 'new' && (
-                      <>
-                        <div>
-                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                            CPF ou CNPJ do titular: *
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="000.000.000-00 ou 00.000.000/0000-00"
-                            value={payerCpfCnpj}
-                            onChange={(e) => setPayerCpfCnpj(formatCpfCnpj(e.target.value))}
-                            className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                            Número do Cartão:
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="0000 0000 0000 0000"
-                            value={cardNumber}
-                            onChange={(e) => setCardNumber(formatCardInput(e.target.value))}
-                            className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                            Nome impresso no Cartão:
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="NOME COMO NO CARTAO"
-                            value={cardHolder}
-                            onChange={(e) => setCardHolder(e.target.value.toUpperCase())}
-                            className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 uppercase"
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                              Validade (MM/AA):
-                            </label>
-                            <input
-                              type="text"
-                              placeholder="MM/AA"
-                              value={cardExp}
-                              onChange={(e) => setCardExp(formatExpInput(e.target.value))}
-                              className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                              CVV:
-                            </label>
-                            <input
-                              type="password"
-                              maxLength={4}
-                              placeholder="123"
-                              value={cardCvv}
-                              onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, ''))}
-                              className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
-                            />
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                              CEP de cobrança:
-                            </label>
-                            <input
-                              type="text"
-                              placeholder="00000-000"
-                              value={payerPostalCode}
-                              onChange={(e) => setPayerPostalCode(formatCep(e.target.value))}
-                              className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                              Número:
-                            </label>
-                            <input
-                              type="text"
-                              placeholder="Ex: 100"
-                              value={payerAddressNumber}
-                              onChange={(e) => setPayerAddressNumber(e.target.value)}
-                              className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800"
-                            />
-                          </div>
-                        </div>
-                        <label className="flex items-center gap-2 text-xs cursor-pointer text-zinc-600 dark:text-zinc-400">
-                          <input
-                            type="checkbox"
-                            checked={saveCard}
-                            onChange={(e) => setSaveCard(e.target.checked)}
-                          />
-                          <span>Salvar cartão para futuras renovações da assinatura</span>
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                          Número do Cartão:
                         </label>
-                      </>
-                    )}
+                        <input
+                          type="text"
+                          placeholder="0000 0000 0000 0000"
+                          value={cardNumber}
+                          onChange={(e) => setCardNumber(formatCardInput(e.target.value))}
+                          className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                          Nome impresso no Cartão:
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="NOME COMO NO CARTAO"
+                          value={cardHolder}
+                          onChange={(e) => setCardHolder(e.target.value.toUpperCase())}
+                          className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 uppercase"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                            Validade (MM/AA):
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="MM/AA"
+                            value={cardExp}
+                            onChange={(e) => setCardExp(formatExpInput(e.target.value))}
+                            className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                            CVV:
+                          </label>
+                          <input
+                            type="password"
+                            maxLength={4}
+                            placeholder="123"
+                            value={cardCvv}
+                            onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, ''))}
+                            className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                            CEP de cobrança:
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="00000-000"
+                            value={payerPostalCode}
+                            onChange={(e) => setPayerPostalCode(formatCep(e.target.value))}
+                            className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                            Número:
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Ex: 100"
+                            value={payerAddressNumber}
+                            onChange={(e) => setPayerAddressNumber(e.target.value)}
+                            className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800"
+                          />
+                        </div>
+                      </div>
+                      <label className="flex items-center gap-2 text-xs cursor-pointer text-zinc-600 dark:text-zinc-400">
+                        <input
+                          type="checkbox"
+                          checked={saveCard}
+                          onChange={(e) => setSaveCard(e.target.checked)}
+                        />
+                        <span>Salvar cartão para futuras renovações da assinatura</span>
+                      </label>
+                    </>
+                  )}
 
-                    <button
-                      type="button"
-                      disabled={checkoutBusy}
-                      onClick={() => void handleProcessCardPayment('credit_card')}
-                      className="w-full py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white font-bold text-xs cursor-pointer shadow-md transition-colors"
-                    >
-                      {checkoutBusy ? 'Processando transação…' : transitionQuote ? 'Pagar diferença e confirmar upgrade' : 'Pagar e Ativar Plano Agora'}
-                    </button>
-                  </div>
-                )}
+                  <button
+                    type="button"
+                    disabled={checkoutBusy}
+                    onClick={() => void handleProcessCardPayment('credit_card')}
+                    className="w-full py-2.5 rounded-xl bg-[#610000] hover:bg-[#4a0000] text-white font-bold text-xs cursor-pointer shadow-md transition-colors"
+                  >
+                    {checkoutBusy ? 'Processando transação…' : transitionQuote ? 'Pagar diferença e confirmar upgrade' : 'Pagar e Ativar Plano Agora'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Rodapé de Segurança e Confiança */}
+          <div className="checkout-trust-footer" aria-label="Garantias de segurança">
+            <div className="checkout-trust-item">
+              <div className="checkout-trust-icon" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
               </div>
-            )}
+              <div className="checkout-trust-text">
+                <strong>Pagamento seguro</strong>
+                <small>Protegido pelo Banco Central</small>
+              </div>
+            </div>
+            <div className="checkout-trust-item">
+              <div className="checkout-trust-icon" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+              </div>
+              <div className="checkout-trust-text">
+                <strong>Seus dados seguros</strong>
+                <small>Criptografia SSL</small>
+              </div>
+            </div>
+            <div className="checkout-trust-item">
+              <div className="checkout-trust-icon" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
+                  <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>
+                </svg>
+              </div>
+              <div className="checkout-trust-text">
+                <strong>Suporte especializado</strong>
+                <small>Sempre que precisar</small>
+              </div>
+            </div>
+            <div className="checkout-trust-item">
+              <div className="checkout-trust-icon" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                </svg>
+              </div>
+              <div className="checkout-trust-text">
+                <strong>Ativação imediata</strong>
+                <small>Após confirmação</small>
+              </div>
+            </div>
+          </div>
         </CheckoutShell>
       )}
 
