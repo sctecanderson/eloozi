@@ -28,13 +28,9 @@ export async function uploadIdentity(
   if (!("file" in photo) || !photo.file)
     return { url: photo.url, storagePath: photo.storagePath! };
 
-  const ext =
-    photo.mimeType === "image/svg+xml"
-      ? "svg"
-      : photo.mimeType === "image/png"
-        ? "png"
-        : "webp";
-  const contentType = photo.mimeType || "image/webp";
+  // O bucket restaurant-images aceita estritamente WebP (.webp) na política de segurança e configuração remota
+  const ext = "webp";
+  const contentType = "image/webp";
   const path = `${restaurantId}/identity/${photo.id}.${ext}`;
   let url = cache.get(path);
   const bucket = supabase.storage.from("restaurant-images");

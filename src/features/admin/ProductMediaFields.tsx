@@ -252,7 +252,7 @@ export function ProductMediaFields({
           />
         </label>
         <p className="text-xs opacity-75 text-zinc-500 dark:text-zinc-400 mt-1">
-          Vídeo de até <strong>10 segundos</strong> e <strong>20 MB</strong>. Prefira formato MP4 (H.264) em 720p ou WebM. A transcodificação pesada no cliente não é suportada — envie o vídeo já editado na duração adequada.
+          Vídeo de até <strong>10 segundos</strong> (tolerância máx. 10,5s) e <strong>12 MB</strong>. Prefira formato MP4 (H.264) em 720p ou WebM. A transcodificação pesada no cliente não é suportada — envie o vídeo já editado na duração adequada.
         </p>
 
         {video && (

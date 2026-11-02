@@ -752,6 +752,8 @@ export function CatalogEditor({
               kind: 'avatar',
               maxSide: 400,
               targetMaxBytes: 150 * 1024,
+              forceWebP: true,
+              maxOutputBytes: 2 * 1024 * 1024,
             });
 
             const { error: upErr } = await bucket.upload(path, optimized.file, {
@@ -1693,7 +1695,7 @@ export function CatalogEditor({
                     <div>
                       Formatos aceitos: JPG, PNG ou WebP. Até 10 MB por foto.
                       <br />
-                      Vídeos: até 10 segundos e 20 MB (MP4 ou WebM). Envie o arquivo já editado na duração final.
+                      Vídeos: até 10 segundos (tolerância máx. 10,5s) e 12 MB (MP4 ou WebM). Envie o arquivo já editado na duração final.
                     </div>
                   </div>
                 </div>

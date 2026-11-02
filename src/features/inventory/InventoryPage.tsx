@@ -440,33 +440,24 @@ export function InventoryPage() {
         kind: 'product',
         maxSide: 1200,
         targetMaxBytes: 250 * 1024,
+        forceWebP: true,
+        maxOutputBytes: 2 * 1024 * 1024,
       });
-      const ext = optimized.extension || 'webp';
-      const storagePath = `${restaurant.id}/inventory/${selectedImageItem.id}_${Date.now()}.${ext}`;
+      const photoId = crypto.randomUUID();
+      // Caminho compatível com a política RLS do bucket menu-images: UUID/products/UUID/UUID.webp
+      const storagePath = `${restaurant.id}/products/${selectedImageItem.id}/${photoId}.webp`;
       const { error: uploadErr } = await supabase.storage
         .from('menu-images')
-        .upload(storagePath, optimized.file, { contentType: optimized.mimeType, upsert: true });
+        .upload(storagePath, optimized.file, { contentType: 'image/webp', upsert: true });
 
       if (!uploadErr) {
         const { data } = supabase.storage.from('menu-images').getPublicUrl(storagePath);
         setTempImageUrl(data.publicUrl);
       } else {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          if (event.target?.result) {
-            setTempImageUrl(event.target.result as string);
-          }
-        };
-        reader.readAsDataURL(file);
+        setTempImageUrl(optimized.previewUrl);
       }
-    } catch {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setTempImageUrl(event.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
+    } catch (err) {
+      setImageUploadError(err instanceof Error ? err.message : 'Erro ao processar imagem.');
     } finally {
       setImageUploadBusy(false);
     }

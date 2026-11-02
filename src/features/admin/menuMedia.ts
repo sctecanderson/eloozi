@@ -28,7 +28,7 @@ export interface DraftVideo extends AdminVideo {
 
 export const MAX_PHOTOS = 6;
 export const MAX_IMAGE_INPUT = 10 * 1024 * 1024;
-export const MAX_VIDEO_SIZE = 20 * 1024 * 1024; // Limite de 20 MB para vídeos
+export const MAX_VIDEO_SIZE = 12 * 1024 * 1024; // Limite de 12 MB (alinhado com o teto remoto confirmado do bucket menu-videos)
 
 export const MAX_VIDEO_DURATION_SECONDS = 10.5;
 
@@ -58,9 +58,9 @@ export async function preparePhoto(
   alt: string,
   kind: OptimizeImageOptions['kind'] = 'product'
 ): Promise<DraftPhoto> {
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
   if (!allowedTypes.includes(file.type)) {
-    throw new Error('Use uma foto JPG, PNG ou WebP.');
+    throw new Error('Use uma foto JPG, PNG ou WebP. Formatos vetoriais (SVG) e animações (GIF) não são suportados pelo cardápio.');
   }
   if (!file.size || file.size > MAX_IMAGE_INPUT) {
     throw new Error('Cada foto deve ter no máximo 10 MB.');
@@ -70,6 +70,8 @@ export async function preparePhoto(
     kind,
     maxInputBytes: MAX_IMAGE_INPUT,
     allowedMimes: allowedTypes,
+    forceWebP: true,
+    maxOutputBytes: 2 * 1024 * 1024,
   });
 
   return {
@@ -92,7 +94,7 @@ export async function prepareVideo(file: File): Promise<DraftVideo> {
     throw new Error('Formato inválido. Use vídeo MP4 (H.264) ou WebM.');
   }
   if (!file.size || file.size > MAX_VIDEO_SIZE) {
-    throw new Error('O vídeo deve ter no máximo 20 MB.');
+    throw new Error('O vídeo deve ter no máximo 12 MB.');
   }
 
   const previewUrl = URL.createObjectURL(file);
@@ -188,10 +190,8 @@ export async function uploadMenuMedia(
 
     if (photo.file) {
       onProgress(`Enviando foto ${index + 1} de ${photos.length}…`);
-      const ext = photo.mimeType === 'image/svg+xml' ? 'svg' : photo.mimeType === 'image/png' ? 'png' : 'webp';
-      const cType = photo.mimeType || 'image/webp';
-      storagePath = `${restaurantId}/products/${productId}/${photo.id}.${ext}`;
-      url = await upload('menu-images', storagePath, photo.file, cType);
+      storagePath = `${restaurantId}/products/${productId}/${photo.id}.webp`;
+      url = await upload('menu-images', storagePath, photo.file, 'image/webp');
     }
 
     images.push({

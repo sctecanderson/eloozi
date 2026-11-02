@@ -5,10 +5,13 @@
  * - Não amplia imagens menores que a dimensão máxima recomendada.
  * - Limite máx. 1600px no maior lado para fotos de produtos, 400px para logos/avatares, 1400px para banners.
  * - Converte para WebP quando suportado, com alvo de 150–350 KB mantendo alta fidelidade visual.
- * - Nunca gera arquivo maior que o original (se o comprimido for maior, preserva o original).
- * - Preserva transparência (PNG/WebP).
- * - Arquivos SVG e GIFs animados respeitam estritamente limites de entrada e formatos permitidos,
- *   sendo preservados sem conversão destrutiva quando aprovados.
+ * - Para destinos exclusivos de WebP (`forceWebP: true`):
+ *   - Não aceita formatos vetoriais (SVG) ou animações (GIF), pois os buckets remotos possuem suporte estrito a WebP.
+ *   - Nunca envia originais PNG/JPEG incompatíveis, mesmo quando a conversão WebP ficar maior que o arquivo original comprimido.
+ *   - Garante que a saída WebP respeite o teto de 2 MB do bucket remoto (`maxOutputBytes`).
+ * - Para outros destinos:
+ *   - Nunca gera arquivo maior que o original (se o comprimido for maior, preserva o original se compatível).
+ * - Preserva transparência (canal alfa) na codificação WebP/PNG.
  * - Rejeita arquivos corrompidos, vazios, que excedam os limites de tamanho ou formatos incompatíveis com erro claro em português.
  */
 
@@ -20,7 +23,9 @@ export interface OptimizeImageOptions {
   initialQuality?: number;
   preserveTransparency?: boolean;
   maxInputBytes?: number;
+  maxOutputBytes?: number;
   allowedMimes?: string[];
+  forceWebP?: boolean;
 }
 
 export interface OptimizedImageResult {
@@ -44,6 +49,7 @@ export const DEFAULT_MAX_SIDE: Record<NonNullable<OptimizeImageOptions['kind']>,
 };
 
 export const DEFAULT_MAX_INPUT_BYTES = 10 * 1024 * 1024; // 10 MB
+export const DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024; // 2 MB (teto do bucket menu-images e restaurant-images)
 export const TARGET_MIN_BYTES = 150 * 1024; // ~150 KB
 export const TARGET_MAX_BYTES = 350 * 1024; // ~350 KB
 
@@ -83,7 +89,7 @@ export async function optimizeImage(
     throw new Error('O arquivo de imagem selecionado está vazio (0 bytes).');
   }
 
-  // 2. Validação estrita de teto de entrada (NENHUM arquivo, inclusive SVG, GIF ou original mantido, pode contornar)
+  // 2. Validação estrita de teto de entrada (NENHUM arquivo pode contornar)
   const maxInput = options.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
   if (file.size > maxInput) {
     throw new Error(
@@ -92,19 +98,30 @@ export async function optimizeImage(
   }
 
   const kind = options.kind || 'product';
-  const defaultAllowedMimes = [
-    'image/jpeg',
-    'image/png',
-    'image/webp',
-    'image/avif',
-    'image/svg+xml',
-    'image/gif',
-  ];
-  const allowedMimes = options.allowedMimes ?? defaultAllowedMimes;
+  const forceWebP = options.forceWebP ?? false;
   const isSvg = isSvgFile(file);
   const isGif = isGifFile(file);
 
-  // 3. Validação de formato permitido
+  // 3. Validação de destinos exclusivos de WebP (menu-images e restaurant-images)
+  if (forceWebP) {
+    if (isSvg) {
+      throw new Error(
+        'Formato vetorial SVG não é aceito neste campo. O armazenamento remoto requer imagens raster (JPG, PNG ou WebP).'
+      );
+    }
+    if (isGif) {
+      throw new Error(
+        'Formato animado GIF não é aceito neste campo. O armazenamento remoto requer imagens raster (JPG, PNG ou WebP).'
+      );
+    }
+  }
+
+  const defaultAllowedMimes = forceWebP
+    ? ['image/jpeg', 'image/png', 'image/webp', 'image/avif']
+    : ['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/svg+xml', 'image/gif'];
+  const allowedMimes = options.allowedMimes ?? defaultAllowedMimes;
+
+  // 4. Validação de formato permitido
   if (isSvg && !allowedMimes.includes('image/svg+xml')) {
     throw new Error('Imagens em formato vetorial SVG não são permitidas para este campo.');
   }
@@ -118,19 +135,8 @@ export async function optimizeImage(
     }
   }
 
-  // 4. Preservar SVGs sem conversão gráfica, validando segurança do conteúdo
-  if (isSvg) {
-    try {
-      if (typeof file.text === 'function') {
-        const text = await file.text();
-        if (/<script[\s>]/i.test(text) || /javascript:/i.test(text)) {
-          throw new Error('Arquivo SVG rejeitado: contém scripts potencialmente inseguros.');
-        }
-      }
-    } catch (cause) {
-      if (cause instanceof Error && cause.message.includes('rejeitado')) throw cause;
-    }
-
+  // 5. Preservar SVGs sem conversão gráfica se o destino expressamente permitir
+  if (isSvg && !forceWebP) {
     return {
       file,
       previewUrl: URL.createObjectURL(file),
@@ -145,8 +151,8 @@ export async function optimizeImage(
     };
   }
 
-  // 5. Preservar GIFs animados sem alteração por Canvas para evitar perda de quadros
-  if (isGif) {
+  // 6. Preservar GIFs animados sem alteração por Canvas se o destino expressamente permitir
+  if (isGif && !forceWebP) {
     return {
       file,
       previewUrl: URL.createObjectURL(file),
@@ -163,9 +169,10 @@ export async function optimizeImage(
 
   const maxSide = options.maxSide || DEFAULT_MAX_SIDE[kind];
   const targetMax = options.targetMaxBytes || TARGET_MAX_BYTES;
+  const maxOutput = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const baseQuality = options.initialQuality ?? (kind === 'logo' || kind === 'avatar' ? 0.90 : 0.82);
 
-  // 6. Decodificar a imagem de forma segura
+  // 7. Decodificar a imagem de forma segura no navegador
   let bitmap: ImageBitmap | HTMLImageElement;
   let objectUrl: string | null = null;
 
@@ -202,14 +209,14 @@ export async function optimizeImage(
       throw new Error('A resolução da imagem é excessiva. Use uma imagem com menos de 40 megapixels.');
     }
 
-    // 7. Calcular redimensionamento: NÃO ampliar imagens menores!
+    // 8. Calcular redimensionamento: NÃO ampliar imagens menores!
     const longestSide = Math.max(origWidth, origHeight);
     const scale = longestSide > maxSide ? maxSide / longestSide : 1; // Nunca amplia se scale >= 1
 
     const finalWidth = Math.max(1, Math.round(origWidth * scale));
     const finalHeight = Math.max(1, Math.round(origHeight * scale));
 
-    // 8. Renderizar no Canvas
+    // 9. Renderizar no Canvas com preservação de alfa
     const canvas = document.createElement('canvas');
     canvas.width = finalWidth;
     canvas.height = finalHeight;
@@ -219,64 +226,93 @@ export async function optimizeImage(
       throw new Error('Seu navegador não suporta renderização em Canvas.');
     }
 
-    // Limpar fundo para preservar canal alfa / transparência
     ctx.clearRect(0, 0, finalWidth, finalHeight);
     ctx.drawImage(bitmap, 0, 0, finalWidth, finalHeight);
 
-    // 9. Testar suporte ao WebP e tentar atingir a faixa alvo (150–350 KB)
-    let bestBlob: Blob | null = null;
-    let selectedQuality = baseQuality;
-
+    // 10. Exportação para WebP
     const exportToBlob = (type: string, q: number): Promise<Blob | null> => {
       return new Promise((resolve) => {
-        canvas.toBlob((blob) => resolve(blob), type, q);
+        canvas.toBlob((b) => resolve(b), type, q);
       });
     };
 
-    // Tentar primeiro com WebP
+    let selectedQuality = baseQuality;
     let blob = await exportToBlob('image/webp', selectedQuality);
     let outputMime = 'image/webp';
     let outputExt = 'webp';
 
-    // Se o navegador não suportar exportação para WebP, faz fallback para PNG (se transparente) ou JPEG
+    // Se o ambiente não exportar WebP:
     if (!blob || blob.type !== 'image/webp') {
+      if (forceWebP) {
+        throw new Error(
+          'Seu navegador não suporta exportação direta para WebP, exigida pelo armazenamento do cardápio. Atualize seu navegador ou tente outro dispositivo.'
+        );
+      }
       const isPng = file.type === 'image/png';
       outputMime = isPng ? 'image/png' : 'image/jpeg';
       outputExt = isPng ? 'png' : 'jpg';
       blob = await exportToBlob(outputMime, selectedQuality);
     }
 
-    if (blob) {
-      bestBlob = blob;
+    if (!blob) {
+      throw new Error('Não foi possível gerar a versão otimizada da imagem.');
+    }
 
-      // Se o tamanho ficou acima do teto de 350 KB e a imagem foi comprimida em WebP/JPEG,
-      // fazer um ajuste fino de qualidade sem sacrificar a estética
-      if (blob.size > targetMax && (outputMime === 'image/webp' || outputMime === 'image/jpeg')) {
-        const candidateQuality = Math.max(0.68, selectedQuality - 0.12);
-        const smallerBlob = await exportToBlob(outputMime, candidateQuality);
-        if (smallerBlob && smallerBlob.size < blob.size) {
-          bestBlob = smallerBlob;
-          selectedQuality = candidateQuality;
-        }
+    // Ajuste fino para atingir a faixa alvo se tiver ficado acima de 350 KB
+    if (blob.size > targetMax) {
+      const candidateQuality = Math.max(0.68, selectedQuality - 0.12);
+      const smallerBlob = await exportToBlob(outputMime, candidateQuality);
+      if (smallerBlob && smallerBlob.size < blob.size) {
+        blob = smallerBlob;
+        selectedQuality = candidateQuality;
       }
     }
 
-    // 10. REGRA CRÍTICA: Nunca gerar arquivo maior que o original!
+    // Se ainda exceder o limite final do bucket remoto (2 MB), tentar compressão adicional
+    if (blob.size > maxOutput) {
+      const aggressiveQuality = 0.50;
+      const minimalBlob = await exportToBlob(outputMime, aggressiveQuality);
+      if (minimalBlob && minimalBlob.size <= maxOutput) {
+        blob = minimalBlob;
+      } else {
+        throw new Error(
+          `A imagem otimizada (${formatFileSize(blob.size)}) excede o limite máximo de ${formatFileSize(maxOutput)} aceito pelo servidor. Reduza a resolução da foto antes de enviar.`
+        );
+      }
+    }
+
+    // 11. REGRA CRÍTICA DE RETENÇÃO DO ORIGINAL
     let finalFile: Blob | File;
     let finalSize: number;
     let isOptimized = true;
 
-    if (bestBlob && bestBlob.size < file.size) {
-      finalFile = bestBlob;
-      finalSize = bestBlob.size;
+    if (forceWebP) {
+      // Para buckets exclusivos de WebP:
+      // Se a imagem original JÁ for WebP e for menor que o reprocessado, podemos manter o original
+      if (file.type === 'image/webp' && file.size <= blob.size && file.size <= maxOutput) {
+        finalFile = file;
+        finalSize = file.size;
+        isOptimized = false;
+      } else {
+        // Se a imagem original for PNG ou JPEG, NUNCA podemos enviar o original incompatível!
+        // Devemos SEMPRE enviar o WebP gerado.
+        finalFile = blob;
+        finalSize = blob.size;
+        outputMime = 'image/webp';
+        outputExt = 'webp';
+      }
     } else {
-      // O original já é mais leve ou a conversão aumentou o tamanho.
-      // O original já foi validado contra limites de tamanho, formato e dimensões.
-      finalFile = file;
-      finalSize = file.size;
-      outputMime = file.type;
-      outputExt = file.name.split('.').pop() || outputExt;
-      isOptimized = false;
+      // Para destinos não-exclusivos:
+      if (blob.size < file.size) {
+        finalFile = blob;
+        finalSize = blob.size;
+      } else {
+        finalFile = file;
+        finalSize = file.size;
+        outputMime = file.type;
+        outputExt = file.name.split('.').pop() || outputExt;
+        isOptimized = false;
+      }
     }
 
     const savings = file.size > finalSize ? Math.round(((file.size - finalSize) / file.size) * 100) : 0;

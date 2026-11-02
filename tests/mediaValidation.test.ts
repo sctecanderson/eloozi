@@ -6,6 +6,7 @@ import {
   MAX_PHOTOS,
   MAX_VIDEO_DURATION_SECONDS,
   validateVideoDuration,
+  preparePhoto,
 } from '../src/features/admin/menuMedia.ts';
 import {
   isSvgFile,
@@ -13,11 +14,12 @@ import {
   formatFileSize,
   optimizeImage,
   DEFAULT_MAX_INPUT_BYTES,
+  DEFAULT_MAX_OUTPUT_BYTES,
 } from '../src/features/admin/imageOptimization.ts';
 
 describe('Validação e Otimização de Mídias (Menu e Identidade)', () => {
-  it('limite de vídeo é exatamente 20 MB', () => {
-    assert.equal(MAX_VIDEO_SIZE, 20 * 1024 * 1024);
+  it('limite de vídeo é alinhado temporariamente com o teto remoto confirmado de 12 MB', () => {
+    assert.equal(MAX_VIDEO_SIZE, 12 * 1024 * 1024);
   });
 
   it('limite de imagem de entrada é 10 MB', () => {
@@ -25,11 +27,15 @@ describe('Validação e Otimização de Mídias (Menu e Identidade)', () => {
     assert.equal(DEFAULT_MAX_INPUT_BYTES, 10 * 1024 * 1024);
   });
 
+  it('limite máximo de saída para buckets remotos exclusivos é 2 MB', () => {
+    assert.equal(DEFAULT_MAX_OUTPUT_BYTES, 2 * 1024 * 1024);
+  });
+
   it('máximo de fotos por produto é 6', () => {
     assert.equal(MAX_PHOTOS, 6);
   });
 
-  it('detecta arquivos SVG corretamente sem conversão raster', () => {
+  it('detecta arquivos SVG corretamente', () => {
     const svgFileByName = { name: 'logo.svg', type: 'image/svg+xml' } as File;
     const svgFileAltType = { name: 'vector.svg', type: '' } as File;
     const pngFile = { name: 'photo.png', type: 'image/png' } as File;
@@ -39,7 +45,7 @@ describe('Validação e Otimização de Mídias (Menu e Identidade)', () => {
     assert.equal(isSvgFile(pngFile), false);
   });
 
-  it('detecta arquivos GIF para preservar possíveis animações', () => {
+  it('detecta arquivos GIF corretamente', () => {
     const gifFile = { name: 'animated.gif', type: 'image/gif' } as File;
     const jpgFile = { name: 'dish.jpg', type: 'image/jpeg' } as File;
 
@@ -51,6 +57,7 @@ describe('Validação e Otimização de Mídias (Menu e Identidade)', () => {
     assert.equal(formatFileSize(500), '500 B');
     assert.equal(formatFileSize(250 * 1024), '250.0 KB');
     assert.equal(formatFileSize(2.5 * 1024 * 1024), '2.5 MB');
+    assert.equal(formatFileSize(12 * 1024 * 1024), '12.0 MB');
   });
 
   describe('Validação de Duração de Vídeos (tolerância máxima 10,5s)', () => {
@@ -99,7 +106,39 @@ describe('Validação e Otimização de Mídias (Menu e Identidade)', () => {
     });
   });
 
-  describe('Proteção contra contorno de limites em arquivos preservados', () => {
+  describe('Compatibilidade Estrita com Buckets Exclusivos de WebP', () => {
+    it('preparePhoto rejeita SVG em campos de cardápio e identidade', async () => {
+      const svg = { name: 'logo.svg', size: 1024, type: 'image/svg+xml' } as File;
+      await assert.rejects(
+        () => preparePhoto(svg, 'Logo'),
+        /Formatos vetoriais \(SVG\) e animações \(GIF\) não são suportados/
+      );
+    });
+
+    it('preparePhoto rejeita GIF em campos de cardápio e identidade', async () => {
+      const gif = { name: 'dish.gif', size: 1024, type: 'image/gif' } as File;
+      await assert.rejects(
+        () => preparePhoto(gif, 'Prato'),
+        /Formatos vetoriais \(SVG\) e animações \(GIF\) não são suportados/
+      );
+    });
+
+    it('optimizeImage com forceWebP rejeita explicitamente SVG', async () => {
+      const svg = { name: 'icon.svg', size: 2048, type: 'image/svg+xml' } as File;
+      await assert.rejects(
+        () => optimizeImage(svg, { forceWebP: true }),
+        /Formato vetorial SVG não é aceito neste campo/
+      );
+    });
+
+    it('optimizeImage com forceWebP rejeita explicitamente GIF', async () => {
+      const gif = { name: 'anim.gif', size: 2048, type: 'image/gif' } as File;
+      await assert.rejects(
+        () => optimizeImage(gif, { forceWebP: true }),
+        /Formato animado GIF não é aceito neste campo/
+      );
+    });
+
     it('rejeita arquivo vazio (0 bytes)', async () => {
       const emptyFile = { name: 'empty.jpg', size: 0, type: 'image/jpeg' } as File;
       await assert.rejects(
@@ -108,55 +147,16 @@ describe('Validação e Otimização de Mídias (Menu e Identidade)', () => {
       );
     });
 
-    it('rejeita SVG que exceda o limite de entrada (não permite contornar)', async () => {
-      const hugeSvg = {
-        name: 'huge.svg',
+    it('rejeita arquivo que exceda o limite de entrada (não permite contornar)', async () => {
+      const hugeFile = {
+        name: 'huge.jpg',
         size: 15 * 1024 * 1024, // 15 MB
-        type: 'image/svg+xml',
+        type: 'image/jpeg',
       } as File;
 
       await assert.rejects(
-        () => optimizeImage(hugeSvg, { maxInputBytes: 10 * 1024 * 1024 }),
+        () => optimizeImage(hugeFile, { maxInputBytes: 10 * 1024 * 1024 }),
         /excede o limite permitido/
-      );
-    });
-
-    it('rejeita GIF que exceda o limite de entrada (não permite contornar)', async () => {
-      const hugeGif = {
-        name: 'animation.gif',
-        size: 12 * 1024 * 1024, // 12 MB
-        type: 'image/gif',
-      } as File;
-
-      await assert.rejects(
-        () => optimizeImage(hugeGif, { maxInputBytes: 10 * 1024 * 1024 }),
-        /excede o limite permitido/
-      );
-    });
-
-    it('rejeita SVG quando o campo não permite formato vetorial', async () => {
-      const svg = {
-        name: 'logo.svg',
-        size: 50 * 1024,
-        type: 'image/svg+xml',
-      } as File;
-
-      await assert.rejects(
-        () => optimizeImage(svg, { allowedMimes: ['image/jpeg', 'image/png', 'image/webp'] }),
-        /vetorial SVG não são permitidas/
-      );
-    });
-
-    it('rejeita GIF quando o campo não permite animação', async () => {
-      const gif = {
-        name: 'anim.gif',
-        size: 50 * 1024,
-        type: 'image/gif',
-      } as File;
-
-      await assert.rejects(
-        () => optimizeImage(gif, { allowedMimes: ['image/jpeg', 'image/png', 'image/webp'] }),
-        /animadas em GIF não são permitidas/
       );
     });
   });
