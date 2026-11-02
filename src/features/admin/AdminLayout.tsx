@@ -346,65 +346,80 @@ export function AdminLayout() {
           })}
         </nav>
 
-        {/* Rodapé da Sidebar: Novo Card do Restaurante */}
-        <div ref={restaurantMenuRef} className="mt-auto pt-4 relative">
-          {restaurantMenuOpen && (
-            <div
-              className={`absolute bottom-full left-0 mb-2 w-full min-w-[210px] rounded-xl shadow-xl border p-1.5 z-50 transition-all ${
-                isDark
-                  ? 'bg-zinc-900 border-zinc-700 text-white shadow-black/50'
-                  : 'bg-white border-zinc-200 text-zinc-900 shadow-zinc-900/15'
-              }`}
+        {/* Rodapé da Sidebar: Atalhos e Identificação do Restaurante */}
+        <div ref={restaurantMenuRef} className="mt-auto pt-3 border-t border-white/10 flex flex-col gap-1.5 relative">
+          {/* Atalho 1: Ir para Atendimento */}
+          <Link
+            to={`/${r.slug}/equipe`}
+            title="Ir para Atendimento"
+            aria-label="Ir para Atendimento"
+            className={`flex items-center rounded-xl text-xs font-semibold transition-all ${
+              sidebarCollapsed
+                ? 'justify-center p-2.5 w-full text-white/80 hover:text-white hover:bg-white/10'
+                : 'gap-2.5 px-3 py-2 text-white/85 hover:text-white hover:bg-white/10'
+            }`}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              className="shrink-0"
             >
-              <Link
-                to={`/${r.slug}/equipe`}
-                onClick={() => setRestaurantMenuOpen(false)}
-                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
-                  isDark
-                    ? 'hover:bg-zinc-800 text-zinc-200 hover:text-white'
-                    : 'hover:bg-zinc-100 text-zinc-700 hover:text-[#610000]'
-                }`}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                </svg>
-                <span>Ir para Atendimento</span>
-              </Link>
-              <Link
-                to={`/${r.slug}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setRestaurantMenuOpen(false)}
-                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
-                  isDark
-                    ? 'hover:bg-zinc-800 text-zinc-200 hover:text-white'
-                    : 'hover:bg-zinc-100 text-zinc-700 hover:text-[#610000]'
-                }`}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                  <polyline points="15 3 21 3 21 9" />
-                  <line x1="10" y1="14" x2="21" y2="3" />
-                </svg>
-                <span>Ver Cardápio</span>
-              </Link>
-            </div>
-          )}
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            </svg>
+            {!sidebarCollapsed && <span className="truncate">Ir para Atendimento</span>}
+          </Link>
 
-          <button
-            type="button"
-            onClick={() => setRestaurantMenuOpen((prev) => !prev)}
-            className={`w-full flex items-center gap-3 p-2.5 rounded-xl border transition-all text-left cursor-pointer ${
-              isDark
-                ? 'bg-zinc-900/80 border-zinc-800 hover:bg-zinc-800 text-white'
-                : 'bg-white/10 border-white/15 hover:bg-white/20 text-white'
+          {/* Atalho 2: Ver Cardápio Público */}
+          <Link
+            to={`/${r.slug}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Ver cardápio"
+            aria-label="Ver cardápio"
+            className={`flex items-center rounded-xl text-xs font-semibold transition-all ${
+              sidebarCollapsed
+                ? 'justify-center p-2.5 w-full text-white/80 hover:text-white hover:bg-white/10'
+                : 'gap-2.5 px-3 py-2 text-white/85 hover:text-white hover:bg-white/10'
+            }`}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              className="shrink-0"
+            >
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+            </svg>
+            {!sidebarCollapsed && <span className="truncate">Ver cardápio</span>}
+          </Link>
+
+          {/* Card do Restaurante */}
+          <div
+            className={`flex items-center rounded-xl border transition-all ${
+              sidebarCollapsed
+                ? 'justify-center p-2 border-transparent'
+                : 'gap-3 p-2.5 border-white/15 bg-white/10 text-white'
             }`}
             title={r.name}
-            aria-label={`Menu de ${r.name}`}
+            aria-label={r.name}
           >
-            {/* Avatar / Logo do Restaurante */}
-            <div className="w-8 h-8 rounded-lg bg-white/20 border border-white/25 flex items-center justify-center shrink-0 overflow-hidden text-xs font-bold uppercase text-white">
+            <div className="w-8 h-8 rounded-lg bg-white/20 border border-white/25 flex items-center justify-center shrink-0 overflow-hidden text-xs font-bold uppercase text-white shadow-2xs">
               {logoUrl ? (
                 <img src={logoUrl} alt={r.name} className="w-8 h-8 rounded-lg object-cover" />
               ) : (
@@ -413,28 +428,12 @@ export function AdminLayout() {
             </div>
 
             {!sidebarCollapsed && (
-              <>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold truncate leading-tight text-white">{r.name}</p>
-                  <span className="text-[10px] text-white/70 block truncate">Restaurante</span>
-                </div>
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className={`shrink-0 text-white/80 transition-transform ${restaurantMenuOpen ? 'rotate-90' : ''}`}
-                  aria-hidden="true"
-                >
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-              </>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold truncate leading-tight text-white">{r.name}</p>
+                <span className="text-[10px] text-white/70 block truncate">Restaurante</span>
+              </div>
             )}
-          </button>
+          </div>
         </div>
       </aside>
 

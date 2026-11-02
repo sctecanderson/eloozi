@@ -1681,7 +1681,7 @@ export function CatalogEditor({
                     <div>
                       Formatos aceitos: JPG, PNG ou WebP. Até 10 MB por foto.
                       <br />
-                      Vídeos: até 60 segundos. Otimizados automaticamente para WebP/MP4.
+                      Vídeos: até 10 segundos e 20 MB (MP4 ou WebM). Envie o arquivo já editado na duração final.
                     </div>
                   </div>
                 </div>
