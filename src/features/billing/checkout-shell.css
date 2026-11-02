@@ -8,131 +8,122 @@
   inset: 0;
   z-index: 60;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 12px;
-  background: rgba(10, 5, 10, 0.78);
+  padding: 20px 12px;
+  background: rgba(12, 6, 10, 0.78);
   backdrop-filter: blur(8px);
-  overflow: hidden;
-  overscroll-behavior: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .subscription-checkout {
   position: relative;
-  width: min(720px, calc(100vw - 24px));
-  max-width: 720px;
-  max-height: min(100dvh - 24px, 94vh);
+  width: min(540px, calc(100vw - 24px));
+  max-width: 540px;
   display: flex;
   flex-direction: column;
-  border-radius: 20px;
-  background: #ffffff;
-  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0, 0, 0, 0.15);
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.dark .subscription-checkout {
-  background: #18181b;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.75);
-}
-
-.checkout-toolbar {
-  position: absolute;
-  top: 8px;
-  right: 10px;
-  z-index: 40;
-  display: flex;
-  justify-content: flex-end;
-  pointer-events: none;
+  margin: auto;
+  overflow: visible;
   background: transparent;
-  padding: 0;
-}
-
-.subscription-checkout .checkout-close {
-  pointer-events: auto;
-  position: static;
-  float: none;
-  margin: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  background: rgba(255, 255, 255, 0.92);
-  color: #1f2937;
-  font-size: 22px;
-  line-height: 1;
-  cursor: pointer;
-  backdrop-filter: blur(8px);
-  transition: all 0.15s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-}
-
-.subscription-checkout .checkout-close:hover {
-  background: #ffffff;
-  color: #000000;
-  transform: scale(1.06);
-}
-
-.dark .subscription-checkout .checkout-close {
-  border-color: rgba(255, 255, 255, 0.18);
-  background: rgba(39, 39, 42, 0.92);
-  color: #f4f4f5;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-}
-
-.dark .subscription-checkout .checkout-close:hover {
-  background: #3f3f46;
-  color: #ffffff;
-}
-
-.checkout-close:focus-visible {
-  outline: 3px solid #e11d48;
-  outline-offset: 2px;
-}
-
-.checkout-scroll {
-  flex: 1 1 auto;
-  min-width: 0;
+  box-shadow: none;
+  border: none;
   min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-gutter: stable;
+  min-width: 0;
+  padding: 6px 0;
 }
 
-/* Banner da Arte Superior (Transparência real, altura controlada) */
+/* Banner da Arte Superior (Mascote transborda livremente, fundo transparente) */
+.checkout-banner-stage {
+  position: relative;
+  width: 100%;
+  overflow: visible;
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+}
+
 .plan-art-checkout {
   position: relative;
   width: 100%;
-  height: 140px;
-  background: radial-gradient(ellipse at 50% 30%, #520309 0%, #1a0003 100%);
+  background: transparent;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
-  padding: 6px 16px 2px;
-  overflow: hidden;
+  padding: 0;
+  overflow: visible;
   flex-shrink: 0;
 }
 
 .plan-art-checkout-img {
   width: 100%;
-  height: 100%;
-  max-height: 140px;
+  height: auto;
+  max-height: 175px;
   object-fit: contain;
-  object-position: center;
+  object-position: center bottom;
   display: block;
-  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.35));
+  overflow: visible;
+  filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.45));
+}
+
+/* Botão Fechar Pequeno (No canto superior direito do banner) */
+.checkout-banner-stage .checkout-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.85);
+  color: #ffffff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: all 0.15s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.checkout-banner-stage .checkout-close:hover {
+  background: #000000;
+  border-color: rgba(255, 255, 255, 0.7);
+  transform: scale(1.08);
+}
+
+.checkout-banner-stage .checkout-close:focus-visible {
+  outline: 3px solid #e11d48;
+  outline-offset: 2px;
+}
+
+/* Card Branco Imediatamente Abaixo do Banner */
+.subscription-checkout-card {
+  position: relative;
+  z-index: 5;
+  width: 100%;
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55), 0 4px 16px rgba(0, 0, 0, 0.18);
+  margin-top: -12px;
+  overflow: hidden;
+}
+
+.dark .subscription-checkout-card {
+  background: #18181b;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.8);
 }
 
 /* Corpo do Modal */
 .subscription-checkout-body {
   position: relative;
-  padding: 12px 18px 16px;
+  padding: 14px 18px 16px;
   background: #ffffff;
   color: #101524;
   min-width: 0;
@@ -161,9 +152,9 @@
 }
 
 .checkout-title-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
   background: #fee2e2;
   color: #991b1b;
   display: flex;
@@ -182,9 +173,9 @@
 }
 
 .checkout-title-text h2 {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 800;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.2px;
   line-height: 1.2;
   color: #111827;
   margin: 0;
@@ -195,7 +186,7 @@
 }
 
 .checkout-subtitle {
-  font-size: 11.5px;
+  font-size: 11px;
   color: #6b7280;
   margin-top: 1px;
   margin-bottom: 0;
@@ -210,7 +201,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 9px;
+  padding: 3.5px 8px;
   border-radius: 9999px;
   background: #ecfdf5;
   color: #047857;
@@ -232,9 +223,9 @@
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   background: #ffffff;
-  padding: 10px 14px;
+  padding: 8px 12px;
   margin-bottom: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
   min-width: 0;
   width: 100%;
 }
@@ -246,7 +237,7 @@
 
 .checkout-financial dl {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   margin: 0;
   min-width: 0;
 }
@@ -256,7 +247,7 @@
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: 12px;
   color: #374151;
   min-width: 0;
 }
@@ -276,7 +267,7 @@
 
 .checkout-financial .checkout-total {
   margin-top: 3px;
-  padding: 6px 10px;
+  padding: 5px 10px;
   border-radius: 8px;
   background: #fef2f2;
   border: 1px solid #fecdd3;
@@ -296,21 +287,21 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 750;
   margin: 0;
 }
 
 .checkout-total dd {
-  font-size: 19px;
+  font-size: 18px;
   font-weight: 850;
-  letter-spacing: -0.5px;
+  letter-spacing: -0.4px;
   margin: 0;
 }
 
 .checkout-financial-info-list {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px dashed #e5e7eb;
@@ -324,8 +315,8 @@
 .checkout-info-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
+  gap: 7px;
+  font-size: 10.5px;
   color: #4b5563;
   min-width: 0;
 }
@@ -335,9 +326,9 @@
 }
 
 .checkout-info-icon {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -368,7 +359,7 @@
 .checkout-info-content strong {
   font-weight: 700;
   color: #1f2937;
-  font-size: 11px;
+  font-size: 10.5px;
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
@@ -378,7 +369,7 @@
 }
 
 .checkout-info-content span {
-  font-size: 10.5px;
+  font-size: 10px;
   color: #6b7280;
   line-height: 1.25;
   overflow-wrap: anywhere;
@@ -397,14 +388,14 @@
 
 /* Área de Pagamento PIX */
 .checkout-pix-container {
-  margin-top: 2px;
+  margin-top: 0;
   min-width: 0;
   width: 100%;
 }
 
 .checkout-pix {
   border-radius: 12px;
-  padding: 10px 14px;
+  padding: 10px 12px;
   background: linear-gradient(135deg, #fff7f7 0%, #fff1f2 100%);
   border: 1px solid #fecdd3;
   min-width: 0;
@@ -417,7 +408,7 @@
 
 .checkout-pix-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 136px;
+  grid-template-columns: minmax(0, 1fr) 124px;
   gap: 12px;
   align-items: center;
   min-width: 0;
@@ -444,9 +435,9 @@
 }
 
 .checkout-pix h3 {
-  font-size: 16px;
-  font-weight: 850;
-  letter-spacing: -0.3px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
   color: #111827;
   margin: 0;
 }
@@ -457,8 +448,8 @@
 
 .checkout-pix p {
   color: #4b5563;
-  line-height: 1.35;
-  font-size: 11.5px;
+  line-height: 1.3;
+  font-size: 11px;
   margin: 2px 0 4px;
 }
 
@@ -472,10 +463,10 @@
 }
 
 .checkout-pix-amount small {
-  font-size: 9.5px;
+  font-size: 9px;
   color: #6b7280;
   text-transform: uppercase;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.3px;
 }
 
@@ -497,13 +488,13 @@
   background: #ffffff;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-  padding: 5px;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+  padding: 4px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.05);
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 136px;
-  height: 136px;
+  width: 124px;
+  height: 124px;
   justify-self: end;
   flex-shrink: 0;
 }
@@ -543,7 +534,7 @@
 
 .checkout-code-field label {
   display: block;
-  font-size: 9.5px;
+  font-size: 9px;
   color: #6b7280;
   font-weight: 600;
   text-transform: uppercase;
@@ -629,7 +620,7 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   margin-top: 8px;
-  padding: 8px 10px;
+  padding: 6px 8px;
   border-radius: 10px;
   border: 1px solid #f1f5f9;
   background: #f8fafc;
@@ -645,13 +636,13 @@
 .checkout-trust-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
 .checkout-trust-icon {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: #fee2e2;
   color: #991b1b;
@@ -673,7 +664,7 @@
 }
 
 .checkout-trust-text strong {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 750;
   color: #1e293b;
   line-height: 1.15;
@@ -686,7 +677,7 @@
 }
 
 .checkout-trust-text small {
-  font-size: 8.5px;
+  font-size: 8px;
   color: #64748b;
   line-height: 1.15;
   white-space: normal;
@@ -698,57 +689,51 @@
 }
 
 /* Responsividade Mobile */
-@media (max-width: 700px) {
+@media (max-width: 600px) {
   .subscription-checkout-overlay {
-    padding: 6px;
+    padding: 10px 8px;
   }
   .subscription-checkout {
     width: 100%;
     max-width: 100%;
-    max-height: calc(100dvh - 12px);
-    border-radius: 16px;
+    padding: 4px 0;
   }
-  .checkout-toolbar {
+  .checkout-banner-stage .checkout-close {
     top: 6px;
     right: 6px;
-  }
-  .subscription-checkout .checkout-close {
-    width: 30px;
-    height: 30px;
-    font-size: 18px;
-  }
-  .plan-art-checkout {
-    height: 110px;
-    padding: 4px 10px 0;
+    width: 26px;
+    height: 26px;
+    font-size: 16px;
   }
   .plan-art-checkout-img {
-    max-height: 110px;
+    max-height: 130px;
+  }
+  .subscription-checkout-card {
+    margin-top: -8px;
+    border-radius: 16px;
   }
   .subscription-checkout-body {
     padding: 10px 12px 14px;
   }
   .checkout-title {
-    flex-direction: column;
-    align-items: flex-start;
+    flex-wrap: wrap;
     gap: 6px;
-    margin-bottom: 8px;
   }
   .checkout-title-text h2 {
-    font-size: 15px;
+    font-size: 14px;
   }
   .checkout-security-badge {
-    align-self: flex-start;
     font-size: 9.5px;
     padding: 2.5px 7px;
   }
   .checkout-financial {
-    padding: 8px 10px;
+    padding: 7px 10px;
   }
   .checkout-total dd {
-    font-size: 18px;
+    font-size: 17px;
   }
   .checkout-pix {
-    padding: 10px 12px;
+    padding: 9px 10px;
   }
   .checkout-pix-grid {
     grid-template-columns: 1fr;
@@ -760,8 +745,8 @@
   }
   .checkout-qr {
     justify-self: center;
-    width: 136px;
-    height: 136px;
+    width: 124px;
+    height: 124px;
   }
   .checkout-code {
     flex-direction: column;
@@ -776,7 +761,7 @@
   }
   .checkout-consult {
     font-size: 12.5px;
-    padding: 10px 14px;
+    padding: 9px 14px;
   }
   .checkout-trust-footer {
     grid-template-columns: 1fr 1fr;
@@ -791,6 +776,6 @@
     font-size: 9px;
   }
   .checkout-trust-text small {
-    font-size: 8px;
+    font-size: 7.5px;
   }
 }

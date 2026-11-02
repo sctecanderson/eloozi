@@ -121,6 +121,7 @@ export function SubscriptionBillingPage() {
   const [termsModalOpen, setTermsModalOpen] = useState<boolean>(false);
 
   const loadData = async () => {
+    const isMock = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mockPix') === 'true';
     try {
       setLoading(true);
       setError(null);
@@ -128,8 +129,61 @@ export function SubscriptionBillingPage() {
       setData(res);setPlanChange(scheduled);
       void reload().catch(() => { /* Provider retries its read refresh. */ });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Erro ao buscar dados de faturamento.';
-      setError(msg);
+      if (isMock) {
+        setData({
+          restaurant: {
+            id: r.id,
+            name: 'Churras Brusque',
+            slug: 'churrasbrusque',
+            subscription_plan: 'premium',
+            subscription_started_at: '2026-11-01T13:25:20.000Z',
+            subscription_expires_at: '2026-11-09T09:44:00.000Z',
+            billing_cycle_days: 30,
+            max_tables: null,
+            unlimited_tables: true,
+            monthly_price_cents: 27990,
+            active: true,
+            billing_status: 'active',
+            days_remaining: 7,
+          },
+          usage: {
+            tables_count: 5,
+            products_count: 24,
+          },
+          catalog: {
+            basic: {
+              name: 'Básico',
+              monthly_price_cents: 9990,
+              yearly_price_cents: 100800,
+              max_tables: 5,
+              unlimited_tables: false,
+              features: ['Cardápio Digital com QR Code', 'Pedidos e comandas em tempo real'],
+            },
+            pro: {
+              name: 'Profissional',
+              monthly_price_cents: 19990,
+              yearly_price_cents: 201600,
+              max_tables: 20,
+              unlimited_tables: false,
+              features: ['Tudo do plano Básico', 'KDS Cozinha e Bar'],
+            },
+            premium: {
+              name: 'Premium',
+              monthly_price_cents: 27990,
+              yearly_price_cents: 282000,
+              max_tables: null,
+              unlimited_tables: true,
+              features: ['Tudo do plano Profissional', 'Gestão de Estoque e Insumos', 'Financeiro e Fechamento de Caixa'],
+            },
+          },
+          invoices: [],
+          payment_methods: [],
+        });
+        setError(null);
+      } else {
+        const msg = err instanceof Error ? err.message : 'Erro ao buscar dados de faturamento.';
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -137,6 +191,28 @@ export function SubscriptionBillingPage() {
 
   useEffect(() => {
     void loadData();
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mockPix') === 'true') {
+      setCheckoutModal({
+        open: true,
+        planId: 'premium',
+        cycle: 'monthly',
+      });
+      setTransitionQuote({
+        quote_token: 'mock-quote-token-12345',
+        full_amount_cents: 49990,
+        credit_cents: 14990,
+        amount_to_charge_cents: 35000,
+        effective_at: '2026-11-05T13:25:20.000Z',
+        expires_at: '2026-12-05T13:25:20.000Z',
+      });
+      setPixPending({
+        invoiceId: 'inv-mock-pix-12345',
+        payload: '00020101021226820014br.gov.bcb.pix2560pix-preview.eloozi.com.br5204000053039865406350.005802BR5916Eloozi Tecnologia6009SAO PAULO62070503***6304ABCD',
+        expiresAt: '2026-11-05T14:25:20.000Z',
+        amountCents: 35000,
+        planId: 'premium',
+      });
+    }
   }, [r.id]);
 
   useEffect(()=>{if(downgradeDraft){const panel=document.getElementById('scheduled-downgrade');panel?.scrollIntoView({behavior:'smooth',block:'center'});panel?.querySelector<HTMLButtonElement>('button')?.focus({preventScroll:true});}},[downgradeDraft]);
@@ -1141,15 +1217,15 @@ export function SubscriptionBillingPage() {
                     <h3>Pague via PIX</h3>
                     <p>Escaneie o QR Code no app do seu banco ou use o código Copia e Cola.</p>
                     <div className="checkout-pix-amount">
-                      <small>Valor a pagar</small>
+                      <small>VALOR A PAGAR</small>
                       <strong>{formatCurrencyBRL(pixPending.amountCents)}</strong>
                     </div>
                   </div>
                   <div className="checkout-qr">
                     {pixPending.image ? (
-                      <img src={pixPending.image} alt="QR Code PIX da cobrança" width="154" height="154" />
+                      <img src={pixPending.image} alt="QR Code PIX da cobrança" width="116" height="116" />
                     ) : (
-                      <QRCodeSVG value={pixPending.payload} size={154} level="M" />
+                      <QRCodeSVG value={pixPending.payload} size={116} level="M" />
                     )}
                   </div>
                 </div>
@@ -1387,7 +1463,7 @@ export function SubscriptionBillingPage() {
               </div>
               <div className="checkout-trust-text">
                 <strong>Pagamento seguro</strong>
-                <small>Protegido pelo Banco Central</small>
+                <small>Processado via Asaas</small>
               </div>
             </div>
             <div className="checkout-trust-item">
@@ -1422,7 +1498,7 @@ export function SubscriptionBillingPage() {
               </div>
               <div className="checkout-trust-text">
                 <strong>Ativação imediata</strong>
-                <small>Após confirmação</small>
+                <small>Ativação após confirmação</small>
               </div>
             </div>
           </div>

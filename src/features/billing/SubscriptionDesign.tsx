@@ -62,7 +62,42 @@ export function CheckoutShell({plan,cycle,onClose,children}:{plan:SubscriptionPl
   document.addEventListener('keydown',keys,true);document.addEventListener('focusin',contain);
   return()=>{updates.disconnect();document.removeEventListener('keydown',keys,true);document.removeEventListener('focusin',contain);document.body.style.overflow=overflow;document.documentElement.style.overflow=rootOverflow;document.documentElement.style.overscrollBehavior=overscroll;if(previous?.isConnected&&!previous.matches(':disabled'))previous.focus();else document.querySelector<HTMLButtonElement>('.overview-details')?.focus();};
  },[]);
- return <div className="subscription-checkout-overlay"><div ref={frame} className="subscription-checkout" role="dialog" aria-modal="true" aria-labelledby={title}><div className="checkout-toolbar"><button ref={close} type="button" className="checkout-close" aria-label="Fechar checkout" onClick={onClose}>×</button></div><div className="checkout-scroll"><PlanBanner plan={plan}/><div className="subscription-checkout-body"><div className="checkout-title"><div className="checkout-title-left"><div className="checkout-title-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><div className="checkout-title-text"><h2 id={title}>Checkout Seguro de Assinatura</h2><p className="checkout-subtitle">{`Plano ${names[plan]}`}{cycle?` · Ciclo ${cycle==='yearly'?'Anual':'Mensal'}`:''}</p></div></div><div className="checkout-security-badge" aria-label="Ambiente seguro"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg><span>Ambiente 100% seguro</span></div></div>{children}</div></div></div></div>;
+ return (
+  <div className="subscription-checkout-overlay">
+   <div ref={frame} className="subscription-checkout" role="dialog" aria-modal="true" aria-labelledby={title}>
+    <div className="checkout-banner-stage">
+     <button ref={close} type="button" className="checkout-close" aria-label="Fechar checkout" onClick={onClose}>×</button>
+     <PlanBanner plan={plan}/>
+    </div>
+    <div className="subscription-checkout-card">
+     <div className="subscription-checkout-body">
+      <div className="checkout-title">
+       <div className="checkout-title-left">
+        <div className="checkout-title-icon" aria-hidden="true">
+         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+         </svg>
+        </div>
+        <div className="checkout-title-text">
+         <h2 id={title}>Checkout Seguro de Assinatura</h2>
+         <p className="checkout-subtitle">{`Plano ${names[plan]}`}{cycle?` · Ciclo ${cycle==='yearly'?'Anual':'Mensal'}`:''}</p>
+        </div>
+       </div>
+       <div className="checkout-security-badge" aria-label="Pagamento via Asaas">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+         <path d="m9 12 2 2 4-4"/>
+        </svg>
+        <span>Pagamento via Asaas</span>
+       </div>
+      </div>
+      {children}
+     </div>
+    </div>
+   </div>
+  </div>
+ );
 }
 
 // Contract details only. The same resolved contract id drives title art and accessible name.
