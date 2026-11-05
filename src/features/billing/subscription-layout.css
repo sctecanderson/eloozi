@@ -69,7 +69,7 @@
 @container subscription-plans (max-width: 590px) {
   .plan-cards, .plan-facts { grid-template-columns: minmax(0,1fr); }
 }
-@media (max-width: 768px) {
+@media (max-width: 760px) {
   .admin-app:has(.subscription-page) > .admin-sidebar { width: 100%; }
 }
 @media (max-width: 460px) {

@@ -273,6 +273,43 @@ export function TabOrdersPage() {
     );
 }
 
+interface TabFlowStepsProps {
+    currentStep: 1 | 2 | 3;
+}
+
+function TabFlowSteps({ currentStep }: TabFlowStepsProps) {
+    return (
+        <div className="tab-flow-steps">
+            <div className="tab-flow-step">
+                <span className={`tab-flow-step-num ${currentStep === 1 ? 'active' : currentStep > 1 ? 'done' : ''}`}>
+                    {currentStep > 1 ? '✓' : '1'}
+                </span>
+                <span className={`tab-flow-step-label ${currentStep === 1 ? 'active-pill' : ''}`}>
+                    Aguardando o garçom confirmar
+                </span>
+            </div>
+            <div className="tab-flow-divider" />
+            <div className="tab-flow-step">
+                <span className={`tab-flow-step-num ${currentStep === 2 ? 'active' : currentStep > 2 ? 'done' : ''}`}>
+                    {currentStep > 2 ? '✓' : '2'}
+                </span>
+                <span className={`tab-flow-step-label ${currentStep === 2 ? 'active-pill' : ''}`}>
+                    Garçom inicia o atendimento
+                </span>
+            </div>
+            <div className="tab-flow-divider" />
+            <div className="tab-flow-step">
+                <span className={`tab-flow-step-num ${currentStep === 3 ? 'active' : ''}`}>
+                    3
+                </span>
+                <span className={`tab-flow-step-label ${currentStep === 3 ? 'active-pill' : ''}`}>
+                    Pedidos em registro
+                </span>
+            </div>
+        </div>
+    );
+}
+
 interface TabOrdersContentProps {
     restaurantSlug: string;
     tableNumber: number;
@@ -657,20 +694,30 @@ function TabOrdersContent({
         (((guestSession?.status as string | undefined) === 'expired') ||
             (tabState?.status === 'hidden' && (guestSession?.status as string | undefined) === 'expired'));
 
-    // 5. Identificar se a comanda já está aberta com consumo
-    const isTabReady =
+    // 5. Identificar itens reais na comanda vinculada
+    const readyTab = tabState?.status === 'ready' ? tabState : null;
+    const realItems =
+        tabState?.status === 'ready'
+            ? tabState.items
+            : tabState?.status === 'closed' && tabState.items
+                ? tabState.items
+                : [];
+    const hasRealItems = realItems.length > 0;
+
+    // 6. Identificar se a comanda está vinculada e aberta
+    const isTabLinked =
         !isRevokedOrClosed &&
         !isPendingSession &&
         !isExpiredSession &&
         tabState?.status === 'ready';
 
-    // 6. Identificar se a mesa foi confirmada no sistema, aguardando o garçom vincular a comanda
+    // 7. Identificar se a mesa foi confirmada no sistema, aguardando o garçom vincular a comanda
     // IMPORTANTE: Nunca é verdadeiro quando guestStatus for 'pending'!
     const isActiveConfirmed =
         !isRevokedOrClosed &&
         !isPendingSession &&
         !isExpiredSession &&
-        !isTabReady &&
+        !isTabLinked &&
         (guestSession?.status === 'active' ||
             (tabState?.status === 'waiting' && tabState?.guestStatus === 'active'));
 
@@ -678,6 +725,7 @@ function TabOrdersContent({
     type TabScreenMode =
         | 'closed'
         | 'ready'
+        | 'active_linked_tab'
         | 'active_waiting_tab'
         | 'pending_with_code'
         | 'pending_no_code'
@@ -687,8 +735,8 @@ function TabOrdersContent({
 
     if (isRevokedOrClosed) {
         mode = 'closed';
-    } else if (isTabReady) {
-        mode = 'ready';
+    } else if (isTabLinked) {
+        mode = hasRealItems ? 'ready' : 'active_linked_tab';
     } else if (isActiveConfirmed) {
         mode = 'active_waiting_tab';
     } else if (isPendingSession) {
@@ -712,9 +760,6 @@ function TabOrdersContent({
         return found?.images[0]?.url;
     };
 
-    const readyTab = mode === 'ready' && tabState?.status === 'ready' ? tabState : null;
-    const realItems = readyTab ? readyTab.items : [];
-    const hasRealItems = realItems.length > 0;
 
     const getCustomerItemStatus = (item: (typeof realItems)[number]) => {
         if (item.status === 'cancelled') {
@@ -768,7 +813,12 @@ function TabOrdersContent({
         };
     });
 
-    const subtotalInCents = readyTab ? readyTab.totalInCents : 0;
+    const subtotalInCents =
+        tabState?.status === 'ready'
+            ? tabState.totalInCents
+            : tabState?.status === 'closed'
+                ? (tabState.totalInCents ?? 0)
+                : 0;
     const feePercent = typeof restaurant.serviceFeePercent === 'number' ? restaurant.serviceFeePercent : 10;
     const serviceFeeInCents = feePercent > 0 ? Math.round(subtotalInCents * (feePercent / 100)) : 0;
     const totalInCents = subtotalInCents + serviceFeeInCents;
@@ -783,14 +833,16 @@ function TabOrdersContent({
             ? 'Atendimento Encerrado'
             : mode === 'ready'
                 ? 'Comanda Aberta'
-                : mode === 'active_waiting_tab'
-                    ? 'Mesa Confirmada'
-                    : 'Aguardando Garçom';
+                : mode === 'active_linked_tab'
+                    ? 'Comanda Conectada'
+                    : mode === 'active_waiting_tab'
+                        ? 'Mesa Confirmada'
+                        : 'Aguardando Garçom';
 
     const statusBadgeClass = `tab-orders-status-badge ${
         mode === 'closed'
             ? 'tab-closed-badge'
-            : mode === 'ready'
+            : (mode === 'ready' || mode === 'active_linked_tab')
                 ? 'active'
                 : 'waiting'
     }`;
@@ -826,7 +878,7 @@ function TabOrdersContent({
                             <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                         </svg>
                         <span>
-                            {mode === 'ready' && tabState?.status === 'ready'
+                            {(mode === 'ready' || mode === 'active_linked_tab') && tabState?.status === 'ready'
                                 ? `Comanda: ${tabState.tab.label}`
                                 : 'Atendimento Digital'}
                         </span>
@@ -969,28 +1021,7 @@ function TabOrdersContent({
                                 <strong>{formatCountdown(codeRemaining)}</strong>
                             </div>
 
-                            <div className="tab-flow-steps">
-                                <div className="tab-flow-step">
-                                    <span className="tab-flow-step-num active">1</span>
-                                    <span className="tab-flow-step-label active-pill">
-                                        Aguardando o garçom confirmar
-                                    </span>
-                                </div>
-                                <div className="tab-flow-divider" />
-                                <div className="tab-flow-step">
-                                    <span className="tab-flow-step-num">2</span>
-                                    <span className="tab-flow-step-label">
-                                        Garçom inicia o atendimento
-                                    </span>
-                                </div>
-                                <div className="tab-flow-divider" />
-                                <div className="tab-flow-step">
-                                    <span className="tab-flow-step-num">3</span>
-                                    <span className="tab-flow-step-label">
-                                        Pedidos em registro
-                                    </span>
-                                </div>
-                            </div>
+                            <TabFlowSteps currentStep={1} />
 
                             <div className="tab-lamp-info-box">
                                 <div className="tab-lamp-icon-circle">
@@ -1041,27 +1072,19 @@ function TabOrdersContent({
                                 )}
                             </p>
 
-                            <div className="tab-flow-steps">
-                                <div className="tab-flow-step">
-                                    <span className="tab-flow-step-num">✓</span>
-                                    <span className="tab-flow-step-label">
-                                        Aguardando o garçom confirmar
-                                    </span>
+                            <TabFlowSteps currentStep={2} />
+
+                            <div className="tab-lamp-info-box">
+                                <div className="tab-lamp-icon-circle">
+                                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M9 18h6" />
+                                        <path d="M10 22h4" />
+                                        <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14" />
+                                    </svg>
                                 </div>
-                                <div className="tab-flow-divider" />
-                                <div className="tab-flow-step">
-                                    <span className="tab-flow-step-num active">2</span>
-                                    <span className="tab-flow-step-label active-pill">
-                                        Garçom inicia o atendimento
-                                    </span>
-                                </div>
-                                <div className="tab-flow-divider" />
-                                <div className="tab-flow-step">
-                                    <span className="tab-flow-step-num">3</span>
-                                    <span className="tab-flow-step-label">
-                                        Pedidos em registro
-                                    </span>
-                                </div>
+                                <p className="tab-lamp-text">
+                                    O garçom iniciou seu atendimento. Em instantes sua comanda estará conectada.
+                                </p>
                             </div>
 
                             <div className="tab-code-waiting-pulse">
@@ -1071,7 +1094,59 @@ function TabOrdersContent({
                         </div>
                     )}
 
-                    {/* ESTADO 5: Comanda Pronta -> Acompanhamento dos Pedidos */}
+                    {/* ESTADO 3: Comanda Vinculada (Sessão Active + Comanda Aberta) -> Aguardando Primeiro Pedido */}
+                    {mode === 'active_linked_tab' && (
+                        <div className="tab-hero-card tab-code-card-ref">
+                            <div className="tab-card-grid-icon" style={{ background: '#ecfdf5', color: '#059669' }}>
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                            </div>
+
+                            <h2 className="tab-card-title">Comanda Conectada!</h2>
+                            <p className="tab-card-description">
+                                {tabState?.assignedWaiterName ? (
+                                    <>
+                                        Sua comanda foi conectada pelo garçom <strong>{tabState.assignedWaiterName}</strong>. Os pedidos estão sendo registrados e aparecerão aqui em tempo real.
+                                    </>
+                                ) : (
+                                    'Sua comanda foi conectada com sucesso. Os pedidos estão sendo registrados e aparecerão aqui em tempo real.'
+                                )}
+                            </p>
+
+                            <TabFlowSteps currentStep={3} />
+
+                            <div className="tab-lamp-info-box">
+                                <div className="tab-lamp-icon-circle">
+                                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M9 18h6" />
+                                        <path d="M10 22h4" />
+                                        <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14" />
+                                    </svg>
+                                </div>
+                                <p className="tab-lamp-text">
+                                    Assim que os pedidos forem registrados pelo garçom, seu consumo detalhado será exibido aqui automaticamente.
+                                </p>
+                            </div>
+
+                            <div className="tab-code-waiting-pulse">
+                                <span className="tab-pulse-dot" />
+                                <span>Aguardando lançamento dos pedidos…</span>
+                            </div>
+
+                            <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'center', width: '100%' }}>
+                                <Link
+                                    to={`/${restaurantSlug}${tableQuery}`}
+                                    className="tab-hero-primary-btn"
+                                    style={{ maxWidth: '240px', minHeight: '44px', fontSize: '14px', textDecoration: 'none' }}
+                                >
+                                    Ver Cardápio
+                                </Link>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ESTADO 4: Comanda Pronta COM Itens -> Acompanhamento dos Pedidos / Consumo */}
                     {mode === 'ready' && (
                         <section className="tab-orders-section">
                             <div className="tab-orders-section-heading">
@@ -1081,30 +1156,7 @@ function TabOrdersContent({
                                 </svg>
                             </div>
 
-                            {!hasRealItems ? (
-                                <div className="tab-empty-orders-box">
-                                    <span className="empty-icon">🍽️</span>
-                                    <h3>Comanda conectada!</h3>
-                                    <p>
-                                        {tabState?.assignedWaiterName ? (
-                                            <>
-                                                Nenhum pedido lançado ainda. Assim que o garçom <strong>{tabState.assignedWaiterName}</strong> registrar seus pedidos na tela dele, eles aparecerão aqui em tempo real.
-                                            </>
-                                        ) : (
-                                            'Nenhum pedido lançado ainda. Assim que o garçom registrar seus pedidos na tela dele, eles aparecerão aqui em tempo real.'
-                                        )}
-                                    </p>
-                                    <Link
-                                        to={`/${restaurantSlug}${tableQuery}`}
-                                        className="tab-hero-primary-btn"
-                                        style={{ maxWidth: '240px', minHeight: '44px', fontSize: '14px', textDecoration: 'none' }}
-                                    >
-                                        Ver Cardápio
-                                    </Link>
-                                </div>
-                            ) : (
-                                <>
-                                    <ul className="tab-orders-list">
+                            <ul className="tab-orders-list">
                                         {displayItems.map((item) => {
                                             const isCancelled = item.isCancelled;
                                             return (
@@ -1175,8 +1227,6 @@ function TabOrdersContent({
                                             Solicitar a Conta
                                         </button>
                                     </div>
-                                </>
-                            )}
                         </section>
                     )}
 

@@ -72,7 +72,8 @@ describe('ELOOZI — Customer Tab Visual & Logic Unit Tests', () => {
             assert.equal(getActiveTabStep('active_waiting_tab'), 2);
         });
 
-        it('3.3 passo 3 ativo quando a comanda estiver pronta com consumo (ready)', () => {
+        it('3.3 passo 3 ativo quando a comanda estiver vinculada (active_linked_tab) ou pronta com consumo (ready)', () => {
+            assert.equal(getActiveTabStep('active_linked_tab'), 3);
             assert.equal(getActiveTabStep('ready'), 3);
         });
 

@@ -18,7 +18,6 @@ export function contrast(a: string, b: string) {
     y = luminance(b);
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }
-
 export async function uploadIdentity(
   photo: DraftPhoto | IdentityMedia | null,
   restaurantId: string,
@@ -27,26 +26,21 @@ export async function uploadIdentity(
   if (!photo) return null;
   if (!("file" in photo) || !photo.file)
     return { url: photo.url, storagePath: photo.storagePath! };
-
-  // O bucket restaurant-images aceita estritamente WebP (.webp) na política de segurança e configuração remota
-  const ext = "webp";
-  const contentType = "image/webp";
-  const path = `${restaurantId}/identity/${photo.id}.${ext}`;
+  const path = `${restaurantId}/identity/${photo.id}.webp`;
   let url = cache.get(path);
   const bucket = supabase.storage.from("restaurant-images");
-
   if (!url) {
     const { error } = await bucket.upload(path, photo.file, {
-      contentType,
+      contentType: "image/webp",
       cacheControl: "31536000",
       upsert: false,
     });
     if (error) {
       const { data, error: listError } = await bucket.list(
         `${restaurantId}/identity`,
-        { search: `${photo.id}.${ext}`, limit: 10 },
+        { search: `${photo.id}.webp`, limit: 10 },
       );
-      if (listError || !data?.some((item) => item.name === `${photo.id}.${ext}`))
+      if (listError || !data?.some((item) => item.name === `${photo.id}.webp`))
         throw new Error(
           "Não foi possível enviar a imagem. Confira Storage, conexão e permissão.",
         );
@@ -56,7 +50,6 @@ export async function uploadIdentity(
   }
   return { url, storagePath: path };
 }
-
 export async function saveIdentity(
   r: RestaurantIdentity,
   logo: IdentityMedia | null,
@@ -94,7 +87,6 @@ export async function saveIdentity(
     );
   return parseRestaurant(data);
 }
-
 export interface AdminTable {
   id: string;
   tableNumber: number;
@@ -108,7 +100,6 @@ export interface AdminTable {
   totalInCents: number;
   billPending: boolean;
 }
-
 export async function getAdminTables(slug: string): Promise<AdminTable[]> {
   const { data, error } = await supabase.rpc("get_admin_tables", {
     p_slug: slug,
@@ -141,7 +132,6 @@ export async function getAdminTables(slug: string): Promise<AdminTable[]> {
     throw new Error("Dados de mesas inválidos.");
   return data as AdminTable[];
 }
-
 export async function saveTable(slug: string, t: AdminTable) {
   const { data, error } = await supabase.rpc("save_restaurant_table", {
     p_slug: slug,

@@ -17,7 +17,6 @@ import {
     countActiveTableServiceRequests,
     dismissTableServiceRequests,
 } from './serviceRequests';
-import { WaiterReadyOrdersAlert } from './WaiterReadyOrdersAlert';
 import {
   subscribeToAlerts,
   type RestaurantAlert,
@@ -860,6 +859,24 @@ function StaffSalonManager({
             }
             setTableActiveTab('access');
             setRefresh((c) => c + 1);
+            setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                next.delete('mesa');
+                return next;
+            });
+            setToasts((prev) => [
+                ...prev,
+                {
+                    id: crypto.randomUUID(),
+                    restaurant_id: restaurantId,
+                    type: 'system',
+                    title: 'Mesa encerrada',
+                    message: `Mesa ${String(selectedTableNumber).padStart(2, '0')} encerrada com sucesso!`,
+                    is_read: false,
+                    reference_id: null,
+                    created_at: new Date().toISOString(),
+                },
+            ]);
         } catch (cause) {
             setActionError(
                 cause instanceof Error
@@ -926,15 +943,6 @@ function StaffSalonManager({
 
     return (
         <section className="w-full">
-            {/* =========================================================
-                ALERTA KDS: PEDIDOS PRONTOS PARA RETIRAR
-               ========================================================= */}
-            <WaiterReadyOrdersAlert
-                restaurantSlug={restaurantSlug}
-                restaurantId={restaurantId}
-                onDelivered={() => setRefresh((current) => current + 1)}
-            />
-
             {error && (
                 <div role="alert" className="mb-4 text-xs text-red-700 bg-red-50 dark:bg-red-950/30 dark:text-red-300 p-3.5 rounded-2xl border border-red-200 dark:border-red-900/40">
                     {error}
@@ -1730,6 +1738,7 @@ function StaffSalonManager({
                                                 tableNumber={selectedTableNumber}
                                                 role={role}
                                                 onOpenTabsCountChange={handleOpenTabsCountChange}
+                                                onRequestCloseVisit={() => setConfirmCloseMesa(true)}
                                                 showSuccessToast={showConfirmedToast}
                                                 onCloseSuccessToast={() => setShowConfirmedToast(false)}
                                             />
@@ -1782,6 +1791,73 @@ function StaffSalonManager({
                                                 }}
                                             />
                                         )}
+                                        {/* Ação: Encerrar atendimento da mesa */}
+                                        <div className="mt-4 pt-3 border-t border-amber-900/10 dark:border-zinc-800">
+                                            {confirmCloseMesa ? (
+                                                <div className="rounded-2xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/70 dark:bg-rose-950/40 p-4 space-y-3">
+                                                    <div>
+                                                        <h4 className="text-xs font-bold text-rose-950 dark:text-rose-200">
+                                                            Encerrar atendimento da Mesa {String(selectedTableNumber).padStart(2, '0')}?
+                                                        </h4>
+                                                        <p className="text-xs text-rose-800 dark:text-rose-300 mt-1 leading-relaxed">
+                                                            Todas as sessões de clientes vinculadas a esta mesa serão revogadas e o atendimento será finalizado.
+                                                        </p>
+                                                        {openTabsCount > 0 && (
+                                                            <div className="mt-2 p-2.5 rounded-xl bg-amber-100/80 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700 text-xs font-semibold text-amber-950 dark:text-amber-200">
+                                                                Atenção: existem {openTabsCount} comanda(s) aberta(s). Todas as comandas devem ser fechadas antes de encerrar o atendimento.
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <button
+                                                            type="button"
+                                                            disabled={busyAction || openTabsCount > 0}
+                                                            onClick={() => void handleCloseVisit(currentTableVisit.id)}
+                                                            className="flex-1 py-2.5 rounded-xl bg-red-700 hover:bg-red-800 text-white font-bold text-xs shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                                                        >
+                                                            {busyAction ? 'Encerrando…' : 'Confirmar encerramento da mesa'}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            disabled={busyAction}
+                                                            onClick={() => setConfirmCloseMesa(false)}
+                                                            className="px-4 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 cursor-pointer"
+                                                        >
+                                                            Cancelar
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (openTabsCount > 0) {
+                                                            setActionError(`Existem ${openTabsCount} comanda(s) aberta(s). Encerre todas as comandas antes de finalizar o atendimento da mesa.`);
+                                                            return;
+                                                        }
+                                                        setConfirmCloseMesa(true);
+                                                        setActionError('');
+                                                    }}
+                                                    disabled={busyAction}
+                                                    className={`w-full py-3 px-4 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition shadow-xs cursor-pointer ${
+                                                        openTabsCount > 0
+                                                            ? 'border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 cursor-not-allowed'
+                                                            : 'border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/60'
+                                                    }`}
+                                                >
+                                                    <svg className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <circle cx="12" cy="12" r="10" />
+                                                        <line x1="15" y1="9" x2="9" y2="15" />
+                                                        <line x1="9" y1="9" x2="15" y2="15" />
+                                                    </svg>
+                                                    <span>
+                                                        {openTabsCount > 0
+                                                            ? `Encerre as comandas para finalizar a mesa (${openTabsCount} aberta${openTabsCount > 1 ? 's' : ''})`
+                                                            : `Encerrar atendimento da Mesa ${String(selectedTableNumber).padStart(2, '0')}`}
+                                                    </span>
+                                                </button>
+                                            )}
+                                        </div>
                                     </>
                                 )}
                             </div>

@@ -5,7 +5,6 @@ import { supabase } from "../../lib/supabase";
 import { priceToCents, saveCatalogEntry, slugify } from "./adminCatalog";
 import type { AdminCategory, AdminProduct } from "./adminCatalog";
 import { MAX_PHOTOS, preparePhoto, prepareVideo, uploadMenuMedia } from "./menuMedia";
-import { optimizeImage } from "./imageOptimization";
 import type { DraftPhoto, DraftVideo } from "./menuMedia";
 import { fetchInventory } from "../inventory/inventoryService";
 import type { InventoryItem } from "../inventory/inventoryService";
@@ -743,21 +742,8 @@ export function CatalogEditor({
             // Caminho compatível com a política de storage RLS: UUID/products/UUID/UUID.webp
             const path = `${restaurantId}/products/${id}/${photoId}.webp`;
             const bucket = supabase.storage.from("menu-images");
-
-            const fileToOptimize = categoryImageFile instanceof File
-              ? categoryImageFile
-              : new File([categoryImageFile], `${photoId}.webp`, { type: 'image/webp' });
-
-            const optimized = await optimizeImage(fileToOptimize, {
-              kind: 'avatar',
-              maxSide: 400,
-              targetMaxBytes: 150 * 1024,
-              forceWebP: true,
-              maxOutputBytes: 2 * 1024 * 1024,
-            });
-
-            const { error: upErr } = await bucket.upload(path, optimized.file, {
-              contentType: optimized.mimeType,
+            const { error: upErr } = await bucket.upload(path, categoryImageFile, {
+              contentType: "image/webp",
               cacheControl: "31536000",
               upsert: true,
             });
@@ -1695,7 +1681,7 @@ export function CatalogEditor({
                     <div>
                       Formatos aceitos: JPG, PNG ou WebP. Até 10 MB por foto.
                       <br />
-                      Vídeos: até 10 segundos (tolerância máx. 10,5s) e 12 MB (MP4 ou WebM). Envie o arquivo já editado na duração final.
+                      Vídeos: até 60 segundos. Otimizados automaticamente para WebP/MP4.
                     </div>
                   </div>
                 </div>

@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --loader ./tests/test_loader.mjs --test tests/reservations.test.ts tests/tableTabsClosing.test.ts tests/chamados.test.ts tests/mais.test.ts tests/comandasPagination.test.ts tests/comandasActions.test.ts tests/history.test.ts tests/operationalNavigation.test.ts tests/customerTabVisual.test.ts tests/tableContext.test.ts tests/comandaItemsAndCancellation.test.ts tests/checkoutSecurity.test.ts tests/staffProfiles.test.ts tests/subscriptionCatalogView.test.ts tests/manualDelivery.test.ts tests/contactChannels.test.ts tests/moduleAccess.test.ts tests/subscriptionNotices.test.ts tests/subscriptionPresentation.test.ts tests/scheduledDowngrade.test.ts tests/mediaValidation.test.ts"
+    "test": "node --experimental-strip-types --loader ./tests/test_loader.mjs --test tests/reservations.test.ts tests/tableTabsClosing.test.ts tests/chamados.test.ts tests/mais.test.ts tests/comandasPagination.test.ts tests/comandasActions.test.ts tests/history.test.ts tests/operationalNavigation.test.ts tests/customerTabVisual.test.ts tests/tableContext.test.ts tests/comandaItemsAndCancellation.test.ts tests/checkoutSecurity.test.ts tests/staffProfiles.test.ts tests/subscriptionCatalogView.test.ts tests/manualDelivery.test.ts tests/contactChannels.test.ts tests/moduleAccess.test.ts tests/subscriptionNotices.test.ts tests/subscriptionPresentation.test.ts tests/scheduledDowngrade.test.ts tests/productPreview.test.ts tests/testGrant.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.3",

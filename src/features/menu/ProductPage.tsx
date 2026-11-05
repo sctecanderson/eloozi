@@ -73,6 +73,16 @@ export function ProductPage() {
   const catalog = usePublicMenu();
   const product = catalog.menu?.products.find((item) => item.slug === productSlug);
 
+  useEffect(() => {
+    if (!product) return;
+    const prevTitle = document.title;
+    const restName = restaurant?.name ? ` | ${restaurant.name}` : '';
+    document.title = `${product.name}${restName}`;
+    return () => {
+      document.title = prevTitle;
+    };
+  }, [product, restaurant?.name]);
+
   const handleDirectOrder = async () => {
     if (!product || !table.tableId || orderBusy || product.isOutOfStock) return;
     setOrderBusy(true);
@@ -359,8 +369,10 @@ export function ProductPage() {
             </div>
           )}
 
-          <div className="product-price flex items-center justify-between gap-3">
-            <span>{currency.format(product.priceInCents / 100)}</span>
+          <div className="product-price flex items-center justify-between gap-3 pt-1">
+            <span className="text-2xl font-extrabold text-[var(--ink,#2b1d17)] dark:text-[#f7f3ee]">
+              {currency.format(product.priceInCents / 100)}
+            </span>
             {product.isOutOfStock && (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400 border border-red-200 dark:border-red-900/50">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="w-3.5 h-3.5">
@@ -373,6 +385,113 @@ export function ProductPage() {
             )}
           </div>
         </div>
+
+        {/* Bloco de Ação Principal: Pedido Direto para Mesa Ativa ou Orientação de Consulta */}
+        {table.status === 'unverified' && table.tableId && !product.isOutOfStock && product.available && (
+          <section className="product-action-box rounded-2xl border border-zinc-200 bg-white/90 p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/90" aria-label="Fazer pedido direto para a mesa">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <span className="text-[11px] uppercase tracking-wider font-bold text-orange-600 dark:text-orange-400">
+                  Disparo Direto para Cozinha / Bar
+                </span>
+                <h2 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 m-0">
+                  Mesa {table.tableNumber}
+                </h2>
+              </div>
+              <div className="flex items-center border border-zinc-300 dark:border-zinc-700 rounded-xl overflow-hidden bg-zinc-50 dark:bg-zinc-800">
+                <button
+                  type="button"
+                  className="w-9 h-9 flex items-center justify-center text-lg font-bold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 active:scale-95 disabled:opacity-30"
+                  onClick={() => setOrderQuantity((q) => Math.max(1, q - 1))}
+                  disabled={orderQuantity <= 1 || orderBusy}
+                  aria-label="Diminuir quantidade"
+                >
+                  -
+                </button>
+                <span className="w-8 text-center font-bold text-sm text-zinc-900 dark:text-zinc-100">
+                  {orderQuantity}
+                </span>
+                <button
+                  type="button"
+                  className="w-9 h-9 flex items-center justify-center text-lg font-bold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 active:scale-95 disabled:opacity-30"
+                  onClick={() => setOrderQuantity((q) => Math.min(99, q + 1))}
+                  disabled={orderQuantity >= 99 || orderBusy}
+                  aria-label="Aumentar quantidade"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            {orderSuccessMessage ? (
+              <div className="p-3 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900/50 text-sm font-medium flex items-center gap-2.5">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 flex-shrink-0">
+                  <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span>{orderSuccessMessage}</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="w-full min-h-11 py-2.5 px-4 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-semibold text-sm shadow-sm transition-transform active:scale-[0.99] flex items-center justify-center gap-2 disabled:opacity-50"
+                onClick={handleDirectOrder}
+                disabled={orderBusy}
+              >
+                {orderBusy ? (
+                  <>
+                    <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                    </svg>
+                    <span>Enviando pedido...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Fazer Pedido ({currency.format((product.priceInCents * orderQuantity) / 100)})</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                      <polyline points="9 18 15 12 9 6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </>
+                )}
+              </button>
+            )}
+
+            {orderErrorMessage && (
+              <p className="mt-2 text-xs font-medium text-red-600 dark:text-red-400">
+                {orderErrorMessage}
+              </p>
+            )}
+          </section>
+        )}
+
+        {/* Informação contextual quando o produto estiver esgotado ou quando o acesso for sem mesa */}
+        {product.isOutOfStock ? (
+          <div className="product-order-notice border-red-200 bg-red-50 text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300" role="status" aria-live="polite">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <span>Este produto atingiu o limite de estoque e está esgotado no momento.</span>
+          </div>
+        ) : (!table.tableId || table.status !== 'unverified') ? (
+          <div className="product-order-notice flex items-center justify-between gap-3" role="status" aria-live="polite">
+            <div className="flex items-center gap-2.5">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="flex-shrink-0">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+              </svg>
+              <span>Consulte o garçom para registrar seu pedido na mesa.</span>
+            </div>
+            <button
+              type="button"
+              className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-[var(--brand,#b9472b)] text-white text-xs font-semibold hover:opacity-90 transition-opacity"
+              onClick={() => handleTableAssistance('call_waiter')}
+            >
+              Chamar garçom
+            </button>
+          </div>
+        ) : null}
 
         {/* Descrição */}
         {(product.description || product.shortDescription) && (
@@ -422,107 +541,7 @@ export function ProductPage() {
         </div>
       </article>
 
-      {/* Bloco 17: Disparo Direto para a Cozinha / Bar para Mesa Ativa */}
-      {table.status === 'unverified' && table.tableId && !product.isOutOfStock && product.available && (
-        <section className="product-direct-order-card mt-6 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900" aria-label="Fazer pedido direto para a mesa">
-          <div className="flex items-center justify-between gap-3 mb-4">
-            <div>
-              <span className="text-xs uppercase tracking-wider font-semibold text-orange-600 dark:text-orange-400">
-                Disparo Direto para Cozinha / Bar
-              </span>
-              <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                Mesa {table.tableNumber}
-              </h3>
-            </div>
-            <div className="flex items-center border border-zinc-300 dark:border-zinc-700 rounded-xl overflow-hidden bg-zinc-50 dark:bg-zinc-800">
-              <button
-                type="button"
-                className="w-10 h-10 flex items-center justify-center text-lg font-bold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 active:scale-95 disabled:opacity-30"
-                onClick={() => setOrderQuantity((q) => Math.max(1, q - 1))}
-                disabled={orderQuantity <= 1 || orderBusy}
-                aria-label="Diminuir quantidade"
-              >
-                -
-              </button>
-              <span className="w-10 text-center font-bold text-base text-zinc-900 dark:text-zinc-100">
-                {orderQuantity}
-              </span>
-              <button
-                type="button"
-                className="w-10 h-10 flex items-center justify-center text-lg font-bold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 active:scale-95 disabled:opacity-30"
-                onClick={() => setOrderQuantity((q) => Math.min(99, q + 1))}
-                disabled={orderQuantity >= 99 || orderBusy}
-                aria-label="Aumentar quantidade"
-              >
-                +
-              </button>
-            </div>
-          </div>
 
-          {orderSuccessMessage ? (
-            <div className="p-3.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900/50 text-sm font-medium flex items-center gap-2.5">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 flex-shrink-0">
-                <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span>{orderSuccessMessage}</span>
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="w-full min-h-12 py-3 px-4 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-semibold text-base shadow-sm transition-transform active:scale-[0.99] flex items-center justify-center gap-2 disabled:opacity-50"
-              onClick={handleDirectOrder}
-              disabled={orderBusy}
-            >
-              {orderBusy ? (
-                <>
-                  <svg className="animate-spin w-5 h-5" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-                  </svg>
-                  <span>Enviando pedido...</span>
-                </>
-              ) : (
-                <>
-                  <span>Fazer Pedido ({currency.format((product.priceInCents * orderQuantity) / 100)})</span>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
-                    <polyline points="9 18 15 12 9 6" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </>
-              )}
-            </button>
-          )}
-
-          {orderErrorMessage && (
-            <p className="mt-2.5 text-xs font-medium text-red-600 dark:text-red-400">
-              {orderErrorMessage}
-            </p>
-          )}
-        </section>
-      )}
-
-      {/* Aviso: Estoque esgotado ou Faça seu pedido */}
-      {product.isOutOfStock ? (
-        <div className="product-order-notice border-red-200 bg-red-50 text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300" role="status" aria-live="polite">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          <span>Este produto atingiu o limite de estoque e está esgotado no momento.</span>
-        </div>
-      ) : (
-        <div className="product-order-notice" role="status" aria-live="polite">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-          </svg>
-          <span>
-            {product.available
-              ? (table.status === 'unverified' ? "Pedido direto enviado ao KDS com baixa de estoque." : "Faça seu pedido com o garçom.")
-              : "Este item está temporariamente indisponível para pedidos."}
-          </span>
-        </div>
-      )}
 
       {/* Toast / Alerta de Assistência */}
       {assistanceMessage && (

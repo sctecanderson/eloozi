@@ -62,6 +62,7 @@ interface TableTabsPanelProps {
   tableNumber?: number | string;
   role?: 'admin' | 'waiter';
   onOpenTabsCountChange?: (count: number) => void;
+  onRequestCloseVisit?: () => void;
   showSuccessToast?: boolean;
   onCloseSuccessToast?: () => void;
   onNavigateToCatalog?: (tabId?: string) => void;
@@ -121,6 +122,7 @@ function TableTabsContent({
   tableNumber,
   role = 'waiter',
   onOpenTabsCountChange,
+  onRequestCloseVisit,
   showSuccessToast,
   onCloseSuccessToast,
   initialTabId,
@@ -745,6 +747,10 @@ function TableTabsContent({
   const openTabs = useMemo(() => {
     return state.tabs.filter((t) => t.status === 'open');
   }, [state.tabs]);
+
+  useEffect(() => {
+    onOpenTabsCountChangeRef.current?.(openTabs.length);
+  }, [openTabs.length]);
 
   const individualTabs = useMemo(() => {
     return getIndividualTabs(state.tabs);
@@ -2018,6 +2024,31 @@ function TableTabsContent({
       {/* ========================================================================= */}
       {!isCatalogOpen ? (
         <div className="space-y-4">
+          {/* Banner informativo quando todas as comandas da mesa estiverem quitadas */}
+          {openTabs.length === 0 && state.tabs.length > 0 && onRequestCloseVisit && (
+            <div className="rounded-2xl p-4 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-xs flex items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs">
+                  ✓
+                </div>
+                <div>
+                  <p className="font-bold text-emerald-950 dark:text-emerald-100">
+                    Todas as comandas desta mesa foram quitadas!
+                  </p>
+                  <p className="text-emerald-800 dark:text-emerald-300 text-[11px] mt-0.5">
+                    O atendimento da Mesa {String(tableNumber ?? '').padStart(2, '0')} já pode ser finalizado.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onRequestCloseVisit}
+                className="py-2 px-3.5 rounded-xl bg-red-700 hover:bg-red-800 text-white font-bold text-xs transition cursor-pointer shrink-0 shadow-2xs"
+              >
+                Encerrar mesa
+              </button>
+            </div>
+          )}
           {/* 2. Card "Comandas da mesa" */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">

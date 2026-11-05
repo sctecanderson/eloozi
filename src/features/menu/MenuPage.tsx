@@ -179,23 +179,46 @@ function RestaurantMenuContent({
         </div>
       )}
 
-      {/* Filtro de Categorias (Pills horizontais) */}
-      <div className="menu-categories-rail" role="group" aria-label="Categorias">
-        {[{ id: 'all', name: 'Todos' }, ...categories].map((category) => {
-          const selected = categoryId === category.id;
-          return (
-            <button
-              key={category.id}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => setCategoryId(category.id)}
-              className={`menu-category-pill ${selected ? 'active' : ''}`}
-            >
-              {category.name}
-            </button>
-          );
-        })}
-      </div>
+      {/* Filtro de Categorias (Pills horizontais com contagem e rolagem suave) */}
+      {(() => {
+        const productCountByCategory = new Map<string, number>();
+        for (const p of products) {
+          if (p.categoryId) {
+            productCountByCategory.set(p.categoryId, (productCountByCategory.get(p.categoryId) || 0) + 1);
+          }
+        }
+        const categoryList = [
+          { id: 'all', name: 'Todos', count: products.length },
+          ...categories.map((c) => ({ ...c, count: productCountByCategory.get(c.id) || 0 })),
+        ];
+
+        return (
+          <div className="menu-categories-rail" role="group" aria-label="Categorias">
+            {categoryList.map((category) => {
+              const selected = categoryId === category.id;
+              return (
+                <button
+                  key={category.id}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={(e) => {
+                    setCategoryId(category.id);
+                    e.currentTarget.scrollIntoView({
+                      behavior: 'smooth',
+                      block: 'nearest',
+                      inline: 'center',
+                    });
+                  }}
+                  className={`menu-category-pill ${selected ? 'active' : ''}`}
+                >
+                  <span>{category.name}</span>
+                  <span className="menu-category-count">({category.count})</span>
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* Prato Hero em Destaque (Estilo Polvo Grelhado da referência) */}
       {showFeaturedHero && (
@@ -255,9 +278,18 @@ function RestaurantMenuContent({
                       {formatLikes(likesCount)}
                     </span>
                   </div>
-                  <div className="menu-featured-desc-row">
-                    <p className="menu-featured-desc">{featuredProduct.shortDescription || featuredProduct.description}</p>
+                  <p className="menu-featured-desc">{featuredProduct.shortDescription || featuredProduct.description}</p>
+                  <div className="menu-featured-footer">
                     <strong className="menu-featured-price">{currency.format(featuredProduct.priceInCents / 100)}</strong>
+                    {featuredProduct.isOutOfStock ? (
+                      <span className="text-xs px-2.5 py-1 rounded-full border border-zinc-300 dark:border-zinc-700 text-zinc-500 font-medium">
+                        Esgotado
+                      </span>
+                    ) : (
+                      <span className="menu-featured-btn">
+                        Ver prato <span aria-hidden="true">+</span>
+                      </span>
+                    )}
                   </div>
                 </div>
               </Link>
@@ -328,16 +360,23 @@ function RestaurantMenuContent({
                       <p className="menu-item-desc">{product.shortDescription || product.description}</p>
                       <div className="menu-item-footer">
                         <strong className="menu-item-price">{currency.format(product.priceInCents / 100)}</strong>
-                        {product.isOutOfStock ? (
-                          <span className="text-xs px-2 py-0.5 rounded border border-zinc-300 dark:border-zinc-700 text-zinc-500 font-medium">
-                            Esgotado
-                          </span>
-                        ) : (
-                          <span className="menu-item-rating" aria-label={`${likesCount} curtidas`}>
-                            <HeartBadgeIcon />
-                            {formatLikes(likesCount)}
-                          </span>
-                        )}
+                        <div className="menu-item-footer-actions">
+                          {!product.isOutOfStock && likesCount > 0 && (
+                            <span className="menu-item-rating" aria-label={`${likesCount} curtidas`}>
+                              <HeartBadgeIcon />
+                              {formatLikes(likesCount)}
+                            </span>
+                          )}
+                          {product.isOutOfStock ? (
+                            <span className="text-xs px-2 py-0.5 rounded border border-zinc-300 dark:border-zinc-700 text-zinc-500 font-medium">
+                              Esgotado
+                            </span>
+                          ) : (
+                            <span className="menu-item-action-pill" aria-hidden="true">
+                              Ver <b aria-hidden="true">+</b>
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </Link>

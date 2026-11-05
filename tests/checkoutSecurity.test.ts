@@ -2836,34 +2836,4 @@ describe('ETAPA 1 — Blindagem de Segurança do Checkout e das Assinaturas', ()
     assert.equal(invoices[0].amount_cents, 307890);
     assert.equal(restaurants['rest-1'].subscription_plan, 'premium');
   });
-
-  it('22. Isolamento de simulação: faturas ou orçamentos mock são rejeitados antes de invocar o gateway ou confirmar assinaturas', async () => {
-    // 1. Validação de fatura simulada é bloqueada imediatamente
-    await assert.rejects(
-      async () => {
-        await confirmSubscriptionInvoice('inv-mock-pix-12345', { restaurantId: 'rest-1' });
-      },
-      {
-        name: 'Error',
-        message: 'Fatura simulada não pode ser enviada ao gateway ou confirmada.',
-      }
-    );
-
-    // 2. Checkout com token de orçamento simulado é bloqueado imediatamente
-    await assert.rejects(
-      async () => {
-        await createSubscriptionCheckout({
-          quoteToken: 'mock-quote-token-12345',
-          restaurantId: 'rest-1',
-          targetPlan: 'premium',
-          billingCycle: 'monthly',
-          paymentMethod: 'pix',
-        });
-      },
-      {
-        name: 'Error',
-        message: 'Orçamento simulado não pode gerar cobranças reais no gateway.',
-      }
-    );
-  });
 });

@@ -9,6 +9,7 @@ import {
   calculateTabClosurePreview,
   type TableTab,
 } from '../src/features/service/tableTabs';
+import { closeTableVisit } from '../src/features/service/tableVisits';
 import {
   aggregateOpenTabs,
   collectOpenTabItems,
@@ -475,6 +476,89 @@ test('2.9 closeTableTab de produção: encerramento de conta conjunta não dispa
   assert.equal(interceptedRpcCalls.length, 1);
   assert.equal(interceptedRpcCalls[0].args.p_table_tab_id, 'tab-shared-joint');
   assert.equal(interceptedRpcCalls[0].args.p_final_service_fee_accepted, false);
+});
+
+test('2.10 closeTableTab: fechar uma comanda individual não encerra a mesa nem chama close_table_visit', async () => {
+  resetHarness();
+
+  mockRpcHandler = (fn, args) => {
+    assert.equal(fn, 'close_table_tab');
+    assert.equal(args.p_table_tab_id, 'tab-pessoa-1');
+    return {
+      data: {
+        id: 'tab-pessoa-1',
+        label: 'Comanda 1 - Lucas',
+        status: 'closed',
+        total_in_cents: 2500,
+      },
+      error: null,
+    };
+  };
+
+  const closed = await closeTableTab('noma-restaurante', 'tab-pessoa-1', true);
+  assert.equal(closed.id, 'tab-pessoa-1');
+  assert.equal(closed.status, 'closed');
+
+  // Garante que APENAS close_table_tab foi chamada, sem nenhuma chamada para close_table_visit
+  assert.equal(interceptedRpcCalls.length, 1);
+  assert.equal(interceptedRpcCalls[0].fn, 'close_table_tab');
+  assert.ok(!interceptedRpcCalls.some((c) => c.fn === 'close_table_visit'), 'Não deve invocar close_table_visit ao fechar uma comanda');
+});
+
+test('2.11 closeTableVisit: encerramento da mesa é bloqueado com erro 22023 se houver comanda aberta', async () => {
+  resetHarness();
+
+  mockRpcHandler = (fn, args) => {
+    assert.equal(fn, 'close_table_visit');
+    assert.equal(args.p_restaurant_slug, 'noma-restaurante');
+    assert.equal(args.p_table_visit_id, 'visit-mesa-1');
+    return {
+      data: null,
+      error: {
+        code: '22023',
+        message: 'Encerre todas as comandas abertas antes de finalizar o atendimento da mesa.',
+      },
+    };
+  };
+
+  await assert.rejects(
+    async () => {
+      await closeTableVisit('noma-restaurante', 'visit-mesa-1');
+    },
+    (err: Error) => {
+      assert.equal(err.message, 'Encerre todas as comandas abertas antes de finalizar o atendimento da mesa.');
+      return true;
+    },
+  );
+
+  assert.equal(interceptedRpcCalls.length, 1);
+  assert.equal(interceptedRpcCalls[0].fn, 'close_table_visit');
+});
+
+test('2.12 closeTableVisit: encerra o atendimento da mesa quando todas as comandas estão fechadas', async () => {
+  resetHarness();
+
+  const fakeClosedVisit = {
+    id: 'visit-mesa-1',
+    restaurant_id: 'rest-1',
+    restaurant_table_id: 'tbl-1',
+    status: 'closed',
+    opened_at: '2026-10-25T12:00:00Z',
+    closed_at: '2026-10-25T13:30:00Z',
+    ended_at: '2026-10-25T13:30:00Z',
+  };
+
+  mockRpcHandler = (fn, args) => {
+    assert.equal(fn, 'close_table_visit');
+    assert.equal(args.p_table_visit_id, 'visit-mesa-1');
+    return { data: fakeClosedVisit, error: null };
+  };
+
+  const visit = await closeTableVisit('noma-restaurante', 'visit-mesa-1');
+  assert.equal(visit.id, 'visit-mesa-1');
+  assert.equal(visit.status, 'closed');
+  assert.equal(interceptedRpcCalls.length, 1);
+  assert.equal(interceptedRpcCalls[0].fn, 'close_table_visit');
 });
 
 // ============================================================================

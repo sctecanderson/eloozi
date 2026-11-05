@@ -1108,73 +1108,135 @@ footer a {
     }
 }
 
-@media(max-width:768px) {
+@media(max-width:760px) {
     .admin-app {
-        display: block;
-        width: 100%;
-        min-width: 0;
-        overflow-x: hidden;
+        display: block
     }
 
     .admin-sidebar {
-        display: none;
+        position: static;
+        height: auto;
+        padding: 18px 16px;
+        border-right: 0;
+        border-bottom: 1px solid #e9e0d7
+    }
+
+    .admin-logo {
+        font-size: 24px;
+        margin: 0 0 16px;
+        text-align: left
+    }
+
+    .admin-logo img {
+        max-width: 160px;
+        height: 50px;
+        object-position: left
+    }
+
+    .admin-sidebar nav {
+        flex-direction: row;
+        overflow-x: auto;
+        gap: 8px;
+        padding-bottom: 8px
+    }
+
+    .admin-sidebar nav a {
+        white-space: nowrap;
+        min-height: 44px;
+        font-size: 13px;
+        padding: 10px 12px;
+        border: 1px solid #e9e0d7
+    }
+
+    .admin-sidebar nav a.active {
+        box-shadow: none
+    }
+
+    .admin-sidebar nav a svg {
+        width: 18px;
+        height: 18px
+    }
+
+    .admin-exit {
+        display: none
     }
 
     .admin-workspace {
-        padding: 0 12px 28px;
-        width: 100%;
-        max-width: 100%;
-        box-sizing: border-box;
+        padding: 0 16px 32px
     }
 
     .admin-topbar {
-        min-height: 56px;
-        margin-bottom: 16px;
-        font-size: 12px;
+        min-height: 60px;
+        margin-bottom: 20px;
+        font-size: 12px
+    }
+
+    .admin-topbar>span:first-child {
+        display: none
+    }
+
+    .admin-profile svg {
+        padding: 7px;
+        width: 18px;
+        height: 18px
     }
 
     .admin-card {
-        padding: 16px;
+        padding: 18px
     }
 
     .admin-grid-2 {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr
     }
 
     .admin-table-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr
     }
 
     .admin-button {
-        padding: 10px 14px;
+        padding: 10px 14px
     }
 
     .admin-page-heading {
-        gap: 12px;
+        gap: 14px
     }
 
     .admin-page-heading .admin-actions {
-        width: 100%;
+        width: 100%
     }
 
     .admin-page-heading .admin-actions button {
-        flex: 1;
+        flex: 1
     }
 
     .identity-colors {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr
     }
 
     .identity-colors input[type=color] {
-        width: 56px;
+        width: 56px
     }
 
     .tables-toolbar>input {
-        max-width: none;
+        max-width: none
+    }
+
+    .admin-sidebar .admin-exit {
+        display: flex;
+        margin-top: 8px;
+        border: 0;
+        padding: 8px;
+        min-height: 44px;
+        align-self: flex-end
+    }
+
+    .admin-sidebar .admin-exit svg {
+        width: 18px;
+        height: 18px
     }
 
     .admin-stack {
-        gap: 16px;
+        gap: 16px
     }
 }
 
@@ -2116,13 +2178,21 @@ footer a {
 
 /* Categorias (Pills horizontais) */
 .menu-categories-rail {
+    position: sticky;
+    top: 0;
+    z-index: 25;
     display: flex;
     gap: 8px;
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
-    padding-bottom: 2px;
+    padding: 8px 16px;
+    margin: 0 -16px 12px -16px;
+    background: var(--page, #fff8ef);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-bottom: 1px solid rgba(224, 210, 196, 0.5);
 }
 
 .menu-categories-rail::-webkit-scrollbar {
@@ -2133,24 +2203,35 @@ footer a {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: 5px;
     min-height: 38px;
-    padding: 0 18px;
+    padding: 0 16px;
     border-radius: 999px;
     font-family: 'Lato', sans-serif;
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 600;
     white-space: nowrap;
     border: 1px solid rgba(210, 192, 178, 0.9);
-    background: rgba(255, 252, 248, 0.85);
+    background: rgba(255, 252, 248, 0.9);
     color: var(--ink, #2b1d17);
     cursor: pointer;
     transition: all 0.2s ease;
+    flex-shrink: 0;
 }
 
 .menu-category-pill.active {
     background: var(--brand, #b9472b);
     border-color: var(--brand, #b9472b);
     color: #ffffff;
+    box-shadow: 0 2px 8px rgba(185, 71, 43, 0.25);
+    font-weight: 700;
+}
+
+.menu-category-count {
+    display: inline-block;
+    font-size: 11px;
+    opacity: 0.85;
+    font-weight: 600;
 }
 
 /* Prato Destaque (Hero Card) */
@@ -2244,26 +2325,51 @@ footer a {
     color: #e63946;
 }
 
-.menu-featured-desc-row {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 12px;
-}
-
 .menu-featured-desc {
     margin: 0;
-    font-size: 12px;
+    font-size: 12.5px;
     line-height: 1.4;
     color: color-mix(in srgb, var(--ink, #2b1d17) 65%, transparent);
-    max-width: 75%;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.menu-featured-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(224, 210, 196, 0.7);
 }
 
 .menu-featured-price {
-    font-size: 17px;
+    font-size: 18px;
     font-weight: 700;
     color: var(--ink, #2b1d17);
     white-space: nowrap;
+}
+
+.menu-featured-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--brand, #b9472b);
+    color: #ffffff;
+    font-size: 11.5px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 999px;
+    line-height: 1;
+    transition: opacity 0.2s ease, transform 0.15s ease;
+}
+
+.menu-featured-btn:hover {
+    opacity: 0.92;
+    transform: scale(1.02);
 }
 
 /* Lista de Itens do Cardápio (Cards Horizontais) */
@@ -2323,9 +2429,12 @@ footer a {
     font-size: 15px;
     font-weight: 700;
     color: var(--ink, #2b1d17);
-    white-space: nowrap;
+    line-height: 1.25;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
+    word-break: break-word;
 }
 
 .menu-item-desc {
@@ -2337,20 +2446,46 @@ footer a {
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    min-height: 29px;
 }
 
 .menu-item-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-top: 2px;
+    gap: 8px;
+    margin-top: 3px;
 }
 
 .menu-item-price {
-    font-size: 14.5px;
+    font-size: 15px;
     font-weight: 700;
     color: var(--ink, #2b1d17);
+    white-space: nowrap;
+}
+
+.menu-item-footer-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.menu-item-action-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: var(--brand, #b9472b);
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 5px 11px;
+    border-radius: 999px;
+    line-height: 1;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.menu-item-action-pill:hover {
+    opacity: 0.92;
+    transform: scale(1.02);
 }
 
 .menu-item-rating {
@@ -2557,7 +2692,8 @@ footer a {
 .product-meta-row {
     display: flex;
     align-items: center;
-    gap: 16px;
+    flex-wrap: wrap;
+    gap: 10px 16px;
     font-size: 13px;
     font-weight: 600;
     color: var(--ink, #2b1d17);
@@ -2566,7 +2702,8 @@ footer a {
 .product-meta-item {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
+    white-space: nowrap;
 }
 
 .product-meta-item svg {
@@ -2658,6 +2795,18 @@ footer a {
     font-weight: 700;
     color: var(--ink, #2b1d17);
     margin-top: 2px;
+}
+
+.product-action-box {
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(224, 210, 196, 0.85);
+    backdrop-filter: blur(8px);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-theme="dark"] .product-action-box {
+    background: rgba(28, 24, 21, 0.85);
+    border-color: rgba(255, 255, 255, 0.12);
 }
 
 /* Seções de Texto e Detalhes */
@@ -3042,7 +3191,6 @@ footer a {
     font-size: 13px;
     color: #8c7867;
     text-align: center;
-    background: linear-gradient(135deg, rgba(97, 0, 0, 0.05) 0%, rgba(217, 119, 6, 0.06) 100%);
 }
 
 .home-dish-rating {
@@ -3087,8 +3235,14 @@ footer a {
     margin: 0;
     font-size: 14.5px;
     font-weight: 700;
-    line-height: 1.2;
+    line-height: 1.25;
     color: var(--ink, #2b1d17);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+    flex: 1;
 }
 
 .home-dish-inline-rating {
@@ -3220,15 +3374,15 @@ footer a {
     transform: translateX(-50%);
     width: min(calc(100% - 36px), 440px);
     height: 64px;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    display: flex;
     align-items: center;
+    justify-content: space-around;
     background: rgba(255, 252, 248, 0.96);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     border: 1px solid rgba(220, 204, 188, 0.85);
     border-radius: 999px;
-    padding: 4px 10px;
+    padding: 4px 8px;
     box-shadow: 0 10px 30px rgba(35, 21, 14, 0.16);
     z-index: 50;
 }
@@ -3248,7 +3402,9 @@ footer a {
     font-size: 10px;
     font-weight: 600;
     cursor: pointer;
-    padding: 6px 0;
+    padding: 6px 2px;
+    flex: 1 1 0;
+    min-width: 0;
     border-radius: 999px;
     transition: color 0.15s ease;
 }
@@ -4484,6 +4640,11 @@ footer a {
     color: #ffffff;
 }
 
+.tab-flow-step-num.done {
+    background: #DCFCE7;
+    color: #15803D;
+}
+
 .tab-flow-step-label {
     font-size: 11px;
     color: #8C7C6E;
@@ -4623,6 +4784,11 @@ footer a {
 [data-theme="dark"] .tab-flow-step-num.active {
     background: #ea580c;
     color: #ffffff;
+}
+
+[data-theme="dark"] .tab-flow-step-num.done {
+    background: rgba(22, 101, 52, 0.35);
+    color: #4ade80;
 }
 
 [data-theme="dark"] .tab-flow-step-label {
@@ -6633,7 +6799,6 @@ footer a {
 
 [data-theme="dark"] .home-dish-placeholder {
     color: #a8988a;
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.06) 100%);
 }
 
 /* Busca e Categorias do Cardápio */
@@ -6666,6 +6831,15 @@ footer a {
     background: var(--brand, #b9472b);
     border-color: var(--brand, #b9472b);
     color: #ffffff;
+}
+
+[data-theme="dark"] .menu-categories-rail {
+    background: rgba(18, 14, 11, 0.96);
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .menu-featured-footer {
+    border-top-color: rgba(255, 255, 255, 0.1);
 }
 
 [data-theme="dark"] .menu-categories-bar {

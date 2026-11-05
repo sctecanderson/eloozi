@@ -94,20 +94,7 @@ function ProductCard({ product, restaurantSlug, tableQuery, likesCount }: {
           />
         ) : (
           <div className="home-dish-placeholder" aria-hidden="true">
-            <div className="flex flex-col items-center justify-center gap-1.5 p-3 text-center">
-              <span className="w-8 h-8 rounded-full bg-[#610000]/10 dark:bg-white/10 text-[#610000] dark:text-amber-300 flex items-center justify-center">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
-                  <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
-                  <line x1="6" y1="1" x2="6" y2="4" />
-                  <line x1="10" y1="1" x2="10" y2="4" />
-                  <line x1="14" y1="1" x2="14" y2="4" />
-                </svg>
-              </span>
-              <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 line-clamp-2">
-                {product.name}
-              </span>
-            </div>
+            {product.name}
           </div>
         )}
         {badgeText && (

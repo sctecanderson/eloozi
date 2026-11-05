@@ -165,10 +165,6 @@ export async function createSubscriptionCheckout(params: {
 }): Promise<CheckoutResult> {
   const client = params.supabaseClient ?? supabase;
 
-  if (params.quoteToken?.startsWith('mock-') || params.quoteToken?.includes('mock')) {
-    throw new Error('Orçamento simulado não pode gerar cobranças reais no gateway.');
-  }
-
   // Checkout exclusivamente via endpoint de servidor (asaas-checkout).
   // Nenhum fallback local ou modo de simulação enviado pelo navegador é permitido.
   const { data: fnData, error: fnError } = await client.functions.invoke('asaas-checkout', {
@@ -228,10 +224,6 @@ export async function confirmSubscriptionInvoice(
   const trimmedInvoiceId = (invoiceId || '').trim();
   if (!trimmedInvoiceId) {
     throw new Error('ID da fatura é obrigatório para validar o pagamento.');
-  }
-
-  if (trimmedInvoiceId.startsWith('inv-mock') || trimmedInvoiceId.includes('mock')) {
-    throw new Error('Fatura simulada não pode ser enviada ao gateway ou confirmada.');
   }
 
   const client = options?.supabaseClient ?? supabase;

@@ -978,7 +978,7 @@ export function AdminCommentsPage() {
         </div>
 
         {/* Direita: Busca e Seletor de Status */}
-        <div className="flex items-center gap-3 flex-1 sm:flex-initial min-w-0 w-full sm:w-auto">
+        <div className="flex items-center gap-3 flex-1 sm:flex-initial min-w-[280px]">
           {/* Input de Busca */}
           <div className="relative flex-1 sm:w-64 lg:w-72">
             <svg

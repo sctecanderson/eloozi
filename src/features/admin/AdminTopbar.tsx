@@ -282,30 +282,29 @@ export function AdminTopbar({ restaurant, onOpenMobileMenu }: AdminTopbarProps) 
 
   return (
     <header
-      className={`admin-topbar print:hidden px-3.5 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-2.5 sm:gap-4 border-b transition-colors duration-200 ${
+      className={`admin-topbar print:hidden px-6 py-2.5 sm:py-3 flex items-center justify-between gap-4 border-b transition-colors duration-200 ${
         isDark
           ? 'bg-[#18181b] border-zinc-800 text-white'
           : 'bg-white border-zinc-200/80 text-zinc-900 shadow-2xs'
       }`}
     >
-      {/* Lado Esquerdo: Hambúrguer Mobile + Título Compacto */}
-      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+      {/* Lado Esquerdo: Botão mobile + Título e Subtítulo Compactos */}
+      <div className="flex items-center gap-3">
         {onOpenMobileMenu && (
           <button
             type="button"
             onClick={onOpenMobileMenu}
-            className="md:hidden p-2 -ml-1 rounded-xl text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer shrink-0"
             aria-label="Abrir menu de navegação"
-            title="Abrir menu de navegação"
+            className="md:hidden p-1.5 -ml-1 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer"
           >
             <svg
-              className="w-5 h-5"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
+              className="w-5 h-5"
               aria-hidden="true"
             >
               <line x1="3" y1="12" x2="21" y2="12" />
@@ -314,28 +313,28 @@ export function AdminTopbar({ restaurant, onOpenMobileMenu }: AdminTopbarProps) 
             </svg>
           </button>
         )}
-        <div className="flex flex-col justify-center leading-tight min-w-0">
-          <span className="text-xs font-black uppercase tracking-wider text-[#610000] dark:text-red-400 truncate">
+        <div className="flex flex-col justify-center leading-tight">
+          <span className="text-xs font-black uppercase tracking-wider text-[#610000] dark:text-red-400">
             ADMINISTRAÇÃO
           </span>
-          <span className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium truncate hidden sm:block">
+          <span className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
             Gerencie seu restaurante
           </span>
         </div>
       </div>
 
       {/* Lado Direito: Indicador do restaurante, sons, notificações, tema e perfil */}
-      <div className="flex items-center gap-1.5 sm:gap-4 shrink-0">
+      <div className="flex items-center gap-3 sm:gap-4">
         {/* Indicador do restaurante ativo com bolinha verde (● NOMA) */}
         <div
-          className={`inline-flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-xs font-bold border transition-colors max-w-[130px] sm:max-w-none ${
+          className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${
             isDark
               ? 'border-emerald-500/30 bg-emerald-950/40 text-emerald-400'
               : 'border-emerald-300 bg-emerald-50 text-emerald-800'
           }`}
         >
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-          <span className="uppercase tracking-wider font-extrabold truncate">{restaurant.name}</span>
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="uppercase tracking-wider font-extrabold">{restaurant.name}</span>
         </div>
 
         {/* Controle de Áudio e Toques Personalizáveis: EXCLUSIVO para KDS */}

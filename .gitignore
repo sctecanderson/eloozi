@@ -6,7 +6,8 @@ dist/
 !.env.example
 
 .agents/
-/docs/validacoes/
+/docs/
+*.log
 
 supabase/.temp/
 .backup-check/
@@ -18,4 +19,32 @@ __pycache__/
 
 /RELATORIO_FINAL_RESERVAS.md
 /RELATORIO_VALIDACAO_BANCO_ISOLADO.md
+/CONTINUIDADE_CODEX.md
+/LEIA-ME-ENTREGA.md
+/README_ENTREGA.md
+skills-lock.json
 /eloozi_reservas*.zip
+
+# Pacotes de entrega
+/artifacts/
+*.zip
+
+# Listagem gerada
+/filelist.txt
+# Certificados e chaves privadas locais
+*.pem
+*.key
+*.pfx
+.vercel
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Scripts locais de teste e inspeção
+scripts/capture-menu.mjs
+scripts/inspect-menu.mjs
+scripts/test-menu-flows.mjs
+scripts/test-establishment-registration-db.mjs
+scripts/test-table-closing-db.mjs
+scripts/test-test-grant-db.mjs
+

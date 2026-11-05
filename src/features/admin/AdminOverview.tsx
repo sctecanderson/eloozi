@@ -132,7 +132,7 @@ export function AdminOverview() {
       reader.readAsDataURL(file);
 
       // 2. Upload para o Supabase Storage (sem alterar a identidade/logo do cardápio público)
-      const draftPhoto = await preparePhoto(file, `${r.name}-dashboard-logo`, 'logo');
+      const draftPhoto = await preparePhoto(file, `${r.name}-dashboard-logo`);
       const uploadedMedia = await uploadIdentity(
         draftPhoto,
         r.id,
@@ -221,14 +221,17 @@ export function AdminOverview() {
 
   const [bannerImage, setBannerImage] = useState(() => {
     try {
-      const stored =
+      return (
         localStorage.getItem(`elozi_dashboard_banner_${r.id}`) ||
         r.dashboardBannerUrl ||
         localStorage.getItem(`elozi_banner_image_${r.id}`) ||
-        "";
-      return stored && !stored.includes("images.unsplash.com") ? stored : (r.dashboardBannerUrl || "");
+        "https://images.unsplash.com/photo-1544025162-d76694265947?w=1600&auto=format&fit=crop&q=80"
+      );
     } catch {
-      return r.dashboardBannerUrl || "";
+      return (
+        r.dashboardBannerUrl ||
+        "https://images.unsplash.com/photo-1544025162-d76694265947?w=1600&auto=format&fit=crop&q=80"
+      );
     }
   });
 
@@ -267,7 +270,7 @@ export function AdminOverview() {
 
     // 2. Upload para o Supabase Storage (sem alterar a capa do cardápio público)
     try {
-      const draftPhoto = await preparePhoto(croppedFile, `${r.name}-dashboard-banner`, 'cover');
+      const draftPhoto = await preparePhoto(croppedFile, `${r.name}-dashboard-banner`);
       const uploaded = await uploadIdentity(
         draftPhoto,
         r.id,
@@ -937,17 +940,22 @@ export function AdminOverview() {
                   className="object-cover w-full h-full rounded-xl"
                 />
               ) : (
-                <div className="absolute inset-0 bg-gradient-to-br from-[#610000] via-[#4A0000] to-[#2B0000] flex flex-col items-center justify-center p-2 text-center">
-                  <div className="w-9 h-9 rounded-full bg-white/15 border border-white/20 flex items-center justify-center mb-1 text-white font-extrabold text-xs uppercase shadow-xs">
-                    {r.name.slice(0, 2)}
+                <>
+                  <img
+                    src={bannerImage}
+                    alt={r.name}
+                    className="absolute inset-0 w-full h-full object-cover opacity-50"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/30" />
+                  <div className="relative z-10 px-2">
+                    <span className="block font-serif text-sm font-bold tracking-[0.18em] text-white uppercase drop-shadow-xs line-clamp-1">
+                      {r.name}
+                    </span>
+                    <span className="block text-[8px] font-semibold tracking-[0.16em] text-amber-200/90 uppercase mt-0.5 line-clamp-1">
+                      {r.subtitle || "Restaurante e Bar"}
+                    </span>
                   </div>
-                  <span className="block font-serif text-[11px] font-bold tracking-[0.14em] text-white uppercase drop-shadow-xs line-clamp-1">
-                    {r.name}
-                  </span>
-                  <span className="block text-[8px] font-semibold tracking-[0.14em] text-amber-200/90 uppercase mt-0.5 line-clamp-1">
-                    {r.subtitle || "Restaurante"}
-                  </span>
-                </div>
+                </>
               )}
 
               {/* Overlay suave exclusivamente no hover com 'Editar foto' */}
@@ -1030,35 +1038,16 @@ export function AdminOverview() {
             title="Clique para alterar a foto da fachada/banner"
             className="hidden sm:block w-[45%] lg:w-[48%] h-[calc(100%-16px)] m-2 rounded-xl overflow-hidden relative shrink-0 group cursor-pointer border border-zinc-200/50 dark:border-zinc-800 shadow-2xs"
           >
-            {bannerMode === "image" && bannerImage ? (
-              <div
-                className="w-full h-full"
-                style={{
-                  backgroundColor: bannerColor,
-                  backgroundImage: `url(${bannerImage})`,
-                  backgroundSize: "cover",
-                  backgroundPosition: "center",
-                }}
-              />
-            ) : (
-              <div
-                className="w-full h-full flex flex-col items-center justify-center text-center p-4 transition-colors"
-                style={{
-                  background: bannerColor && bannerColor !== "#3B1406"
-                    ? `linear-gradient(135deg, ${bannerColor}ee, #1e0a04)`
-                    : "linear-gradient(135deg, #4A0000, #1E0A04)",
-                }}
-              >
-                <div className="w-10 h-10 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-amber-300 mb-2">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
-                    <circle cx="12" cy="13" r="3" />
-                  </svg>
-                </div>
-                <p className="text-xs font-bold text-white">Adicionar foto de capa</p>
-                <p className="text-[10px] text-zinc-300 mt-0.5">Personalize o banner da fachada</p>
-              </div>
-            )}
+            <div
+              className="w-full h-full"
+              style={{
+                backgroundColor: bannerColor,
+                backgroundImage:
+                  bannerMode === "image" ? `url(${bannerImage})` : undefined,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }}
+            />
             {/* Overlay sutil exclusivamente no hover para trocar a foto */}
             <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1 text-white">
               <svg
@@ -1169,41 +1158,6 @@ export function AdminOverview() {
           </div>
         </div>
       </div>
-
-      {/* Orientação para Restaurantes Novos (sem fotos de identidade/cardápio) */}
-      {(!logoUrl || !bannerImage) && (
-        <div className="rounded-2xl border border-amber-300/80 bg-amber-50/90 dark:border-amber-700/50 dark:bg-amber-950/30 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5 shadow-xs">
-          <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-300 flex items-center justify-center shrink-0 mt-0.5">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-sm font-bold text-amber-950 dark:text-amber-100">
-                Personalize a apresentação do seu restaurante
-              </h2>
-              <p className="text-xs text-amber-800/90 dark:text-amber-200/80 mt-0.5 leading-relaxed">
-                Seu cardápio ainda não possui fotos personalizadas. Cadastre sua logo, capa e as fotos dos seus pratos para encantar seus clientes.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-            <Link
-              to={`/${r.slug}/admin/identidade`}
-              className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-2xs transition-colors whitespace-nowrap"
-            >
-              Personalizar Identidade
-            </Link>
-            <Link
-              to={`/${r.slug}/admin/catalogo`}
-              className="px-3 py-1.5 rounded-lg border border-amber-400/80 dark:border-amber-700 bg-white dark:bg-zinc-900 text-amber-900 dark:text-amber-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 font-bold text-xs transition-colors whitespace-nowrap"
-            >
-              Fotos do Cardápio
-            </Link>
-          </div>
-        </div>
-      )}
 
       {/* =====================================================================
           LINHA 2: 5 CARDS DE KPI EM TEMPO REAL COM SPARKLINES SVG

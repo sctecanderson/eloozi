@@ -1277,7 +1277,7 @@ export function TablesPage() {
         {/* Linha 1: Input de Busca + Selects */}
         <div className="flex flex-wrap items-center gap-3">
           {/* Input de Busca */}
-          <div className="relative flex-1 min-w-0 w-full sm:min-w-[240px]">
+          <div className="relative flex-1 min-w-[260px]">
             <svg
               className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400"
               viewBox="0 0 24 24"

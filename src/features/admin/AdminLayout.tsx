@@ -97,6 +97,9 @@ export function AdminLayout() {
   if (r.subscriptionExpiresAt) {
     const diffMs = new Date(r.subscriptionExpiresAt).getTime() - Date.now();
     diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  } else if (r.effectiveSubscription?.original_trial_end) {
+    const diffMs = new Date(r.effectiveSubscription.original_trial_end).getTime() - Date.now();
+    diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
   }
 
   const isTrial = r.subscriptionIsTrial === true;

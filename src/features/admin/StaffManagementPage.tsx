@@ -1697,12 +1697,10 @@ function TeamContent({ slug }: { slug: string }) {
                       </div>
 
                       {/* Status e Ações */}
-                      <div className="flex items-center gap-2 sm:gap-3 self-end md:self-center shrink-0 flex-wrap justify-end">
-                        {/* Status Badge: Indicador compacto no mobile (< sm), rótulo textual completo no desktop */}
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3 self-start md:self-center shrink-0">
+                        {/* Status Badge */}
                         <div
-                          title={STAFF_ACCESS_LABEL[staffAccessState(m)]}
-                          aria-label={STAFF_ACCESS_LABEL[staffAccessState(m)]}
-                          className={`inline-flex items-center gap-1.5 p-1.5 sm:px-2.5 sm:py-1 rounded-full text-xs font-semibold ${
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
                             staffAccessState(m) === 'access_active'
                               ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60'
                               : staffAccessState(m) === 'access_inactive'
@@ -1713,7 +1711,7 @@ function TeamContent({ slug }: { slug: string }) {
                           }`}
                         >
                           <span
-                            className={`w-2 h-2 sm:w-1.5 sm:h-1.5 rounded-full shrink-0 ${
+                            className={`w-1.5 h-1.5 rounded-full ${
                               staffAccessState(m) === 'access_active'
                                 ? 'bg-emerald-500'
                                 : staffAccessState(m) === 'access_inactive'
@@ -1723,8 +1721,7 @@ function TeamContent({ slug }: { slug: string }) {
                                     : 'bg-amber-500'
                             }`}
                           />
-                          <span className="hidden sm:inline">{STAFF_ACCESS_LABEL[staffAccessState(m)]}</span>
-                          <span className="sr-only sm:hidden">{STAFF_ACCESS_LABEL[staffAccessState(m)]}</span>
+                          <span>{STAFF_ACCESS_LABEL[staffAccessState(m)]}</span>
                         </div>
 
                         {m.isRemoved ? (
@@ -1732,12 +1729,12 @@ function TeamContent({ slug }: { slug: string }) {
                             Histórico preservado
                           </span>
                         ) : (
-                          <>
+                          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                             {/* Botão Editar */}
                             <button
                               type="button"
                               onClick={() => handleEditMember(m)}
-                              className="px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                              className="px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
                             >
                               Editar
                             </button>
@@ -1748,7 +1745,7 @@ function TeamContent({ slug }: { slug: string }) {
                                 type="button"
                                 onClick={() => void handleToggleActive(m)}
                                 disabled={busy}
-                                className="px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer disabled:opacity-50"
+                                className="px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer disabled:opacity-50"
                               >
                                 {m.active ? 'Desativar' : 'Ativar'}
                               </button>
@@ -1787,7 +1784,7 @@ function TeamContent({ slug }: { slug: string }) {
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                               </svg>
                             </button>
-                          </>
+                          </div>
                         )}
                       </div>
                     </div>

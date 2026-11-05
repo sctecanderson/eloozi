@@ -38,10 +38,6 @@ function formatDate(isoString?: string | null) {
   }
 }
 
-function formatBrl(val: number) {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
-}
-
 function suggestSlug(name: string) {
   return name
     .normalize('NFD')
@@ -322,7 +318,6 @@ function PlatformRestaurantsContent() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Formulário de cadastro
-  const [createFormOpen, setCreateFormOpen] = useState(false);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [slugEdited, setSlugEdited] = useState(false);
@@ -2160,414 +2155,201 @@ function PlatformRestaurantsContent() {
               ABA: CLIENTES / RESTAURANTES
              ---------------------------------------------------------------- */}
           {activeTab === 'restaurants' && (
-            <div className="space-y-6">
-              {/* 3.0 — Mini-Dashboard Executivo de Métricas da Carteira */}
-              <section aria-label="Indicadores da plataforma" className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                {/* 1. Total de Estabelecimentos */}
-                <div className="rounded-2xl border border-slate-200/80 dark:border-stone-800 bg-white dark:bg-stone-900 p-4 shadow-xs flex flex-col justify-between hover:border-slate-300 dark:hover:border-stone-700 transition-colors">
-                  <div className="flex items-center justify-between text-slate-500 dark:text-stone-400">
-                    <span className="text-[11px] font-extrabold uppercase tracking-wider">Restaurantes</span>
-                    <span className="p-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400">
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                        <polyline points="9 22 9 12 15 12 15 22" />
-                      </svg>
-                    </span>
-                  </div>
-                  <div className="mt-3">
-                    <div className="flex items-baseline gap-2">
-                      <strong className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-                        {restaurants.length}
-                      </strong>
-                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                        {activeCount} ativos
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 dark:text-stone-500 mt-0.5">
-                      {archivedCount > 0 ? `${archivedCount} arquivado(s)` : 'Nenhum arquivado'}
-                    </p>
-                  </div>
-                </div>
-
-                {/* 2. MRR da Carteira */}
-                <div className="rounded-2xl border border-slate-200/80 dark:border-stone-800 bg-white dark:bg-stone-900 p-4 shadow-xs flex flex-col justify-between hover:border-slate-300 dark:hover:border-stone-700 transition-colors">
-                  <div className="flex items-center justify-between text-slate-500 dark:text-stone-400">
-                    <span className="text-[11px] font-extrabold uppercase tracking-wider">MRR Carteira</span>
-                    <span className="p-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400">
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="12" y1="1" x2="12" y2="23" />
-                        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                      </svg>
-                    </span>
-                  </div>
-                  <div className="mt-3">
-                    <strong className="text-2xl font-black text-slate-900 dark:text-white tracking-tight font-mono block">
-                      {formatBrl(realMrr)}
-                    </strong>
-                    <p className="text-[11px] font-semibold text-slate-500 dark:text-stone-400 mt-0.5">
-                      ARR: {formatBrl(arr)}
-                    </p>
-                  </div>
-                </div>
-
-                {/* 3. Ticket Médio (ARPU) */}
-                <div className="rounded-2xl border border-slate-200/80 dark:border-stone-800 bg-white dark:bg-stone-900 p-4 shadow-xs flex flex-col justify-between hover:border-slate-300 dark:hover:border-stone-700 transition-colors">
-                  <div className="flex items-center justify-between text-slate-500 dark:text-stone-400">
-                    <span className="text-[11px] font-extrabold uppercase tracking-wider">Ticket Médio</span>
-                    <span className="p-1.5 rounded-xl bg-teal-50 dark:bg-teal-950/40 text-teal-600 dark:text-teal-400">
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10" />
-                        <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8" />
-                        <line x1="12" y1="6" x2="12" y2="8" />
-                        <line x1="12" y1="16" x2="12" y2="18" />
-                      </svg>
-                    </span>
-                  </div>
-                  <div className="mt-3">
-                    <strong className="text-2xl font-black text-slate-900 dark:text-white tracking-tight font-mono block">
-                      {formatBrl(arpu)}
-                    </strong>
-                    <p className="text-[11px] text-slate-400 dark:text-stone-500 mt-0.5">
-                      por restaurante ativo
-                    </p>
-                  </div>
-                </div>
-
-                {/* 4. Mesas em Operação */}
-                <div className="rounded-2xl border border-slate-200/80 dark:border-stone-800 bg-white dark:bg-stone-900 p-4 shadow-xs flex flex-col justify-between hover:border-slate-300 dark:hover:border-stone-700 transition-colors">
-                  <div className="flex items-center justify-between text-slate-500 dark:text-stone-400">
-                    <span className="text-[11px] font-extrabold uppercase tracking-wider">Mesas Ativas</span>
-                    <span className="p-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400">
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="3" y="3" width="18" height="18" rx="2" />
-                        <path d="M3 9h18" />
-                        <path d="M9 21V9" />
-                      </svg>
-                    </span>
-                  </div>
-                  <div className="mt-3">
-                    <div className="flex items-baseline gap-1.5">
-                      <strong className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-                        {totalActiveTables}
-                      </strong>
-                      <span className="text-xs font-semibold text-slate-400">
-                        / {totalMaxTables} contratadas
-                      </span>
-                    </div>
-                    <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5">
-                      {globalTableCapacityPercent}% de utilização global
-                    </p>
-                  </div>
-                </div>
-              </section>
-
-              {/* 3.1 — Cabeçalho Operacional + Ação de Cadastro */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-8">
+              {/* 3.1 — Card "Cadastrar restaurante" */}
+              <section className="rounded-2xl border border-slate-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-6 shadow-xs">
                 <div>
-                  <div className="flex items-center gap-2.5">
-                    <h2 id="restaurants-title" className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                      Restaurantes & Bares
-                    </h2>
-                    <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-slate-100 dark:bg-stone-800 text-slate-700 dark:text-stone-300 border border-slate-200 dark:border-stone-700">
-                      {filteredRestaurants.length}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 dark:text-stone-400 mt-0.5">
-                    Estabelecimentos gerenciados, planos SaaS, vigência e limites operacionais.
+                  <h2 className="text-lg font-black text-slate-900 dark:text-white tracking-tight">
+                    Cadastrar restaurante
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-stone-400 mt-1">
+                    Crie o estabelecimento para iniciar sua configuração e gerar o cardápio digital.
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setCreateFormOpen((prev) => !prev)}
-                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
-                  >
-                    {createFormOpen ? (
-                      <>
-                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                        <span>Fechar formulário</span>
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <line x1="12" y1="5" x2="12" y2="19" />
-                          <line x1="5" y1="12" x2="19" y2="12" />
-                        </svg>
-                        <span>Novo restaurante</span>
-                      </>
-                    )}
-                  </button>
+                <form onSubmit={(e) => void handleSubmit(e)} className="mt-5">
+                  <fieldset disabled={busy} className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label htmlFor="restaurant-name" className="block text-xs font-bold text-slate-700 dark:text-stone-300 mb-1">
+                          Nome do restaurante
+                        </label>
+                        <input
+                          id="restaurant-name"
+                          required
+                          maxLength={120}
+                          value={name}
+                          placeholder="Ex.: Churrascaria da Brusque"
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            requestId.current = null;
+                            setName(val);
+                            setError('');
+                            setNotice('');
+                            if (!slugEdited) setSlug(suggestSlug(val));
+                          }}
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-stone-700 bg-[#fffdfa] dark:bg-stone-800 text-slate-900 dark:text-stone-100 text-sm font-semibold placeholder:text-slate-400 focus:outline-none focus:border-slate-400 shadow-2xs"
+                        />
+                      </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setRefresh((c) => c + 1)}
-                    disabled={loading || busy}
-                    className="p-2 rounded-xl border border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-800 hover:bg-slate-50 dark:hover:bg-stone-700 text-slate-700 dark:text-stone-300 transition-colors shadow-2xs cursor-pointer flex items-center justify-center"
-                    title="Atualizar lista de restaurantes"
-                    aria-label="Atualizar lista"
-                  >
-                    <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="23 4 23 10 17 10" />
-                      <polyline points="1 20 1 14 7 14" />
-                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              {/* 3.2 — Card Formulário de Cadastro Recolhível */}
-              {createFormOpen && (
-                <section className="rounded-2xl border-2 border-emerald-500/30 bg-gradient-to-b from-emerald-50/20 to-white dark:from-emerald-950/20 dark:to-stone-900 p-5 sm:p-6 shadow-sm transition-all">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-base font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
-                        <span>Cadastrar Novo Restaurante</span>
-                      </h3>
-                      <p className="text-xs text-slate-500 dark:text-stone-400 mt-1">
-                        Crie o estabelecimento para iniciar sua configuração, gerar o cardápio digital e vincular administradores.
-                      </p>
+                      <div>
+                        <label htmlFor="restaurant-slug" className="block text-xs font-bold text-slate-700 dark:text-stone-300 mb-1">
+                          Endereço do cardápio
+                        </label>
+                        <input
+                          id="restaurant-slug"
+                          required
+                          minLength={3}
+                          maxLength={80}
+                          pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          value={slug}
+                          placeholder="churrascaria-da-brusque"
+                          onChange={(e) => {
+                            requestId.current = null;
+                            setSlugEdited(true);
+                            setSlug(e.target.value.toLowerCase());
+                            setError('');
+                            setNotice('');
+                          }}
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-stone-700 bg-[#fffdfa] dark:bg-stone-800 text-slate-900 dark:text-stone-100 text-sm font-semibold placeholder:text-slate-400 focus:outline-none focus:border-slate-400 shadow-2xs font-mono"
+                        />
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setCreateFormOpen(false)}
-                      className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-stone-300 cursor-pointer"
-                      aria-label="Fechar formulário"
-                    >
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                      </svg>
-                    </button>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                      <p className="text-xs text-slate-500 dark:text-stone-400">
+                        Endereço previsto: <strong className="font-mono text-slate-800 dark:text-stone-200">/{slug || 'nome-do-restaurante'}</strong>. Escolha um endereço permanente para usar nos QR Codes.
+                      </p>
+
+                      <button
+                        type="submit"
+                        className="px-5 py-2.5 rounded-xl bg-[#1e293b] hover:bg-[#0f172a] text-white text-xs font-bold transition-all shadow-xs shrink-0 cursor-pointer disabled:opacity-50"
+                      >
+                        {busy && !setupRestaurantId && !statusBusy && !archiveBusy
+                          ? 'Cadastrando…'
+                          : '+ Cadastrar restaurante'}
+                      </button>
+                    </div>
+                  </fieldset>
+                </form>
+              </section>
+
+              {/* 3.2 — Seção "Restaurantes" */}
+              <section aria-labelledby="restaurants-title" className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 id="restaurants-title" className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+                      Restaurantes
+                    </h2>
+                    <p className="text-xs text-slate-500 dark:text-stone-400">
+                      Estabelecimentos gerenciados e suas operações ativas.
+                    </p>
                   </div>
 
-                  <form onSubmit={(e) => void handleSubmit(e)} className="mt-4">
-                    <fieldset disabled={busy} className="space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label htmlFor="restaurant-name" className="block text-xs font-bold text-slate-700 dark:text-stone-300 mb-1">
-                            Nome do restaurante
-                          </label>
-                          <input
-                            id="restaurant-name"
-                            required
-                            maxLength={120}
-                            value={name}
-                            placeholder="Ex.: Churrascaria da Brusque"
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              requestId.current = null;
-                              setName(val);
-                              setError('');
-                              setNotice('');
-                              if (!slugEdited) setSlug(suggestSlug(val));
-                            }}
-                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-slate-900 dark:text-stone-100 text-sm font-semibold placeholder:text-slate-400 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-2xs"
-                          />
-                        </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Filtros Ativos / Arquivados */}
+                    <div className="inline-flex p-1 rounded-xl bg-slate-200/60 dark:bg-stone-800 border border-slate-200 dark:border-stone-700 text-xs font-bold">
+                      <button
+                        type="button"
+                        onClick={() => setRestaurantFilter('current')}
+                        className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                          restaurantFilter === 'current'
+                            ? 'bg-slate-900 text-white shadow-xs'
+                            : 'text-slate-600 dark:text-stone-400 hover:text-slate-900'
+                        }`}
+                      >
+                        Ativos [{activeCount}]
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRestaurantFilter('archived')}
+                        className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                          restaurantFilter === 'archived'
+                            ? 'bg-slate-900 text-white shadow-xs'
+                            : 'text-slate-600 dark:text-stone-400 hover:text-slate-900'
+                        }`}
+                      >
+                        Arquivados [{archivedCount}]
+                      </button>
+                    </div>
 
-                        <div>
-                          <label htmlFor="restaurant-slug" className="block text-xs font-bold text-slate-700 dark:text-stone-300 mb-1">
-                            Endereço do cardápio (slug)
-                          </label>
-                          <input
-                            id="restaurant-slug"
-                            required
-                            minLength={3}
-                            maxLength={80}
-                            pattern="[a-z0-9]+(-[a-z0-9]+)*"
-                            autoCapitalize="none"
-                            autoCorrect="off"
-                            spellCheck={false}
-                            value={slug}
-                            placeholder="churrascaria-da-brusque"
-                            onChange={(e) => {
-                              requestId.current = null;
-                              setSlugEdited(true);
-                              setSlug(e.target.value.toLowerCase());
-                              setError('');
-                              setNotice('');
-                            }}
-                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-slate-900 dark:text-stone-100 text-sm font-semibold placeholder:text-slate-400 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-2xs font-mono"
-                          />
-                        </div>
-                      </div>
+                    {/* Filtros Rápidos por Plano */}
+                    <div className="inline-flex p-1 rounded-xl bg-slate-100 dark:bg-stone-800/80 border border-slate-200 dark:border-stone-700 text-xs font-bold">
+                      <button
+                        type="button"
+                        onClick={() => setPlanFilter('all')}
+                        className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                          planFilter === 'all'
+                            ? 'bg-slate-900 text-white dark:bg-stone-100 dark:text-stone-900 shadow-2xs'
+                            : 'text-slate-600 dark:text-stone-400 hover:text-slate-900'
+                        }`}
+                      >
+                        Todos
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPlanFilter('basic')}
+                        className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                          planFilter === 'basic'
+                            ? 'bg-blue-600 text-white shadow-2xs'
+                            : 'text-slate-600 dark:text-stone-400 hover:text-blue-600'
+                        }`}
+                      >
+                        Básico
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPlanFilter('pro')}
+                        className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                          planFilter === 'pro'
+                            ? 'bg-teal-600 text-white shadow-2xs'
+                            : 'text-slate-600 dark:text-stone-400 hover:text-teal-600'
+                        }`}
+                      >
+                        Pro
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPlanFilter('premium')}
+                        className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                          planFilter === 'premium'
+                            ? 'bg-amber-600 text-white shadow-2xs'
+                            : 'text-slate-600 dark:text-stone-400 hover:text-amber-600'
+                        }`}
+                      >
+                        Premium
+                      </button>
+                    </div>
 
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-stone-800">
-                        <p className="text-xs text-slate-500 dark:text-stone-400 flex items-center gap-1.5 flex-wrap">
-                          <span>Endereço previsto:</span>
-                          <strong className="font-mono text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-900/60">
-                            /{slug || 'nome-do-restaurante'}
-                          </strong>
-                        </p>
-
-                        <div className="flex items-center gap-2 self-end sm:self-auto">
-                          <button
-                            type="button"
-                            onClick={() => setCreateFormOpen(false)}
-                            className="px-4 py-2 rounded-xl border border-slate-200 dark:border-stone-700 hover:bg-slate-50 dark:hover:bg-stone-800 text-xs font-bold text-slate-600 dark:text-stone-300 transition-colors cursor-pointer"
-                          >
-                            Cancelar
-                          </button>
-                          <button
-                            type="submit"
-                            disabled={busy}
-                            className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50 flex items-center gap-2"
-                          >
-                            {busy && !setupRestaurantId && !statusBusy && !archiveBusy ? (
-                              <>
-                                <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                <span>Cadastrando…</span>
-                              </>
-                            ) : (
-                              <span>+ Cadastrar restaurante</span>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    </fieldset>
-                  </form>
-                </section>
-              )}
-
-              {/* 3.3 — Barra de Busca e Filtros Integrada */}
-              <div className="rounded-2xl border border-slate-200/80 dark:border-stone-800 bg-white dark:bg-stone-900 p-4 shadow-xs space-y-3.5">
-                {/* Linha 1: Campo de Busca com Feedback */}
-                <div className="relative w-full">
-                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="11" cy="11" r="8" />
-                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                    </svg>
-                  </span>
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Filtrar por nome do restaurante, /slug ou e-mail de admin…"
-                    className="w-full pl-10 pr-9 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-stone-800/80 border border-slate-200 dark:border-stone-700 text-slate-900 dark:text-stone-100 placeholder:text-slate-400 focus:outline-none focus:border-slate-400 focus:bg-white dark:focus:bg-stone-900 transition-all font-medium shadow-2xs"
-                  />
-                  {searchQuery && (
                     <button
                       type="button"
-                      onClick={() => setSearchQuery('')}
-                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 dark:hover:text-stone-200 cursor-pointer"
-                      aria-label="Limpar busca"
+                      onClick={() => setRefresh((c) => c + 1)}
+                      disabled={loading || busy}
+                      className="px-3 py-2 rounded-xl border border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-800 hover:bg-slate-50 dark:hover:bg-stone-700 text-xs font-bold text-slate-700 dark:text-stone-200 transition-colors shadow-2xs cursor-pointer flex items-center gap-1.5"
                     >
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="23 4 23 10 17 10" />
+                        <polyline points="1 20 1 14 7 14" />
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
                       </svg>
-                    </button>
-                  )}
-                </div>
-
-                {/* Linha 2: Segmented Control de Status + Filtros de Plano */}
-                <div className="flex flex-wrap items-center justify-between gap-2.5 pt-0.5">
-                  {/* Segmented Control Ativos / Arquivados / Backups */}
-                  <div className="inline-flex p-1 rounded-xl bg-slate-100 dark:bg-stone-800 border border-slate-200 dark:border-stone-700 text-xs font-bold">
-                    <button
-                      type="button"
-                      onClick={() => setRestaurantFilter('current')}
-                      className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                        restaurantFilter === 'current'
-                          ? 'bg-white dark:bg-stone-900 text-slate-900 dark:text-white shadow-xs'
-                          : 'text-slate-600 dark:text-stone-400 hover:text-slate-900 dark:hover:text-white'
-                      }`}
-                    >
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
-                      <span>Ativos ({activeCount})</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setRestaurantFilter('archived')}
-                      className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                        restaurantFilter === 'archived'
-                          ? 'bg-white dark:bg-stone-900 text-slate-900 dark:text-white shadow-xs'
-                          : 'text-slate-600 dark:text-stone-400 hover:text-slate-900 dark:hover:text-white'
-                      }`}
-                    >
-                      <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
-                      <span>Arquivados ({archivedCount})</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('deletions')}
-                      className="px-3 py-1.5 rounded-lg text-slate-500 dark:text-stone-400 hover:text-slate-900 dark:hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer"
-                      title="Ver backups e exclusões da plataforma"
-                    >
-                      <svg className="w-3.5 h-3.5 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                      </svg>
-                      <span>Backups ({deletionsCount})</span>
-                    </button>
-                  </div>
-
-                  {/* Filtro Rápido de Planos */}
-                  <div className="inline-flex p-1 rounded-xl bg-slate-100 dark:bg-stone-800 border border-slate-200 dark:border-stone-700 text-xs font-bold">
-                    <button
-                      type="button"
-                      onClick={() => setPlanFilter('all')}
-                      className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                        planFilter === 'all'
-                          ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-2xs'
-                          : 'text-slate-600 dark:text-stone-400 hover:text-slate-900 dark:hover:text-white'
-                      }`}
-                    >
-                      Todos Planos
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPlanFilter('basic')}
-                      className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                        planFilter === 'basic'
-                          ? 'bg-blue-600 text-white shadow-2xs'
-                          : 'text-slate-600 dark:text-stone-400 hover:text-blue-600'
-                      }`}
-                    >
-                      Básico
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPlanFilter('pro')}
-                      className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                        planFilter === 'pro'
-                          ? 'bg-teal-600 text-white shadow-2xs'
-                          : 'text-slate-600 dark:text-stone-400 hover:text-teal-600'
-                      }`}
-                    >
-                      Pro
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPlanFilter('premium')}
-                      className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                        planFilter === 'premium'
-                          ? 'bg-amber-600 text-white shadow-2xs'
-                          : 'text-slate-600 dark:text-stone-400 hover:text-amber-600'
-                      }`}
-                    >
-                      Premium
+                      <span>Atualizar</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Linha 3: Filtros de Carteira (Horizontal Scrolling Chips) */}
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs font-bold scrollbar-none pt-1">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-stone-500 mr-1 shrink-0">
+                {/* 3.2.1 — Filtros de Portfólio / Carteira SaaS (Pills Segmentadas) */}
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs font-bold scrollbar-none">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-stone-500 mr-1 shrink-0">
                     Carteira:
                   </span>
 
                   <button
                     type="button"
                     onClick={() => setPortfolioFilter('all')}
-                    className={`px-3 py-1.5 rounded-full border transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 text-xs ${
+                    className={`px-3 py-1.5 rounded-full border transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                       portfolioFilter === 'all'
                         ? 'bg-slate-900 text-white border-slate-900 dark:bg-white dark:text-slate-900 shadow-2xs'
                         : 'border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-slate-600 dark:text-stone-300 hover:border-slate-300'
@@ -2582,14 +2364,14 @@ function PlatformRestaurantsContent() {
                   <button
                     type="button"
                     onClick={() => setPortfolioFilter('active')}
-                    className={`px-3 py-1.5 rounded-full border transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 text-xs ${
+                    className={`px-3 py-1.5 rounded-full border transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                       portfolioFilter === 'active'
                         ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
                         : 'border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-slate-600 dark:text-stone-300 hover:border-emerald-300'
                     }`}
                   >
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
-                    <span>Em dia</span>
+                    <span>Ativos</span>
                     <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/10 dark:bg-white/20">
                       {portfolioCounts.active}
                     </span>
@@ -2598,14 +2380,14 @@ function PlatformRestaurantsContent() {
                   <button
                     type="button"
                     onClick={() => setPortfolioFilter('expiring')}
-                    className={`px-3 py-1.5 rounded-full border transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 text-xs ${
+                    className={`px-3 py-1.5 rounded-full border transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                       portfolioFilter === 'expiring'
                         ? 'bg-amber-600 text-white border-amber-600 shadow-2xs'
                         : 'border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-slate-600 dark:text-stone-300 hover:border-amber-300'
                     }`}
                   >
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
-                    <span>Vencendo em ≤ 7d</span>
+                    <span>Próximos do Vencimento (≤ 7 dias)</span>
                     <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/10 dark:bg-white/20">
                       {portfolioCounts.expiring}
                     </span>
@@ -2614,14 +2396,14 @@ function PlatformRestaurantsContent() {
                   <button
                     type="button"
                     onClick={() => setPortfolioFilter('quota_warning')}
-                    className={`px-3 py-1.5 rounded-full border transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 text-xs ${
+                    className={`px-3 py-1.5 rounded-full border transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                       portfolioFilter === 'quota_warning'
                         ? 'bg-purple-600 text-white border-purple-600 shadow-2xs'
                         : 'border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-slate-600 dark:text-stone-300 hover:border-purple-300'
                     }`}
                   >
                     <span className="w-1.5 h-1.5 rounded-full bg-purple-400 inline-block" />
-                    <span>Cota ≥ 80% das mesas</span>
+                    <span>Cota Esgotada (≥ 80% das mesas)</span>
                     <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/10 dark:bg-white/20">
                       {portfolioCounts.quota_warning}
                     </span>
@@ -2630,7 +2412,7 @@ function PlatformRestaurantsContent() {
                   <button
                     type="button"
                     onClick={() => setPortfolioFilter('expired_grace')}
-                    className={`px-3 py-1.5 rounded-full border transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 text-xs ${
+                    className={`px-3 py-1.5 rounded-full border transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                       portfolioFilter === 'expired_grace'
                         ? 'bg-rose-600 text-white border-rose-600 shadow-2xs'
                         : 'border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-slate-600 dark:text-stone-300 hover:border-rose-300'
@@ -2644,416 +2426,247 @@ function PlatformRestaurantsContent() {
                   </button>
                 </div>
 
-                {/* Feedback de Filtros Ativos */}
-                {(searchQuery || planFilter !== 'all' || portfolioFilter !== 'all') && (
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-stone-800 text-xs">
-                    <span className="text-slate-500 dark:text-stone-400">
-                      Mostrando <strong className="text-slate-800 dark:text-stone-200">{filteredRestaurants.length}</strong> de {restaurants.length} estabelecimentos
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSearchQuery('');
-                        setPlanFilter('all');
-                        setPortfolioFilter('all');
-                      }}
-                      className="text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 font-bold hover:underline cursor-pointer"
-                    >
-                      Limpar todos os filtros
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* 3.4 — Banner Informativo de Arquivados */}
-              {restaurantFilter === 'archived' && (
-                <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 flex items-start gap-3 text-xs text-amber-900 dark:text-amber-200">
-                  <span className="p-2 rounded-xl bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 shrink-0">
-                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="21 8 21 21 3 21 3 8" />
-                      <rect x="1" y="3" width="22" height="5" />
-                      <line x1="10" y1="12" x2="14" y2="12" />
-                    </svg>
-                  </span>
-                  <div>
-                    <strong className="block font-bold">Visualizando Restaurantes Arquivados</strong>
-                    <p className="mt-0.5 text-amber-800/90 dark:text-amber-300/80 leading-relaxed">
-                      O cardápio público e o atendimento desses estabelecimentos estão suspensos, mas todo o histórico de comandas, produtos e configurações permanece seguro. Você pode restaurar qualquer restaurante a qualquer momento com um clique.
+                {/* Listagem em Grid de 2 Colunas */}
+                {loading ? (
+                  <p role="status" className="py-8 text-xs font-semibold text-slate-500">
+                    Carregando estabelecimentos…
+                  </p>
+                ) : listError ? (
+                  <p role="alert" className="p-4 rounded-xl bg-red-50 text-xs text-red-700 font-bold">
+                    {listError}
+                  </p>
+                ) : filteredRestaurants.length === 0 ? (
+                  <div className="rounded-2xl border border-slate-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-8 text-center">
+                    <p className="text-xs text-slate-500 dark:text-stone-400 font-medium">
+                      {searchQuery
+                        ? `Nenhum restaurante encontrado para "${searchQuery}".`
+                        : restaurantFilter === 'archived'
+                        ? 'Nenhum restaurante arquivado.'
+                        : 'Nenhum restaurante cadastrado nesta visualização.'}
                     </p>
                   </div>
-                </div>
-              )}
-
-              {/* 3.5 — Listagem / Grid de Restaurantes */}
-              {loading ? (
-                /* Skeleton Loader Elegante */
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {[1, 2, 3, 4].map((n) => (
-                    <div key={n} className="rounded-2xl border border-slate-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-5 shadow-xs space-y-4 animate-pulse">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-slate-200 dark:bg-stone-800" />
-                          <div className="space-y-1.5">
-                            <div className="h-4 w-32 rounded bg-slate-200 dark:bg-stone-800" />
-                            <div className="h-3 w-20 rounded bg-slate-100 dark:bg-stone-800/60" />
-                          </div>
-                        </div>
-                        <div className="h-6 w-16 rounded-full bg-slate-200 dark:bg-stone-800" />
-                      </div>
-                      <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-stone-800" />
-                      <div className="pt-2 flex items-center justify-between border-t border-slate-100 dark:border-stone-800">
-                        <div className="h-7 w-24 rounded-lg bg-slate-200 dark:bg-stone-800" />
-                        <div className="h-7 w-16 rounded-lg bg-slate-100 dark:bg-stone-800" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : listError ? (
-                /* Estado de Erro com Ação de Recarregar */
-                <div role="alert" className="p-6 rounded-2xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 text-center space-y-3">
-                  <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-300 flex items-center justify-center mx-auto">
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <circle cx="12" cy="12" r="10" />
-                      <line x1="12" y1="8" x2="12" y2="12" />
-                      <line x1="12" y1="16" x2="12.01" y2="16" />
-                    </svg>
-                  </div>
-                  <div>
-                    <strong className="text-sm font-bold text-red-900 dark:text-red-200 block">Falha ao carregar estabelecimentos</strong>
-                    <p className="text-xs text-red-700 dark:text-red-300 mt-1 max-w-md mx-auto">{listError}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setRefresh((c) => c + 1)}
-                    className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs inline-flex items-center gap-1.5"
-                  >
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="23 4 23 10 17 10" />
-                      <polyline points="1 20 1 14 7 14" />
-                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                    </svg>
-                    <span>Tentar novamente</span>
-                  </button>
-                </div>
-              ) : filteredRestaurants.length === 0 ? (
-                /* Estado Vazio Amigável e Contextual */
-                <div className="rounded-2xl border border-slate-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-8 sm:p-12 text-center space-y-4 shadow-xs">
-                  <div className="w-14 h-14 rounded-2xl bg-slate-100 dark:bg-stone-800 text-slate-400 dark:text-stone-500 flex items-center justify-center mx-auto shadow-2xs">
-                    <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                      <polyline points="9 22 9 12 15 12 15 22" />
-                    </svg>
-                  </div>
-                  <div className="max-w-md mx-auto">
-                    <h3 className="text-base font-bold text-slate-800 dark:text-stone-200">
-                      {searchQuery
-                        ? `Nenhum restaurante encontrado para "${searchQuery}"`
-                        : restaurantFilter === 'archived'
-                        ? 'Nenhum restaurante arquivado'
-                        : 'Nenhum estabelecimento encontrado'}
-                    </h3>
-                    <p className="text-xs text-slate-500 dark:text-stone-400 mt-1">
-                      {searchQuery
-                        ? 'Tente buscar por outro termo, slug ou e-mail de administrador.'
-                        : restaurantFilter === 'archived'
-                        ? 'Estabelecimentos que forem arquivados no futuro ficarão listados aqui.'
-                        : 'Comece cadastrando seu primeiro estabelecimento para gerar cardápios digitais.'}
-                    </p>
-                  </div>
-                  <div>
-                    {searchQuery || planFilter !== 'all' || portfolioFilter !== 'all' ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSearchQuery('');
-                          setPlanFilter('all');
-                          setPortfolioFilter('all');
-                        }}
-                        className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-stone-100 dark:hover:bg-white text-white dark:text-stone-900 text-xs font-bold transition-all shadow-xs cursor-pointer"
-                      >
-                        Limpar busca e filtros
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setCreateFormOpen(true)}
-                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-1.5"
-                      >
-                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <line x1="12" y1="5" x2="12" y2="19" />
-                          <line x1="5" y1="12" x2="19" y2="12" />
-                        </svg>
-                        <span>Cadastrar primeiro restaurante</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                /* Grid de Restaurantes Aprimorado */
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {filteredRestaurants.map((restaurant) => {
-                    const isArchived = Boolean(restaurant.archivedAt);
-                    const usagePct =
-                      !restaurant.unlimitedTables && restaurant.maxTables && restaurant.maxTables > 0
-                        ? Math.round((restaurant.activeTablesCount / restaurant.maxTables) * 100)
-                        : 0;
-                    const isQuotaFull = !restaurant.unlimitedTables && restaurant.maxTables !== null && restaurant.activeTablesCount >= restaurant.maxTables;
-                    const isQuotaWarning = !restaurant.unlimitedTables && restaurant.maxTables !== null && usagePct >= 80;
-
-                    const isExpired = restaurant.daysRemaining <= 0;
-                    const isWarning = restaurant.daysRemaining > 0 && restaurant.daysRemaining <= 7;
-                    const cycleRatio = Math.max(0, Math.min(100, Math.round((restaurant.daysRemaining / (restaurant.billingCycleDays || 30)) * 100)));
-
-                    // Inicial do nome para o avatar
-                    const initial = (restaurant.name || 'R').charAt(0).toUpperCase();
-
-                    return (
-                      <div
-                        key={restaurant.id}
-                        className={`rounded-2xl border bg-white dark:bg-stone-900 p-5 shadow-xs flex flex-col justify-between transition-all hover:shadow-md ${
-                          isArchived
-                            ? 'border-slate-200 dark:border-stone-800 opacity-90'
-                            : 'border-slate-200/90 dark:border-stone-800 hover:border-slate-300 dark:hover:border-stone-700'
-                        }`}
-                      >
-                        <div className="space-y-3.5">
-                          {/* Topo do card: Avatar + Identidade + Badges */}
-                          <div className="flex items-start justify-between gap-2.5">
-                            <div className="flex items-start gap-3 min-w-0">
-                              {/* Avatar estilizado */}
-                              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-slate-800 to-slate-900 dark:from-stone-700 dark:to-stone-800 text-white font-black text-sm flex items-center justify-center shrink-0 shadow-xs border border-white/10">
-                                {initial}
-                              </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {filteredRestaurants.map((restaurant) => {
+                      return (
+                        <div
+                          key={restaurant.id}
+                          className="rounded-2xl border border-slate-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-5 shadow-xs flex flex-col justify-between hover:border-slate-300 transition-all"
+                        >
+                          <div>
+                            {/* Topo do card: Nome + Badges + Botão Excluir */}
+                            <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
-                                <h3 className="text-base font-black text-slate-900 dark:text-white tracking-tight uppercase truncate leading-snug">
+                                <h3 className="text-base font-black text-slate-900 dark:text-white tracking-tight uppercase truncate">
                                   {restaurant.name}
                                 </h3>
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  <Link
-                                    to={`/${restaurant.slug}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-xs font-mono font-semibold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 hover:underline inline-flex items-center gap-1 truncate"
-                                    title="Abrir cardápio público em nova aba"
-                                  >
-                                    <span>/{restaurant.slug}</span>
-                                    <svg className="w-3 h-3 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                                      <polyline points="15 3 21 3 21 9" />
-                                      <line x1="10" y1="14" x2="21" y2="3" />
-                                    </svg>
-                                  </Link>
-                                </div>
+                                <span className="text-xs font-mono text-slate-500 dark:text-stone-400 block mt-0.5">
+                                  /{restaurant.slug}
+                                </span>
                                 {restaurant.adminEmails && restaurant.adminEmails.length > 0 && (
-                                  <span className="text-[10px] text-slate-400 dark:text-stone-500 block truncate max-w-[200px] mt-0.5 font-mono" title={restaurant.adminEmails.join(', ')}>
+                                  <span className="text-[10px] text-slate-400 block truncate max-w-[200px] mt-0.5 font-mono" title={restaurant.adminEmails.join(', ')}>
                                     Admin: {restaurant.adminEmails.join(', ')}
                                   </span>
                                 )}
                               </div>
-                            </div>
 
-                            {/* Badges à Direita */}
-                            <div className="flex items-center gap-1.5 flex-wrap justify-end shrink-0">
-                              {/* Status Operacional */}
-                              {isArchived ? (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-100 text-slate-700 border border-slate-300 dark:bg-stone-800 dark:text-stone-300 dark:border-stone-700">
-                                  Arquivado
-                                </span>
-                              ) : restaurant.active ? (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
-                                  Ativo
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800">
-                                  Suspenso
-                                </span>
-                              )}
-
-                              {/* Status Financeiro */}
-                              {restaurant.billingStatus === 'expired' && (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800 border border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800">
-                                  Inadimplente
-                                </span>
-                              )}
-                              {restaurant.billingStatus === 'grace_period' && (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800">
-                                  Tolerância
-                                </span>
-                              )}
-
-                              {/* Badge do Plano SaaS (clicável para trocar plano) */}
-                              <PlanBadge
-                                plan={restaurant.subscriptionPlan}
-                                onClick={() => openPlanModal(restaurant)}
-                              />
-
-                              {/* Botão Exclusão Definitiva */}
-                              <Link
-                                to={`/plataforma/restaurantes/${restaurant.id}/excluir`}
-                                title={`Excluir definitivamente ${restaurant.name}`}
-                                aria-label={`Excluir ${restaurant.name}`}
-                                className="w-7 h-7 rounded-lg text-slate-400 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center justify-center transition-colors cursor-pointer"
-                              >
-                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
-                                  <polyline points="3 6 5 6 21 6" />
-                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                </svg>
-                              </Link>
-                            </div>
-                          </div>
-
-                          {/* Seção Operacional: Capacidade de Mesas */}
-                          <div className="space-y-1.5 text-xs text-slate-600 dark:text-stone-400">
-                            <div className="flex items-center justify-between text-[11px]">
-                              <span className="font-bold text-slate-800 dark:text-stone-200">
-                                {restaurant.unlimitedTables || restaurant.maxTables === null
-                                  ? `${restaurant.activeTablesCount} mesas configuradas (Ilimitadas)`
-                                  : `${restaurant.activeTablesCount} de ${restaurant.maxTables} mesas configuradas (${usagePct}%)`}
-                              </span>
-                              {isQuotaFull ? (
-                                <span className="text-[10px] font-black px-2 py-0.2 rounded-full bg-red-100 text-red-900 dark:bg-red-950/60 dark:text-red-300 border border-red-300">
-                                  Limite Atingido
-                                </span>
-                              ) : isQuotaWarning ? (
-                                <span className="text-[10px] font-black px-2 py-0.2 rounded-full bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300">
-                                  Cota Alta
-                                </span>
-                              ) : null}
-                            </div>
-                            <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-stone-800 overflow-hidden">
-                              <div
-                                className={`h-full rounded-full transition-all ${
-                                  isQuotaFull
-                                    ? 'bg-red-500'
-                                    : isQuotaWarning
-                                    ? 'bg-amber-500'
-                                    : 'bg-emerald-500'
-                                }`}
-                                style={{
-                                  width: restaurant.unlimitedTables || !restaurant.maxTables
-                                    ? '100%'
-                                    : `${Math.min(100, usagePct)}%`,
-                                }}
-                              />
-                            </div>
-                          </div>
-
-                          {/* Painel de Vigência da Assinatura */}
-                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-stone-800/60 border border-slate-100 dark:border-stone-800 space-y-2">
-                            <div className="flex items-center justify-between text-[11px]">
-                              <span className="font-semibold text-slate-600 dark:text-stone-300">
-                                Assinatura SaaS
-                              </span>
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                                  isExpired
-                                    ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300'
-                                    : isWarning
-                                    ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300'
-                                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300'
-                                }`}
-                              >
-                                {isExpired
-                                  ? 'Vencida'
-                                  : `${restaurant.daysRemaining} dia${restaurant.daysRemaining !== 1 ? 's' : ''} restante${restaurant.daysRemaining !== 1 ? 's' : ''}`}
-                              </span>
-                            </div>
-
-                            <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-stone-700 overflow-hidden">
-                              <div
-                                className={`h-full rounded-full transition-all ${
-                                  isExpired
-                                    ? 'bg-rose-500'
-                                    : isWarning
-                                    ? 'bg-amber-500'
-                                    : 'bg-emerald-500'
-                                }`}
-                                style={{ width: `${cycleRatio}%` }}
-                              />
-                            </div>
-
-                            <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-stone-400 pt-0.5">
-                              <span>
-                                {isExpired ? 'Venceu em: ' : 'Renova em: '}
-                                <strong className="text-slate-700 dark:text-stone-300 font-mono">
-                                  {formatDate(restaurant.subscriptionExpiresAt)}
-                                </strong>
-                              </span>
-                              <span className="font-mono font-bold text-slate-800 dark:text-stone-200">
-                                {formatBrl(restaurant.monthlyPriceCents / 100)}/mês
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Se arquivado: Banner explicativo */}
-                          {isArchived && (
-                            <p className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 p-2 rounded-lg border border-amber-200 dark:border-amber-900/40">
-                              Arquivado em {formatDate(restaurant.archivedAt)}. Clique abaixo para restaurá-lo.
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Rodapé de Ações Estruturado (Sem overflow horizontal em celular) */}
-                        <div className="mt-5 pt-3.5 border-t border-slate-100 dark:border-stone-800 flex items-center justify-between gap-2 flex-wrap">
-                          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                            {/* Se arquivado: Botão Restaurar em destaque direto */}
-                            {isArchived ? (
-                              <button
-                                type="button"
-                                onClick={() => openArchiveChange(restaurant)}
-                                disabled={busy}
-                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50 inline-flex items-center gap-1.5"
-                              >
-                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <polyline points="23 4 23 10 17 10" />
-                                  <polyline points="1 20 1 14 7 14" />
-                                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                                </svg>
-                                <span>Restaurar restaurante</span>
-                              </button>
-                            ) : (
-                              <>
-                                {/* Ação Primária: Administrar / Configurar */}
-                                {restaurant.active && (
-                                  <button
-                                    type="button"
-                                    onClick={() => void configureRestaurant(restaurant)}
-                                    disabled={busy}
-                                    className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-stone-100 dark:hover:bg-white text-white dark:text-stone-900 text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50 shrink-0 inline-flex items-center gap-1.5"
-                                    title="Abrir painel administrativo em nova aba"
-                                  >
-                                    <span>
-                                      {setupRestaurantId === restaurant.id
-                                        ? 'Abrindo…'
-                                        : restaurant.adminCount === 0
-                                        ? 'Configurar'
-                                        : 'Administrar'}
-                                    </span>
-                                    <svg className="w-3.5 h-3.5 opacity-75" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                                      <polyline points="15 3 21 3 21 9" />
-                                      <line x1="10" y1="14" x2="21" y2="3" />
-                                    </svg>
-                                  </button>
+                              <div className="flex items-center gap-1.5 flex-wrap justify-end shrink-0">
+                                {/* Badge de Status */}
+                                {restaurant.active ? (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
+                                    Ativo
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800">
+                                    Suspenso
+                                  </span>
                                 )}
 
-                                {/* Ação Secundária: Ver Cardápio */}
+                                {/* Badge de Vigência / Inadimplência */}
+                                {restaurant.billingStatus === 'expired' && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800 border border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800">
+                                    Inadimplente
+                                  </span>
+                                )}
+                                {restaurant.billingStatus === 'grace_period' && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800">
+                                    Tolerância (3d)
+                                  </span>
+                                )}
+
+                                {/* Badge Real do Plano SaaS */}
+                                <PlanBadge
+                                  plan={restaurant.subscriptionPlan}
+                                  onClick={() => openPlanModal(restaurant)}
+                                />
+
+                                {/* Botão Exclusão Definitiva */}
                                 <Link
-                                  to={`/${restaurant.slug}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-stone-700 hover:bg-slate-50 dark:hover:bg-stone-800 text-xs font-bold text-slate-700 dark:text-stone-300 transition-colors cursor-pointer inline-flex items-center gap-1 shrink-0"
-                                  title="Abrir cardápio público"
+                                  to={`/plataforma/restaurantes/${restaurant.id}/excluir`}
+                                  title={`Excluir definitivamente ${restaurant.name}`}
+                                  aria-label={`Excluir ${restaurant.name}`}
+                                  className="w-7 h-7 rounded-lg text-slate-400 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center justify-center transition-colors cursor-pointer"
                                 >
-                                  <span>Cardápio</span>
-                                  <svg className="w-3.5 h-3.5 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                                    <polyline points="3 6 5 6 21 6" />
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                  </svg>
+                                </Link>
+                              </div>
+                            </div>
+
+                            {/* Informações operacionais e Ocupação Real de Mesas */}
+                            <div className="mt-3.5 space-y-3 text-xs text-slate-600 dark:text-stone-400">
+                              <div>
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="font-bold text-slate-800 dark:text-stone-200">
+                                    {restaurant.unlimitedTables || restaurant.maxTables === null
+                                      ? `${restaurant.activeTablesCount} mesas ativas (Ilimitadas)`
+                                      : `${restaurant.activeTablesCount} / ${restaurant.maxTables} mesas configuradas`}
+                                  </span>
+                                  {!restaurant.unlimitedTables && restaurant.maxTables !== null && restaurant.activeTablesCount >= restaurant.maxTables && (
+                                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300">
+                                      Limite Atingido
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-stone-800 overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all ${
+                                      !restaurant.unlimitedTables && restaurant.maxTables !== null && restaurant.activeTablesCount >= restaurant.maxTables
+                                        ? 'bg-amber-500'
+                                        : 'bg-emerald-500'
+                                    }`}
+                                    style={{
+                                      width: restaurant.unlimitedTables || !restaurant.maxTables
+                                        ? '100%'
+                                        : `${Math.min(100, Math.round((restaurant.activeTablesCount / restaurant.maxTables) * 100))}%`,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Barra de Vigência e Dias Restantes da Assinatura */}
+                              {(() => {
+                                const isExpired = restaurant.daysRemaining <= 0;
+                                const isWarning = restaurant.daysRemaining > 0 && restaurant.daysRemaining <= 7;
+                                const cycleRatio = Math.max(0, Math.min(100, Math.round((restaurant.daysRemaining / (restaurant.billingCycleDays || 30)) * 100)));
+
+                                return (
+                                  <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-stone-800/60 border border-slate-100 dark:border-stone-800 space-y-1.5">
+                                    <div className="flex items-center justify-between text-[11px]">
+                                      <span className="text-slate-500 dark:text-stone-400 font-medium">
+                                        Vigência do Plano:
+                                      </span>
+                                      <span
+                                        className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                                          isExpired
+                                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300'
+                                            : isWarning
+                                            ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300'
+                                            : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300'
+                                        }`}
+                                      >
+                                        {isExpired
+                                          ? 'Vencida'
+                                          : `${restaurant.daysRemaining} dia${restaurant.daysRemaining !== 1 ? 's' : ''} restante${restaurant.daysRemaining !== 1 ? 's' : ''}`}
+                                      </span>
+                                    </div>
+
+                                    <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-stone-700 overflow-hidden">
+                                      <div
+                                        className={`h-full rounded-full transition-all ${
+                                          isExpired
+                                            ? 'bg-rose-500'
+                                            : isWarning
+                                            ? 'bg-amber-500'
+                                            : 'bg-emerald-500'
+                                        }`}
+                                        style={{ width: `${cycleRatio}%` }}
+                                      />
+                                    </div>
+
+                                    <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-stone-400 pt-0.5">
+                                      <span>
+                                        {isExpired ? 'Venceu em: ' : 'Renova em: '}
+                                        <strong className="text-slate-700 dark:text-stone-300 font-mono">
+                                          {formatDate(restaurant.subscriptionExpiresAt)}
+                                        </strong>
+                                      </span>
+                                      <span className="font-mono">
+                                        Ciclo: {restaurant.billingCycleDays || 30}d
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+
+                              <div className="flex items-center justify-between text-[11px] pt-0.5">
+                                <p className="flex items-center gap-1.5">
+                                  <span className={`h-1.5 w-1.5 rounded-full ${restaurant.active ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                                  <span>{restaurant.active ? 'Operação regular' : 'Serviço temporariamente suspenso'}</span>
+                                </p>
+                                <span className="font-mono font-semibold text-slate-700 dark:text-stone-300">
+                                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(restaurant.monthlyPriceCents / 100)}/mês
+                                </span>
+                              </div>
+
+                              <p className="text-[11px] text-slate-500 dark:text-stone-400">
+                                {restaurant.adminCount === 0
+                                  ? 'Administrador ainda não vinculado'
+                                  : `${restaurant.adminCount} administrador(es) ativo(s)`}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Rodapé de Ações em 1 única linha com menu ⋯ */}
+                          <div className="mt-5 pt-3.5 border-t border-slate-100 dark:border-stone-800 flex items-center justify-between gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                              {restaurant.active && (
+                                <button
+                                  type="button"
+                                  onClick={() => void configureRestaurant(restaurant)}
+                                  disabled={busy}
+                                  className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50 shrink-0 inline-flex items-center gap-1.5"
+                                  title="Abrir painel administrativo em nova aba"
+                                >
+                                  <span>
+                                    {setupRestaurantId === restaurant.id
+                                      ? 'Abrindo…'
+                                      : restaurant.adminCount === 0
+                                      ? 'Configurar'
+                                      : 'Administrar'}
+                                  </span>
+                                  <svg className="w-3.5 h-3.5 opacity-75" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
                                     <polyline points="15 3 21 3 21 9" />
                                     <line x1="10" y1="14" x2="21" y2="3" />
                                   </svg>
-                                </Link>
+                                </button>
+                              )}
 
-                                {/* Ação de Status: Suspender / Reativar */}
+                              <Link
+                                to={`/${restaurant.slug}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-stone-700 hover:bg-slate-50 dark:hover:bg-stone-800 text-xs font-bold text-slate-700 dark:text-stone-300 transition-colors cursor-pointer inline-flex items-center gap-1 shrink-0"
+                              >
+                                <span>Ver cardápio</span>
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                                  <polyline points="15 3 21 3 21 9" />
+                                  <line x1="10" y1="14" x2="21" y2="3" />
+                                </svg>
+                              </Link>
+
+                              <Link
+                                to={`/plataforma/restaurantes/${restaurant.id}/backups`}
+                                className="px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-stone-700 hover:bg-slate-50 dark:hover:bg-stone-800 text-xs font-bold text-slate-700 dark:text-stone-300 transition-colors cursor-pointer shrink-0"
+                              >
+                                Backups
+                              </Link>
+
+                              {!restaurant.archivedAt && (
                                 <button
                                   type="button"
                                   onClick={() => openStatusChange(restaurant)}
@@ -3062,139 +2675,113 @@ function PlatformRestaurantsContent() {
                                 >
                                   {restaurant.active ? 'Suspender' : 'Reativar'}
                                 </button>
-                              </>
-                            )}
+                              )}
+                            </div>
 
-                            {/* Backups do Restaurante */}
-                            <Link
-                              to={`/plataforma/restaurantes/${restaurant.id}/backups`}
-                              className="px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-stone-700 hover:bg-slate-50 dark:hover:bg-stone-800 text-xs font-bold text-slate-700 dark:text-stone-300 transition-colors cursor-pointer shrink-0"
-                              title="Histórico de backups e restaurações deste restaurante"
-                            >
-                              Backups
-                            </Link>
-                          </div>
+                            {/* Botão de menu ⋯ com dropdown */}
+                            <div className="relative shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => setOpenMenuRestaurantId(openMenuRestaurantId === restaurant.id ? null : restaurant.id)}
+                                className="h-8 w-8 rounded-xl border border-slate-200 dark:border-stone-700 hover:bg-slate-50 dark:hover:bg-stone-800 text-slate-700 dark:text-stone-300 flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
+                                title="Mais opções do restaurante"
+                                aria-label="Mais opções"
+                              >
+                                ⋯
+                              </button>
 
-                          {/* Menu Dropdown de Mais Opções ⋯ */}
-                          <div className="relative shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => setOpenMenuRestaurantId(openMenuRestaurantId === restaurant.id ? null : restaurant.id)}
-                              className="h-8 w-8 rounded-xl border border-slate-200 dark:border-stone-700 hover:bg-slate-50 dark:hover:bg-stone-800 text-slate-700 dark:text-stone-300 flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
-                              title="Mais opções do restaurante"
-                              aria-label="Mais opções"
-                            >
-                              ⋯
-                            </button>
-
-                            {openMenuRestaurantId === restaurant.id && (
-                              <>
-                                <div
-                                  className="fixed inset-0 z-30"
-                                  onClick={() => setOpenMenuRestaurantId(null)}
-                                  aria-hidden="true"
-                                />
-                                <div className="absolute right-0 bottom-full mb-1.5 z-40 w-52 rounded-xl border border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-900 shadow-xl py-1 text-xs">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setOpenMenuRestaurantId(null);
-                                      openPlanModal(restaurant);
-                                    }}
-                                    className="w-full px-3 py-2 text-left font-bold text-slate-700 dark:text-stone-200 hover:bg-slate-100 dark:hover:bg-stone-800 flex items-center gap-2 cursor-pointer"
-                                  >
-                                    <svg className="w-3.5 h-3.5 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
-                                      <rect x="1" y="4" width="22" height="16" rx="2" />
-                                      <line x1="1" y1="10" x2="23" y2="10" />
-                                    </svg>
-                                    <span>Alterar Plano SaaS</span>
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setOpenMenuRestaurantId(null);
-                                      void handleQuickRenew(restaurant);
-                                    }}
-                                    className="w-full px-3 py-2 text-left font-bold text-slate-700 dark:text-stone-200 hover:bg-slate-100 dark:hover:bg-stone-800 flex items-center gap-2 cursor-pointer"
-                                  >
-                                    <svg className="w-3.5 h-3.5 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
-                                      <polyline points="23 4 23 10 17 10" />
-                                      <polyline points="1 20 1 14 7 14" />
-                                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                                    </svg>
-                                    <span>Renovar Assinatura (+30d)</span>
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setOpenMenuRestaurantId(null);
-                                      openArchiveChange(restaurant);
-                                    }}
-                                    className="w-full px-3 py-2 text-left font-bold text-slate-700 dark:text-stone-200 hover:bg-slate-100 dark:hover:bg-stone-800 flex items-center gap-2 cursor-pointer"
-                                  >
-                                    <svg className="w-3.5 h-3.5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
-                                      <polyline points="21 8 21 21 3 21 3 8" />
-                                      <rect x="1" y="3" width="22" height="5" />
-                                      <line x1="10" y1="12" x2="14" y2="12" />
-                                    </svg>
-                                    <span>{restaurant.archivedAt ? 'Restaurar' : 'Arquivar restaurante'}</span>
-                                  </button>
-
-                                  <Link
-                                    to={`/plataforma/restaurantes/${restaurant.id}/excluir`}
+                              {openMenuRestaurantId === restaurant.id && (
+                                <>
+                                  <div
+                                    className="fixed inset-0 z-30"
                                     onClick={() => setOpenMenuRestaurantId(null)}
-                                    className="w-full px-3 py-2 text-left font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center gap-2"
-                                  >
-                                    <svg className="w-3.5 h-3.5 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
-                                      <polyline points="3 6 5 6 21 6" />
-                                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                    </svg>
-                                    <span>Excluir definitivamente</span>
-                                  </Link>
-                                </div>
-                              </>
-                            )}
+                                    aria-hidden="true"
+                                  />
+                                  <div className="absolute right-0 bottom-full mb-1.5 z-40 w-48 rounded-xl border border-slate-200 dark:border-stone-700 bg-white dark:bg-stone-900 shadow-xl py-1 text-xs">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenMenuRestaurantId(null);
+                                        openPlanModal(restaurant);
+                                      }}
+                                      className="w-full px-3 py-2 text-left font-bold text-slate-700 dark:text-stone-200 hover:bg-slate-100 dark:hover:bg-stone-800 flex items-center gap-2 cursor-pointer"
+                                    >
+                                      <svg className="w-3.5 h-3.5 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                                        <rect x="1" y="4" width="22" height="16" rx="2" />
+                                        <line x1="1" y1="10" x2="23" y2="10" />
+                                      </svg>
+                                      <span>Alterar Plano SaaS</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenMenuRestaurantId(null);
+                                        void handleQuickRenew(restaurant);
+                                      }}
+                                      className="w-full px-3 py-2 text-left font-bold text-slate-700 dark:text-stone-200 hover:bg-slate-100 dark:hover:bg-stone-800 flex items-center gap-2 cursor-pointer"
+                                    >
+                                      <svg className="w-3.5 h-3.5 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                                        <polyline points="23 4 23 10 17 10" />
+                                        <polyline points="1 20 1 14 7 14" />
+                                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                                      </svg>
+                                      <span>Renovar Assinatura (+30d)</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenMenuRestaurantId(null);
+                                        openArchiveChange(restaurant);
+                                      }}
+                                      className="w-full px-3 py-2 text-left font-bold text-slate-700 dark:text-stone-200 hover:bg-slate-100 dark:hover:bg-stone-800 flex items-center gap-2 cursor-pointer"
+                                    >
+                                      <svg className="w-3.5 h-3.5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                                        <polyline points="21 8 21 21 3 21 3 8" />
+                                        <rect x="1" y="3" width="22" height="5" />
+                                        <line x1="10" y1="12" x2="14" y2="12" />
+                                      </svg>
+                                      <span>{restaurant.archivedAt ? 'Restaurar' : 'Arquivar'}</span>
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
 
-              {/* 3.6 — Seção "Exclusões e backups preservados" */}
-              <section aria-labelledby="deletions-title" className="space-y-4 pt-6 border-t border-slate-200 dark:border-stone-800">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              {/* 3.3 — Seção "Exclusões e backups preservados" */}
+              <section aria-labelledby="deletions-title" className="space-y-4 pt-4 border-t border-slate-200 dark:border-stone-800">
+                <div className="flex items-center justify-between">
                   <div>
-                    <h2 id="deletions-title" className="text-lg font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-                      <svg className="w-4 h-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                      </svg>
-                      <span>Exclusões e Backups Preservados</span>
+                    <h2 id="deletions-title" className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+                      Exclusões e backups preservados
                     </h2>
-                    <p className="text-xs text-slate-500 dark:text-stone-400 mt-0.5">
+                    <p className="text-xs text-slate-500 dark:text-stone-400">
                       Snapshots de segurança guardados de estabelecimentos encerrados.
                     </p>
                   </div>
-                  <span className="text-xs font-extrabold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-stone-800 text-slate-600 dark:text-stone-300 border border-slate-200 dark:border-stone-700 self-start sm:self-auto">
+                  <span className="text-xs font-extrabold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-stone-800 text-slate-600 dark:text-stone-300 border border-slate-200 dark:border-stone-700">
                     {filteredDeletions.length} registro(s)
                   </span>
                 </div>
 
                 {filteredDeletions.length === 0 ? (
-                  <div className="p-6 rounded-2xl border border-slate-200/80 dark:border-stone-800 bg-white dark:bg-stone-900 text-center text-xs text-slate-400 dark:text-stone-500">
-                    Nenhum registro de exclusão ou backup pendente.
-                  </div>
+                  <p className="text-xs text-slate-500 dark:text-stone-400 italic">
+                    Nenhuma solicitação de exclusão encontrada.
+                  </p>
                 ) : (
-                  <div className="space-y-2.5">
+                  <div className="space-y-3">
                     {filteredDeletions.map((job) => (
                       <div
                         key={job.id}
-                        className="rounded-2xl border border-slate-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-slate-300 dark:hover:border-stone-700 transition-colors"
+                        className="rounded-2xl border border-slate-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                       >
                         <div className="space-y-1">
                           <strong className="text-sm font-bold text-slate-900 dark:text-white block">
@@ -3205,7 +2792,7 @@ function PlatformRestaurantsContent() {
                           </p>
                         </div>
 
-                        <div className="flex items-center gap-2.5 flex-wrap">
+                        <div className="flex items-center gap-3">
                           <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-blue-50 text-blue-800 border border-blue-200 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-800 shrink-0">
                             ✓ Backup Disponível
                           </span>
@@ -3213,7 +2800,7 @@ function PlatformRestaurantsContent() {
                           <div className="flex items-center gap-2">
                             <Link
                               to={`/plataforma/restaurantes/${job.source_restaurant_id}/backups`}
-                              className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-stone-700 hover:bg-slate-50 dark:hover:bg-stone-800 text-xs font-bold text-slate-700 dark:text-stone-300 transition-colors cursor-pointer"
+                              className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-stone-700 hover:bg-slate-50 dark:hover:bg-stone-800 text-xs font-bold text-slate-700 dark:text-stone-300 transition-colors"
                             >
                               Backups e recuperação
                             </Link>

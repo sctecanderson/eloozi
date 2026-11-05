@@ -42,7 +42,7 @@ export function formatConfirmationDigits(code: string | number | null | undefine
     };
 }
 
-export function getActiveTabStep(mode: 'initial' | 'pending_with_code' | 'pending_no_code' | 'active_waiting_tab' | 'ready' | 'closed'): number {
+export function getActiveTabStep(mode: 'initial' | 'pending_with_code' | 'pending_no_code' | 'active_waiting_tab' | 'active_linked_tab' | 'ready' | 'closed'): number {
     switch (mode) {
         case 'initial':
         case 'pending_with_code':
@@ -50,6 +50,7 @@ export function getActiveTabStep(mode: 'initial' | 'pending_with_code' | 'pendin
             return 1;
         case 'active_waiting_tab':
             return 2;
+        case 'active_linked_tab':
         case 'ready':
             return 3;
         case 'closed':

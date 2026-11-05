@@ -13,3 +13,30 @@ export function premiumTrialNote(e?:EffectiveSubscription){const start=dateLabel
 export const NOTICE_TIMING={travel:600,hold:4000,total:5200} as const;
 export function noticePaused(user:boolean,hover:boolean,focus:boolean,reduced:boolean){return user||hover||focus||reduced;}
 export function nextNotice(index:number,delta:number,count:number){return count>0?((index+delta)%count+count)%count:0;}
+
+export function calculateSubscriptionDiffDays(expiresAt?: string | null, now = Date.now()): number | null {
+  if (!expiresAt) return null;
+  const time = Date.parse(expiresAt);
+  if (!Number.isFinite(time)) return null;
+  const diffMs = time - now;
+  return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+}
+
+export function shouldShowSubscriptionWarning({
+  isTrial,
+  diffDays,
+  expiresAt,
+  now = Date.now(),
+}: {
+  isTrial: boolean;
+  diffDays?: number | null;
+  expiresAt?: string | null;
+  now?: number;
+}): boolean {
+  const effectiveDiffDays = typeof diffDays === 'number'
+    ? diffDays
+    : calculateSubscriptionDiffDays(expiresAt, now);
+
+  if (effectiveDiffDays === null || effectiveDiffDays <= 0) return false;
+  return isTrial || effectiveDiffDays <= 5;
+}

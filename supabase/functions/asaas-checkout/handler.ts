@@ -78,6 +78,21 @@ async function confirmSubscriptionPayment(
   });
 }
 
+async function isSuperAdmin(
+  adminClient: any,
+  userId: string,
+): Promise<boolean> {
+  if (!userId) return false;
+  const { data: platformAdminData } = await adminClient
+    .from("platform_admins")
+    .select("user_id, active")
+    .eq("user_id", userId)
+    .eq("active", true)
+    .maybeSingle();
+
+  return Boolean(platformAdminData?.active);
+}
+
 async function isUserAuthorizedForRestaurant(
   adminClient: any,
   userId: string,
@@ -205,6 +220,7 @@ interface PixContext {
   user: any;
   targetPlan: string;
   quoteToken?: string | null;
+  testGrantId?: string | null;
   billingCycle: string;
   amountCents: number;
   valueReais: number;
@@ -228,6 +244,17 @@ function processingResponse(invoiceId: string): Response {
 }
 
 async function acquirePixInvoice(ctx: PixContext): Promise<any | null> {
+  if (ctx.testGrantId) {
+    const { data, error } = await ctx.adminClient.rpc("reserve_test_grant_invoice", {
+      p_restaurant_id: ctx.restaurantId,
+      p_grant_id: ctx.testGrantId,
+      p_user_id: ctx.user.id,
+      p_pix_expires_at: ctx.pixExpiresAt,
+    });
+    if (error || !data?.invoice) throw new Error(error?.message || "Não foi possível reservar o test grant.");
+    return data.invoice;
+  }
+
   const { data, error } = await ctx.adminClient.rpc("acquire_or_create_pending_subscription_invoice", {
     p_restaurant_id: ctx.restaurantId,
     p_plan_id: ctx.targetPlan,
@@ -737,7 +764,20 @@ export async function handleAsaasCheckoutRequest(
       cardData,
       payerInfo,
       quoteToken,
+      testGrantId,
     } = body;
+
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    let normalizedTestGrantId: string | null = null;
+    if (testGrantId !== undefined && testGrantId !== null) {
+      if (typeof testGrantId !== "string" || !UUID_REGEX.test(testGrantId.trim())) {
+        return jsonResponse(
+          { error: "testGrantId informado deve ser um UUID válido." },
+          400,
+        );
+      }
+      normalizedTestGrantId = testGrantId.trim().toLowerCase();
+    }
 
     if (!restaurantId || !targetPlan) {
       return jsonResponse({ error: "restaurantId e targetPlan são obrigatórios." }, 400);
@@ -752,6 +792,19 @@ export async function handleAsaasCheckoutRequest(
 
     const authorized = await isUserAuthorizedForRestaurant(adminClient, user.id, restaurantId);
     if (!authorized) return jsonResponse({ error: "Acesso restrito ao administrador do restaurante." }, 403);
+
+    if (normalizedTestGrantId) {
+      const isSuper = await isSuperAdmin(adminClient, user.id);
+      if (!isSuper) {
+        return jsonResponse({ error: "Apenas SuperAdmin pode utilizar um test grant." }, 403);
+      }
+      if (restaurantId !== "efcb9f44-c33b-47ec-8125-b20e57b9fd1e") {
+        return jsonResponse({ error: "Test grant restrito ao restaurante ChurrasBrusque." }, 422);
+      }
+      if (targetPlan !== "basic" || billingCycle !== "monthly" || paymentMethod !== "pix") {
+        return jsonResponse({ error: "Test grant restrito a Básico mensal via Pix." }, 422);
+      }
+    }
 
     const { data: restaurant, error: restErr } = await adminClient
       .from("restaurants")
@@ -806,8 +859,8 @@ export async function handleAsaasCheckoutRequest(
       );
     }
 
-    // Anual equivale a 11 mensalidades em pagamento único para 12 meses de acesso
-    let amountCents = billingCycle === "yearly" ? monthlyEquivCents * 11 : monthlyEquivCents;
+    // Anual equivale a 11 mensalidades em pagamento único para 12 meses de acesso. Test Grant usa valor inicial de 500 centavos que é substituído pelo valor da fatura reservada.
+    let amountCents = normalizedTestGrantId ? 500 : (billingCycle === "yearly" ? monthlyEquivCents * 11 : monthlyEquivCents);
     let valueReais = Number((amountCents / 100).toFixed(2));
     const cleanCpfCnpj = (payerInfo?.cpfCnpj || "").replace(/\D/g, "");
     if (cleanCpfCnpj.length !== 11 && cleanCpfCnpj.length !== 14) {
@@ -834,6 +887,7 @@ export async function handleAsaasCheckoutRequest(
         user,
         targetPlan,
         quoteToken,
+        testGrantId: normalizedTestGrantId,
         billingCycle,
         amountCents,
         valueReais,
