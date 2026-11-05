@@ -59,32 +59,10 @@ export function TrialBanner() {
     ? (diffDays !== null && diffDays <= 0) || r.billingStatus === 'expired'
     : (diffDays !== null && diffDays < -3) || (r.billingStatus === 'expired' && (diffDays === null || diffDays <= -3));
 
-  const isRegularized = !isTrial && !isExpiringSoon && !isGracePeriod && !isSevereOverdue && r.billingStatus === 'active';
-
-  // Mensagens rotativas ou texto contextual de assinatura
+  // Durante a demonstração: exibe mensagens rotativas do período de teste.
+  // Em plano pago / regularizado: não exibe faixa cinza de status ativo (some sem deixar espaço vazio).
   const baseNotices = subscriptionNotices(r.effectiveSubscription);
-  let messages: string[] = [];
-
-  if (baseNotices.length > 0) {
-    messages = baseNotices;
-  } else if (isSevereOverdue) {
-    messages = [
-      isTrial
-        ? 'Seu período de teste gratuito de 7 dias chegou ao fim. Escolha um plano para restabelecer os serviços.'
-        : 'Assinatura suspensa. Efetue o pagamento da fatura em aberto para restabelecer os serviços.',
-    ];
-  } else if (isGracePeriod) {
-    messages = ['Atenção (Período de Tolerância): sua assinatura venceu. Regularize para evitar a suspensão do sistema.'];
-  } else if (isExpiringSoon) {
-    messages = [
-      r.subscriptionPlan
-        ? `Renovação de Assinatura: restam ${diffDays} ${diffDays === 1 ? 'dia' : 'dias'} para o término do seu plano.`
-        : `Sua assinatura expira em ${diffDays} ${diffDays === 1 ? 'dia' : 'dias'}. Renove para manter o serviço.`,
-    ];
-  } else if (isRegularized && r.subscriptionPlan) {
-    const planName = r.subscriptionPlan.charAt(0).toUpperCase() + r.subscriptionPlan.slice(1);
-    messages = [`Plano ${planName} ativo · Recursos operacionais e salão liberados.`];
-  }
+  const messages: string[] = baseNotices.length > 0 ? baseNotices : [];
 
   const signature = messages.join('\n');
   const [index, setIndex] = useState(0);
